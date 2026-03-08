@@ -99,10 +99,13 @@ Built on **PyATS/Genie** for structured parsing, **Netmiko** for transport, and 
 
 ## Prerequisites
 
+- **Linux, macOS, or WSL** — PyATS/Genie is not supported on native Windows. If you are on Windows, use [WSL (Windows Subsystem for Linux)](https://learn.microsoft.com/en-us/windows/wsl/install) to run the auditor.
 - **Python 3.10+** (uses `match` syntax, `X | Y` union types, dataclasses)
 - **Network access** to the target IOS-XE devices (directly or via jump host)
 - **SSH enabled** on all devices (`ip ssh version 2`)
 - **Privileged EXEC** (enable) access — the tool runs `show running-config`
+
+> **Windows users:** Install WSL with `wsl --install` from an elevated PowerShell, then work inside the Linux environment. All `pip install` and `python -m Modules` commands should be run inside WSL, not native Windows.
 
 ---
 
@@ -114,13 +117,14 @@ git clone https://github.com/<your-org>/Cisco-Compliance-Audit.git
 cd Cisco-Compliance-Audit
 
 # Create a virtual environment (recommended)
-python -m venv .venv
-.venv\Scripts\activate        # Windows
-# source .venv/bin/activate   # Linux/Mac
+python3 -m venv .venv
+source .venv/bin/activate     # Linux / macOS / WSL
 
 # Install dependencies
 pip install -r requirements.txt
 ```
+
+> **Note:** PyATS does not install on native Windows. If `pip install pyats[library]` fails, you are likely not running inside WSL or a Linux/macOS environment.
 
 ### Dependencies
 
