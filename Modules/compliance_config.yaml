@@ -9,20 +9,105 @@
 # ─── CONNECTION ───────────────────────────────────────────────────
 connection:
   jump_host: "10.112.250.6"
+  use_jump_host: true               # Set false to connect directly (or use --no-jump)
   cred_target: "MyApp/ADM"
   timeout: 30
   retries: 3
   device_type: "cisco_xe"          # Netmiko device type for IOS-XE
 
 
+# ─── HOSTNAME ROLE CODES ─────────────────────────────────────────
+# Maps the 2-4 letter code in the hostname to its meaning.
+# The auditor uses these to:
+#   • detect the device role (for role-specific checks)
+#   • classify trunk ports as uplinks or downlinks (via CDP/LLDP neighbor)
+#
+# Each entry needs:
+#   code         – the letters that appear in the hostname (case-insensitive)
+#   role         – internal identifier used throughout the engine
+#   display      – human-friendly name for reports
+#   trunk_signal – how to treat a trunk to a neighbor with this role:
+#                  "uplink"   = the local port faces toward the core
+#                  "downlink" = the local port faces toward the access layer
+#                  "none"     = no automatic trunk classification
+#
+# You can add, remove, or rename entries freely.  The hostname regex
+# is built dynamically from whatever codes are listed here.
+hostname_roles:
+  - code: ASW
+    role: access_switch
+    display: "Access Switch"
+    trunk_signal: downlink       # Seeing an ASW neighbor → local port is a downlink
+
+  - code: CSW
+    role: core_switch
+    display: "Core Switch"
+    trunk_signal: uplink         # Seeing a CSW neighbor → local port is an uplink
+
+  - code: SDW
+    role: sdwan_router
+    display: "SD-WAN Router"
+    trunk_signal: none
+
+  - code: ISW
+    role: industrial_switch
+    display: "Industrial Switch"
+    trunk_signal: downlink       # Seeing an ISW neighbor → local port is a downlink
+
+
+# ─── ENDPOINT NEIGHBORS (APs, etc.) ──────────────────────────────
+# Trunks to endpoints (e.g. Cisco APs) are detected via CDP / LLDP
+# and classified as TRUNK_ENDPOINT instead of TRUNK_DOWNLINK.
+# This matters because endpoint trunks should get BPDU guard (like
+# access ports) rather than root guard, and don't need DHCP/DAI trust.
+#
+# Detection uses three signals (any match → endpoint):
+#   hostname_patterns  – regex matched against the CDP device-id / LLDP system-name
+#   platform_patterns  – regex matched against the CDP platform string
+#   capabilities       – CDP capability keyword (e.g. "Trans-Bridge" for APs)
+#
+# All regexes are case-insensitive.
+endpoint_neighbors:
+  enabled: true
+  hostname_patterns:
+    - "^AP[\\d_-]"        # AP1_Office, AP-Floor2, AP01 (AP + digit/separator)
+    - "^AP[0-9A-F]{4}"   # APxxxx (Cisco default lightweight AP names)
+    - "-AP\\d{3}$"        # ...AP001 suffix in some naming schemes
+  platform_patterns:
+    - "AIR-"              # Cisco Aironet (AIR-CAP / AIR-AP)
+    - "C91[2-7]"          # Catalyst 9100 series APs (C9120AXI-E, C9130 …)
+    - "CW91"              # Catalyst Wi-Fi 6E (CW9162, CW9164, CW9166)
+    - "MR[0-9]"           # Meraki APs (MR46, MR56, etc.)
+  capabilities:
+    - "Trans-Bridge"      # Cisco APs report this CDP capability (R T)
+
+
 # ─── DEVICE INVENTORY ────────────────────────────────────────────
-# Hostname is parsed to auto-detect role (ASW/CSW/SDW/ISW).
-# You can also pass devices via CLI:  python -m Modules --device <ip>
+# List the switches to audit.  Each entry needs:
+#   hostname  – used to detect the device role (parsed against hostname_roles)
+#   ip        – management IP (or DNS name) the auditor connects to
+#
+# Add as many entries as you need — one per line, indented under "devices:".
+# To skip the inventory and audit a single device ad-hoc, use the CLI:
+#   python -m Modules --device GB-MKD1-005ASW001:10.1.1.1
+#
+# Examples:
 devices: []
   # - hostname: GB-MKD1-005ASW001
   #   ip: 10.1.1.1
-  # - hostname: GB-MKD1-005CSW001
+  # - hostname: GB-MKD1-005ASW002
   #   ip: 10.1.1.2
+  # - hostname: GB-MKD1-005CSW001
+  #   ip: 10.1.2.1
+  # - hostname: GB-MKD1-005ISW001
+  #   ip: 10.1.3.1
+  #
+  # To enable, remove the [] on the "devices:" line and uncomment:
+  # devices:
+  #   - hostname: GB-MKD1-005ASW001
+  #     ip: 10.1.1.1
+  #   - hostname: GB-MKD1-005ASW002
+  #     ip: 10.1.1.2
 
 
 # ─── AUDIT SETTINGS ──────────────────────────────────────────────
@@ -525,15 +610,18 @@ compliance:
         unicast: 10.00
 
     # ── BPDU GUARD ──────────────────────────────────────────────
-    # Applied only on ACCESS ports (never on trunk uplinks/downlinks)
+    # Applied on ACCESS ports and TRUNK_ENDPOINT ports (APs etc.).
+    # Never on trunk uplinks/downlinks to other switches.
     bpdu_guard:
       enabled: true
+      on_endpoint_trunks: true   # Also require BPDU guard on AP trunk ports
       # Expect: spanning-tree bpduguard enable  (per-interface)
 
     # ── ROOT GUARD ──────────────────────────────────────────────
     # Applied only on TRUNK DOWNLINKS (to access layer switches).
-    # NEVER applied on uplinks — the auditor auto-detects uplinks
-    # using show spanning-tree root + CDP/LLDP neighbor roles.
+    # NEVER applied on uplinks or endpoint trunks (APs etc.).
+    # The auditor auto-detects uplinks using STP root port +
+    # CDP/LLDP neighbor roles.
     root_guard:
       enabled: true
       # Expect: spanning-tree guard root  (per-interface)
@@ -585,9 +673,11 @@ compliance:
     # ── DHCP SNOOPING TRUST ─────────────────────────────────────
     dhcp_snooping_trust:
       enabled: true
-      # Expect on trunk uplinks and (optionally) downlinks
+      # Expect on trunk uplinks and (optionally) downlinks.
+      # Endpoint trunks (APs) typically do NOT need trust.
       on_uplinks: true
       on_downlinks: true
+      on_endpoint_trunks: false
 
     # ── DHCP SNOOPING RATE LIMIT ────────────────────────────────
     dhcp_snooping_limit_rate:
@@ -597,9 +687,11 @@ compliance:
     # ── ARP INSPECTION TRUST ────────────────────────────────────
     arp_inspection_trust:
       enabled: true
-      # Trust on trunk uplinks and (optionally) downlinks
+      # Trust on trunk uplinks and (optionally) downlinks.
+      # Endpoint trunks (APs) typically do NOT need trust.
       on_uplinks: true
       on_downlinks: true
+      on_endpoint_trunks: false
 
     # ── UNUSED PORT HARDENING ───────────────────────────────────
     unused_ports:

@@ -66,6 +66,8 @@ def run_audit(
     conn_cfg = cfg.get("connection", {})
     audit_settings = cfg.get("audit_settings", {})
     compliance_policy = cfg.get("compliance", {})
+    role_config = cfg.get("hostname_roles") or None
+    endpoint_config = cfg.get("endpoint_neighbors") or None
 
     # Inject audit_settings into policy so the engine can read parking_vlan etc.
     compliance_policy["_audit_settings"] = audit_settings
@@ -105,7 +107,8 @@ def run_audit(
     # ── Jump host (optional) ───────────────────────────────
     jump: Optional[JumpManager] = None
     jump_host = conn_cfg.get("jump_host")
-    if jump_host and not skip_jump:
+    use_jump = conn_cfg.get("use_jump_host", True)
+    if jump_host and use_jump and not skip_jump:
         console.print(f"[cyan]Connecting to jump host {jump_host} ...[/]")
         jump = JumpManager(jump_host, username, password)
         jump.connect()
@@ -124,7 +127,7 @@ def run_audit(
             console.rule(f"[bold cyan]{hostname}  ({ip})[/]")
 
             # Parse hostname for role
-            host_info = parse_hostname(hostname)
+            host_info = parse_hostname(hostname, role_config=role_config)
             if host_info.parsed:
                 console.print(f"  Role detected: [bold]{host_info.role_display}[/]")
             else:
@@ -155,13 +158,17 @@ def run_audit(
 
                 # Classify ports
                 console.print("  Classifying ports ...")
-                ports = classify_ports(data)
+                ports = classify_ports(data, role_config=role_config, endpoint_config=endpoint_config)
                 uplinks = [n for n, p in ports.items() if p.role.value == "trunk_uplink"]
                 downlinks = [n for n, p in ports.items() if p.role.value == "trunk_downlink"]
+                endpoints = [n for n, p in ports.items() if p.role.value == "trunk_endpoint"]
                 if uplinks:
                     console.print(f"    Uplinks  : {', '.join(uplinks)}")
                 if downlinks:
                     console.print(f"    Downlinks: {', '.join(downlinks)}")
+                if endpoints:
+                    ep_detail = [f"{n} ({ports[n].cdp_neighbor})" for n in endpoints]
+                    console.print(f"    Endpoints: {', '.join(ep_detail)}")
 
                 # Audit
                 console.print("  Running compliance checks ...")

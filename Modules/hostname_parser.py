@@ -5,38 +5,56 @@ site information, and cabinet/instance numbers.
 Convention:  GB-MKD1-005ASW001
              ││  │││  │││││ │││
              ││  │││  │││││ └── device number (001)
-             ││  │││  ││└──── role code (ASW/CSW/SDW/ISW)
+             ││  │││  ││└──── role code (ASW/CSW/SDW/ISW — configurable)
              ││  │││  └────── comms room / cabinet (005)
              ││  ││└───────── site instance (1)
              ││  └─────────── site code (MKD)
              └──────────────── country code (GB)
+
+Role codes are loaded from 'hostname_roles' in compliance_config.yaml
+so they can be added/changed/removed without touching this file.
 """
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
-ROLE_MAP = {
-    "ASW": "access_switch",
-    "CSW": "core_switch",
-    "SDW": "sdwan_router",
-    "ISW": "industrial_switch",
-}
+# ---------------------------------------------------------------------------
+# Defaults — used when no config is supplied
+# ---------------------------------------------------------------------------
+DEFAULT_ROLES: list[dict] = [
+    {"code": "ASW", "role": "access_switch",     "display": "Access Switch",     "trunk_signal": "downlink"},
+    {"code": "CSW", "role": "core_switch",       "display": "Core Switch",       "trunk_signal": "uplink"},
+    {"code": "SDW", "role": "sdwan_router",      "display": "SD-WAN Router",     "trunk_signal": "none"},
+    {"code": "ISW", "role": "industrial_switch",  "display": "Industrial Switch", "trunk_signal": "downlink"},
+]
 
-ROLE_DISPLAY = {
-    "ASW": "Access Switch",
-    "CSW": "Core Switch",
-    "SDW": "SD-WAN Router",
-    "ISW": "Industrial Switch",
-}
 
-# GB-MKD1-005ASW001
-HOSTNAME_PATTERN = re.compile(
-    r"^(?P<country>[A-Z]{2})"
-    r"-(?P<site>[A-Z]{2,4})(?P<site_inst>\d)"
-    r"-(?P<comms>\d{3})(?P<role>ASW|CSW|SDW|ISW)(?P<num>\d{3})$",
-    re.IGNORECASE,
-)
+# ---------------------------------------------------------------------------
+# Build lookup maps from a roles list
+# ---------------------------------------------------------------------------
+def _build_role_maps(roles: list[dict]) -> tuple[dict, dict, dict]:
+    """Return (code→role, code→display, code→trunk_signal) dicts."""
+    role_map: dict[str, str] = {}
+    display_map: dict[str, str] = {}
+    signal_map: dict[str, str] = {}
+    for entry in roles:
+        code = entry["code"].upper()
+        role_map[code] = entry.get("role", code.lower())
+        display_map[code] = entry.get("display", code)
+        signal_map[code] = entry.get("trunk_signal", "none").lower()
+    return role_map, display_map, signal_map
+
+
+def _build_pattern(codes: list[str]) -> re.Pattern:
+    """Build the hostname regex dynamically from the configured codes."""
+    codes_alt = "|".join(re.escape(c) for c in codes)
+    return re.compile(
+        r"^(?P<country>[A-Z]{2})"
+        r"-(?P<site>[A-Z]{2,4})(?P<site_inst>\d)"
+        rf"-(?P<comms>\d{{3}})(?P<role>{codes_alt})(?P<num>\d{{3}})$",
+        re.IGNORECASE,
+    )
 
 
 @dataclass
@@ -54,24 +72,53 @@ class HostnameInfo:
 
     @property
     def is_access(self) -> bool:
-        return self.role_code == "ASW"
+        return self.role == "access_switch"
 
     @property
     def is_core(self) -> bool:
-        return self.role_code == "CSW"
+        return self.role == "core_switch"
 
     @property
     def is_sdwan(self) -> bool:
-        return self.role_code == "SDW"
+        return self.role == "sdwan_router"
 
     @property
     def is_industrial(self) -> bool:
-        return self.role_code == "ISW"
+        return self.role == "industrial_switch"
 
 
-def parse_hostname(hostname: str) -> HostnameInfo:
-    """Parse a hostname and extract role/site metadata."""
-    m = HOSTNAME_PATTERN.match(hostname.strip().upper())
+# ---------------------------------------------------------------------------
+# Compiled defaults (used when no config is passed)
+# ---------------------------------------------------------------------------
+_DEFAULT_ROLE_MAP, _DEFAULT_DISPLAY_MAP, _DEFAULT_SIGNAL_MAP = _build_role_maps(DEFAULT_ROLES)
+_DEFAULT_PATTERN = _build_pattern(list(_DEFAULT_ROLE_MAP.keys()))
+
+
+def parse_hostname(
+    hostname: str,
+    role_config: Optional[list[dict]] = None,
+) -> HostnameInfo:
+    """
+    Parse a hostname and extract role/site metadata.
+
+    Parameters
+    ----------
+    hostname : str
+        The device hostname to parse.
+    role_config : list[dict] | None
+        The ``hostname_roles`` list from compliance_config.yaml.
+        Each dict must have at least ``code``, ``role``, ``display``.
+        If None, built-in defaults (ASW/CSW/SDW/ISW) are used.
+    """
+    if role_config:
+        role_map, display_map, _ = _build_role_maps(role_config)
+        pattern = _build_pattern(list(role_map.keys()))
+    else:
+        role_map = _DEFAULT_ROLE_MAP
+        display_map = _DEFAULT_DISPLAY_MAP
+        pattern = _DEFAULT_PATTERN
+
+    m = pattern.match(hostname.strip().upper())
     if not m:
         return HostnameInfo(raw=hostname, parsed=False)
     role_code = m.group("role").upper()
@@ -82,14 +129,28 @@ def parse_hostname(hostname: str) -> HostnameInfo:
         site_instance=m.group("site_inst"),
         comms_room=m.group("comms"),
         role_code=role_code,
-        role=ROLE_MAP.get(role_code, "unknown"),
-        role_display=ROLE_DISPLAY.get(role_code, "Unknown"),
+        role=role_map.get(role_code, "unknown"),
+        role_display=display_map.get(role_code, "Unknown"),
         device_number=m.group("num"),
         parsed=True,
     )
 
 
-def extract_role_from_hostname(hostname: str) -> Optional[str]:
-    """Quick helper: return role code (ASW/CSW/SDW/ISW) or None."""
-    info = parse_hostname(hostname)
+def extract_role_from_hostname(
+    hostname: str,
+    role_config: Optional[list[dict]] = None,
+) -> Optional[str]:
+    """Quick helper: return role code (e.g. ASW/CSW) or None."""
+    info = parse_hostname(hostname, role_config=role_config)
     return info.role_code if info.parsed else None
+
+
+def get_trunk_signal_map(role_config: Optional[list[dict]] = None) -> dict[str, str]:
+    """
+    Return {code: trunk_signal} from the role config.
+    trunk_signal is "uplink", "downlink", or "none".
+    """
+    if role_config:
+        _, _, signal_map = _build_role_maps(role_config)
+        return signal_map
+    return _DEFAULT_SIGNAL_MAP

@@ -67,7 +67,7 @@ Built on **PyATS/Genie** for structured parsing, **Netmiko** for transport, and 
 ```text
 ┌─────────────────────────────────────────────────────────┐
 │                     python -m Modules                   │
-│                      (__main__.py)                       │
+│                      (__main__.py)                      │
 └────────────────────────┬────────────────────────────────┘
                          │
                     ┌────▼─────┐
@@ -76,21 +76,21 @@ Built on **PyATS/Genie** for structured parsing, **Netmiko** for transport, and 
                          │
           ┌──────────────┼──────────────────┐
           │              │                  │
-   ┌──────▼──────┐ ┌────▼──────┐  ┌────────▼────────┐
-   │ credentials │ │ collector │  │ compliance_engine │
-   │ jump_manager│ │ (Netmiko  │  │ (90+ checks)      │
-   │ netmiko_utils│ │  + Genie) │  └────────┬─────────┘
-   └─────────────┘ └────┬──────┘           │
+   ┌──────▼───────┐ ┌────▼──────┐   ┌────────▼──────────┐
+   │ credentials  │ │ collector │   │ compliance_engine │
+   │ jump_manager │ │ (Netmiko  │   │ (90+ checks)      │
+   │ netmiko_utils│ │  + Genie) │   └────────┬──────────┘
+   └──────────────┘ └────┬──────┘            │
                          │           ┌──────▼──────┐
-                  ┌──────▼──────┐    │   report    │
-                  │port_classifier│   │ (Rich, HTML,│
-                  │(STP + CDP)  │    │  JSON)      │
-                  └──────┬──────┘    └─────────────┘
+                  ┌──────▼────────   │   report    │
+                  │port_classifier│  │ (Rich, HTML,│
+                  │(STP + CDP)    │  │  JSON)      │
+                  └──────┬────────   └─────────────┘
                          │
-                  ┌──────▼──────┐
+                  ┌──────▼────────┐
                   │hostname_parser│
-                  │(naming conv) │
-                  └─────────────┘
+                  │(naming conv)  │
+                  └───────────────┘
 ```
 
 **Data flow:** Connect → Collect show commands → Parse with Genie → Classify every port → Run all enabled checks against policy → Generate reports.

@@ -6,7 +6,8 @@ Roles
 -----
 - ACCESS          : switchport mode access
 - TRUNK_UPLINK    : trunk going toward the core / root bridge
-- TRUNK_DOWNLINK  : trunk going to a downstream access / industrial switch
+- TRUNK_DOWNLINK  : trunk going to a downstream switch (ASW/ISW daisy-chain)
+- TRUNK_ENDPOINT  : trunk to an endpoint device (wireless AP, etc.)
 - TRUNK_UNKNOWN   : trunk whose direction could not be determined
 - UNUSED          : admin-down with no operational link
 - ROUTED          : L3 (no switchport) physical interface
@@ -16,14 +17,16 @@ Roles
 - MGMT            : AppGigabitEthernet / Management interface
 - OTHER           : Anything not classified above (tunnels, etc.)
 
-Detection strategy for uplink vs downlink
-------------------------------------------
-1. **STP root port** — the interface elected as Root Port *is* the uplink
+Detection strategy for uplink vs downlink vs endpoint
+------------------------------------------------------
+1. **Endpoint check** — CDP/LLDP neighbor is matched against configurable
+   hostname patterns, platform strings, and capability keywords.  A match
+   classifies the trunk as TRUNK_ENDPOINT (e.g. wireless APs).
+2. **STP root port** — the interface elected as Root Port *is* the uplink
    toward the root bridge (typically the core switch).
-2. **CDP / LLDP neighbor hostname** — if the neighbor's hostname matches
-   the CSW naming convention the local port is an uplink; if it matches
-   ASW / ISW it is a downlink.
-3. Combination: both signals are combined; STP is trusted first, then CDP.
+3. **CDP / LLDP neighbor hostname** — the neighbour’s role code drives the
+   trunk_signal from config (uplink / downlink / none).
+4. Combination: endpoint is checked first, then STP, then CDP hostname.
 """
 
 import re
@@ -33,7 +36,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from .collector import DeviceData, normalize_intf
-from .hostname_parser import parse_hostname
+from .hostname_parser import parse_hostname, get_trunk_signal_map
 
 log = logging.getLogger(__name__)
 
@@ -42,6 +45,7 @@ class PortRole(str, Enum):
     ACCESS = "access"
     TRUNK_UPLINK = "trunk_uplink"
     TRUNK_DOWNLINK = "trunk_downlink"
+    TRUNK_ENDPOINT = "trunk_endpoint"
     TRUNK_UNKNOWN = "trunk_unknown"
     UNUSED = "unused"
     ROUTED = "routed"
@@ -63,6 +67,9 @@ class PortInfo:
     is_stp_root_port: bool = False
     cdp_neighbor: str = ""
     cdp_neighbor_role: str = ""      # ASW / CSW / SDW / ISW / ""
+    cdp_neighbor_platform: str = ""  # CDP platform string
+    cdp_neighbor_capabilities: str = ""  # CDP capabilities string
+    is_endpoint_neighbor: bool = False    # True if CDP/LLDP says AP/endpoint
     switchport_mode: str = ""        # access / trunk / dynamic / ""
     access_vlan: int = 0
     trunk_allowed_vlans: str = ""
@@ -73,7 +80,11 @@ class PortInfo:
 # Public API
 # ---------------------------------------------------------------------------
 
-def classify_ports(data: DeviceData) -> dict[str, PortInfo]:
+def classify_ports(
+    data: DeviceData,
+    role_config: list[dict] | None = None,
+    endpoint_config: dict | None = None,
+) -> dict[str, PortInfo]:
     """Return a dict of normalised interface name → PortInfo."""
 
     ports: dict[str, PortInfo] = {}
@@ -81,6 +92,12 @@ def classify_ports(data: DeviceData) -> dict[str, PortInfo]:
 
     if parsed is None:
         return ports
+
+    # Build trunk-signal map from config (or defaults)
+    signal_map = get_trunk_signal_map(role_config)
+
+    # Pre-compile endpoint patterns
+    ep_patterns = _compile_endpoint_patterns(endpoint_config)
 
     # 1) Seed every interface found in the running-config
     for intf_name, cfg_lines in parsed.interfaces.items():
@@ -103,13 +120,13 @@ def classify_ports(data: DeviceData) -> dict[str, PortInfo]:
         if norm in ports:
             ports[norm].is_stp_root_port = True
 
-    # 4) Map CDP neighbors to local interfaces
-    _map_cdp_neighbors(ports, data.cdp)
-    _map_lldp_neighbors(ports, data.lldp)
+    # 4) Map CDP neighbors to local interfaces (including endpoint detection)
+    _map_cdp_neighbors(ports, data.cdp, role_config, ep_patterns)
+    _map_lldp_neighbors(ports, data.lldp, role_config, ep_patterns)
 
     # 5) Assign roles
     for pi in ports.values():
-        pi.role = _determine_role(pi)
+        pi.role = _determine_role(pi, signal_map)
 
     return ports
 
@@ -202,8 +219,10 @@ def _find_root_ports(stp_data: Optional[dict]) -> set[str]:
 def _map_cdp_neighbors(
     ports: dict[str, PortInfo],
     cdp_data: Optional[dict],
+    role_config: list[dict] | None = None,
+    ep_patterns: Optional[dict] = None,
 ) -> None:
-    """Populate cdp_neighbor/cdp_neighbor_role on each PortInfo."""
+    """Populate cdp_neighbor/cdp_neighbor_role/endpoint flags on each PortInfo."""
     if not cdp_data:
         return
 
@@ -215,17 +234,30 @@ def _map_cdp_neighbors(
             continue
         local_if = normalize_intf(entry.get("local_interface", ""))
         neighbor_id = entry.get("device_id", "")
+        platform = entry.get("platform", "")
+        capabilities = entry.get("capabilities", "")
 
         if local_if in ports:
-            ports[local_if].cdp_neighbor = neighbor_id
-            host_info = parse_hostname(neighbor_id.split(".")[0])  # strip domain
-            if host_info.parsed and host_info.role_code:
-                ports[local_if].cdp_neighbor_role = host_info.role_code
+            pi = ports[local_if]
+            pi.cdp_neighbor = neighbor_id
+            pi.cdp_neighbor_platform = platform
+            pi.cdp_neighbor_capabilities = capabilities
+
+            # Check endpoint patterns first (AP detection)
+            if _is_endpoint(neighbor_id, platform, capabilities, ep_patterns):
+                pi.is_endpoint_neighbor = True
+            else:
+                # Fall back to hostname role parsing
+                host_info = parse_hostname(neighbor_id.split(".")[0], role_config=role_config)
+                if host_info.parsed and host_info.role_code:
+                    pi.cdp_neighbor_role = host_info.role_code
 
 
 def _map_lldp_neighbors(
     ports: dict[str, PortInfo],
     lldp_data: Optional[dict],
+    role_config: list[dict] | None = None,
+    ep_patterns: Optional[dict] = None,
 ) -> None:
     """Fallback: use LLDP when CDP has no entry for a port."""
     if not lldp_data:
@@ -241,12 +273,84 @@ def _map_lldp_neighbors(
             if not isinstance(neigh_data, dict):
                 continue
             system_name = neigh_data.get("system_name", "")
+            system_desc = neigh_data.get("system_description", "")
             if system_name:
-                ports[local_if].cdp_neighbor = system_name
-                host_info = parse_hostname(system_name.split(".")[0])
-                if host_info.parsed and host_info.role_code:
-                    ports[local_if].cdp_neighbor_role = host_info.role_code
+                pi = ports[local_if]
+                pi.cdp_neighbor = system_name
+                # LLDP has system_description but no platform/capabilities like CDP.
+                # Match hostname patterns + use system_description as platform.
+                if _is_endpoint(system_name, system_desc, "", ep_patterns):
+                    pi.is_endpoint_neighbor = True
+                else:
+                    host_info = parse_hostname(system_name.split(".")[0], role_config=role_config)
+                    if host_info.parsed and host_info.role_code:
+                        pi.cdp_neighbor_role = host_info.role_code
                 break
+
+
+_ENDPOINT_DEFAULT_HOSTNAME = [re.compile(r"^AP[\d_-]", re.IGNORECASE)]
+_ENDPOINT_DEFAULT_PLATFORM = [re.compile(r"AIR-|C91[2-7]|CW91|MR\d", re.IGNORECASE)]
+_ENDPOINT_DEFAULT_CAPABILITIES = [re.compile(r"Trans-Bridge", re.IGNORECASE)]
+
+
+def _compile_endpoint_patterns(ep_cfg: dict | None) -> dict:
+    """
+    Pre-compile the endpoint_neighbors regexes from config.
+
+    Returns a dict with keys 'hostname', 'platform', 'capabilities',
+    each a list of compiled re.Pattern objects.
+    """
+    if not ep_cfg or not ep_cfg.get("enabled", True):
+        return {
+            "hostname": _ENDPOINT_DEFAULT_HOSTNAME,
+            "platform": _ENDPOINT_DEFAULT_PLATFORM,
+            "capabilities": _ENDPOINT_DEFAULT_CAPABILITIES,
+        }
+
+    def _compile_list(patterns: list) -> list[re.Pattern]:
+        compiled = []
+        for p in patterns:
+            try:
+                compiled.append(re.compile(p, re.IGNORECASE))
+            except re.error:
+                log.warning("Invalid endpoint regex pattern: %s", p)
+        return compiled
+
+    return {
+        "hostname": _compile_list(ep_cfg.get("hostname_patterns", [])) or _ENDPOINT_DEFAULT_HOSTNAME,
+        "platform": _compile_list(ep_cfg.get("platform_patterns", [])) or _ENDPOINT_DEFAULT_PLATFORM,
+        "capabilities": _compile_list(ep_cfg.get("capabilities", [])) or _ENDPOINT_DEFAULT_CAPABILITIES,
+    }
+
+
+def _is_endpoint(
+    device_id: str,
+    platform: str,
+    capabilities: str,
+    ep_patterns: dict | None,
+) -> bool:
+    """Return True if the CDP/LLDP neighbor looks like an endpoint (AP etc.)."""
+    if ep_patterns is None:
+        return False
+
+    # Check hostname patterns
+    for pat in ep_patterns.get("hostname", []):
+        if pat.search(device_id):
+            return True
+
+    # Check platform patterns
+    if platform:
+        for pat in ep_patterns.get("platform", []):
+            if pat.search(platform):
+                return True
+
+    # Check capabilities
+    if capabilities:
+        for pat in ep_patterns.get("capabilities", []):
+            if pat.search(capabilities):
+                return True
+
+    return False
 
 
 _PHYSICAL_RE = re.compile(
@@ -260,7 +364,10 @@ def _is_physical(name: str) -> bool:
     return bool(_PHYSICAL_RE.match(name))
 
 
-def _determine_role(pi: PortInfo) -> PortRole:
+def _determine_role(
+    pi: PortInfo,
+    signal_map: dict[str, str] | None = None,
+) -> PortRole:
     """Assign a PortRole based on all collected signals."""
     name = pi.name
 
@@ -292,16 +399,22 @@ def _determine_role(pi: PortInfo) -> PortRole:
 
     # Switchport trunk — determine direction
     if pi.switchport_mode == "trunk":
-        # Signal 1: STP root port → uplink
+        # Signal 1: Endpoint neighbor (AP etc.) — takes priority
+        if pi.is_endpoint_neighbor:
+            return PortRole.TRUNK_ENDPOINT
+
+        # Signal 2: STP root port → uplink
         if pi.is_stp_root_port:
             return PortRole.TRUNK_UPLINK
 
-        # Signal 2: CDP/LLDP neighbor role
+        # Signal 3: CDP/LLDP neighbor role → use trunk_signal from config
         nr = pi.cdp_neighbor_role.upper()
-        if nr == "CSW":
-            return PortRole.TRUNK_UPLINK
-        if nr in ("ASW", "ISW"):
-            return PortRole.TRUNK_DOWNLINK
+        if nr and signal_map:
+            sig = signal_map.get(nr, "none")
+            if sig == "uplink":
+                return PortRole.TRUNK_UPLINK
+            if sig == "downlink":
+                return PortRole.TRUNK_DOWNLINK
 
         # Could not determine
         return PortRole.TRUNK_UNKNOWN

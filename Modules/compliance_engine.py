@@ -998,6 +998,8 @@ class ComplianceEngine:
 
             if role == PortRole.ACCESS:
                 f.extend(self._check_access_port(cfg, dp, pi))
+            elif role == PortRole.TRUNK_ENDPOINT:
+                f.extend(self._check_endpoint_trunk_port(cfg, dp, pi))
             elif role in (PortRole.TRUNK_UPLINK, PortRole.TRUNK_DOWNLINK, PortRole.TRUNK_UNKNOWN):
                 f.extend(self._check_trunk_port(cfg, dp, pi))
             elif role == PortRole.UNUSED:
@@ -1086,6 +1088,130 @@ class ComplianceEngine:
                 f.append(Finding("interface_description", Status.FAIL,
                          f"{intf}: no description", interface=intf,
                          remediation="description <text>"))
+
+        return f
+
+    # ── ENDPOINT TRUNK PORT CHECKS (APs etc.) ─────────────────
+    def _check_endpoint_trunk_port(self, cfg: ParsedConfig, dp: dict,
+                                   pi: PortInfo) -> list[Finding]:
+        """
+        Checks for trunk ports connected to endpoints (wireless APs, etc.).
+
+        These are trunks that terminate at a non-switch device.  They should
+        be treated more like access ports for STP purposes:
+        - BPDU guard: YES  (endpoint should never send BPDUs)
+        - Root guard: NO   (not a switch, cannot become root)
+        - Portfast:   YES  (endpoint, fast convergence desired)
+        - Storm control, description, VLAN pruning: same as trunks
+        """
+        f: list[Finding] = []
+        intf = pi.name
+        neighbor_desc = f"endpoint trunk to {pi.cdp_neighbor}" if pi.cdp_neighbor else "endpoint trunk"
+
+        # Storm control
+        f.extend(self._check_storm_control(dp, pi))
+
+        # BPDU guard — recommended on endpoint trunks (like access ports)
+        if _enabled(dp, "bpdu_guard"):
+            bpdu_node = dp.get("bpdu_guard", {})
+            if bpdu_node.get("on_endpoint_trunks", True):
+                if pi_has(pi, r"spanning-tree bpduguard enable"):
+                    f.append(Finding("bpdu_guard", Status.PASS,
+                             f"{intf}: BPDU guard enabled ({neighbor_desc})",
+                             interface=intf))
+                else:
+                    f.append(Finding("bpdu_guard", Status.FAIL,
+                             f"{intf}: BPDU guard missing ({neighbor_desc})",
+                             interface=intf,
+                             remediation="spanning-tree bpduguard enable"))
+
+        # Root guard — should NOT be on endpoint trunks
+        if _enabled(dp, "root_guard"):
+            if pi_has(pi, r"spanning-tree guard root"):
+                f.append(Finding("root_guard", Status.FAIL,
+                         f"{intf}: root guard on endpoint trunk — not needed",
+                         interface=intf,
+                         remediation="no spanning-tree guard root"))
+            else:
+                f.append(Finding("root_guard", Status.PASS,
+                         f"{intf}: no root guard on endpoint trunk (correct)",
+                         interface=intf))
+
+        # Portfast trunk — recommended for endpoint trunks
+        if _enabled(dp, "portfast"):
+            if pi_has(pi, r"spanning-tree portfast trunk"):
+                f.append(Finding("portfast", Status.PASS,
+                         f"{intf}: portfast trunk enabled ({neighbor_desc})",
+                         interface=intf))
+            else:
+                f.append(Finding("portfast", Status.FAIL,
+                         f"{intf}: portfast trunk missing ({neighbor_desc})",
+                         interface=intf,
+                         remediation="spanning-tree portfast trunk"))
+
+        # Switchport nonegotiate
+        if _enabled(dp, "switchport_nonegotiate"):
+            if pi_has(pi, r"switchport nonegotiate"):
+                f.append(Finding("switchport_nonegotiate", Status.PASS,
+                         f"{intf}: nonegotiate ({neighbor_desc})", interface=intf))
+            else:
+                f.append(Finding("switchport_nonegotiate", Status.FAIL,
+                         f"{intf}: nonegotiate missing ({neighbor_desc})",
+                         interface=intf,
+                         remediation="switchport nonegotiate"))
+
+        # Trunk allowed VLANs
+        if _enabled(dp, "trunk_allowed_vlans"):
+            if pi.trunk_allowed_vlans and pi.trunk_allowed_vlans.lower() != "all":
+                f.append(Finding("trunk_allowed_vlans", Status.PASS,
+                         f"{intf}: trunk VLANs pruned ({neighbor_desc})",
+                         interface=intf))
+            else:
+                f.append(Finding("trunk_allowed_vlans", Status.FAIL,
+                         f"{intf}: trunk allows ALL VLANs ({neighbor_desc})",
+                         interface=intf,
+                         remediation="switchport trunk allowed vlan <list>"))
+
+        # Description
+        if _enabled(dp, "interface_description"):
+            if pi.description:
+                f.append(Finding("interface_description", Status.PASS,
+                         f"{intf}: description present ({neighbor_desc})",
+                         interface=intf))
+            else:
+                f.append(Finding("interface_description", Status.FAIL,
+                         f"{intf}: no description ({neighbor_desc})",
+                         interface=intf, remediation="description <text>"))
+
+        # DHCP snooping trust — configurable for endpoint trunks
+        if _enabled(dp, "dhcp_snooping_trust"):
+            trust_node = dp.get("dhcp_snooping_trust", {})
+            if trust_node.get("on_endpoint_trunks", False):
+                has_trust = pi_has(pi, r"ip dhcp snooping trust")
+                if has_trust:
+                    f.append(Finding("dhcp_snooping_trust", Status.PASS,
+                             f"{intf}: DHCP snooping trust ({neighbor_desc})",
+                             interface=intf))
+                else:
+                    f.append(Finding("dhcp_snooping_trust", Status.FAIL,
+                             f"{intf}: DHCP snooping trust missing ({neighbor_desc})",
+                             interface=intf,
+                             remediation="ip dhcp snooping trust"))
+
+        # ARP inspection trust — configurable for endpoint trunks
+        if _enabled(dp, "arp_inspection_trust"):
+            trust_node = dp.get("arp_inspection_trust", {})
+            if trust_node.get("on_endpoint_trunks", False):
+                has_trust = pi_has(pi, r"ip arp inspection trust")
+                if has_trust:
+                    f.append(Finding("arp_inspection_trust", Status.PASS,
+                             f"{intf}: DAI trust ({neighbor_desc})",
+                             interface=intf))
+                else:
+                    f.append(Finding("arp_inspection_trust", Status.FAIL,
+                             f"{intf}: DAI trust missing ({neighbor_desc})",
+                             interface=intf,
+                             remediation="ip arp inspection trust"))
 
         return f
 
