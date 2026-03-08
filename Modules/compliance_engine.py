@@ -1,0 +1,1465 @@
+"""
+Compliance-check engine for Cisco IOS-XE.
+
+Every check is a method on ``ComplianceEngine``.  The engine iterates
+through all registered checks, skips disabled ones (per the YAML policy)
+and collects Findings into an ``AuditResult``.
+"""
+
+import re
+import logging
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import Optional
+
+from .collector import DeviceData, ParsedConfig
+from .hostname_parser import HostnameInfo
+from .port_classifier import PortInfo, PortRole
+
+log = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Models
+# ---------------------------------------------------------------------------
+class Status(str, Enum):
+    PASS = "PASS"
+    FAIL = "FAIL"
+    WARN = "WARN"
+    SKIP = "SKIP"
+    ERROR = "ERROR"
+
+
+@dataclass
+class Finding:
+    check_name: str
+    status: Status
+    detail: str
+    category: str = ""
+    interface: str = ""
+    remediation: str = ""
+
+
+@dataclass
+class AuditResult:
+    hostname: str
+    ip: str
+    role: str
+    role_display: str
+    findings: list[Finding] = field(default_factory=list)
+
+    @property
+    def total(self) -> int:
+        return len([f for f in self.findings if f.status != Status.SKIP])
+
+    @property
+    def pass_count(self) -> int:
+        return sum(1 for f in self.findings if f.status == Status.PASS)
+
+    @property
+    def fail_count(self) -> int:
+        return sum(1 for f in self.findings if f.status == Status.FAIL)
+
+    @property
+    def warn_count(self) -> int:
+        return sum(1 for f in self.findings if f.status == Status.WARN)
+
+    @property
+    def error_count(self) -> int:
+        return sum(1 for f in self.findings if f.status == Status.ERROR)
+
+    @property
+    def score_pct(self) -> float:
+        t = self.total
+        if t == 0:
+            return 100.0
+        return round(self.pass_count / t * 100, 1)
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+def _pol(policy: dict, *path, default=None):
+    """Navigate nested policy dict and return the value (or *default*)."""
+    cur = policy
+    for key in path:
+        if not isinstance(cur, dict):
+            return default
+        cur = cur.get(key, default)
+    return cur
+
+
+def _enabled(policy: dict, *path) -> bool:
+    """Return True when the check at *path* has ``enabled: true``."""
+    node = _pol(policy, *path)
+    if isinstance(node, dict):
+        return node.get("enabled", True)
+    return True
+
+
+# ---------------------------------------------------------------------------
+# Engine
+# ---------------------------------------------------------------------------
+class ComplianceEngine:
+    """Run all compliance checks against collected device data."""
+
+    def __init__(self, policy: dict):
+        self.policy = policy  # compliance section of YAML
+
+    # ── public entry point ──────────────────────────────────────
+    def audit(
+        self,
+        data: DeviceData,
+        host_info: HostnameInfo,
+        ports: dict[str, PortInfo],
+    ) -> AuditResult:
+        result = AuditResult(
+            hostname=data.hostname or host_info.raw,
+            ip=data.ip,
+            role=host_info.role or "unknown",
+            role_display=host_info.role_display or "Unknown",
+        )
+        cfg = data.parsed_config
+        if cfg is None:
+            result.findings.append(
+                Finding("config_read", Status.ERROR, "No running-config collected", "system")
+            )
+            return result
+
+        check_groups = [
+            ("management_plane", self._check_services),
+            ("management_plane", self._check_ip_settings),
+            ("management_plane", self._check_ssh),
+            ("management_plane", self._check_aaa),
+            ("management_plane", self._check_ntp),
+            ("management_plane", self._check_logging),
+            ("management_plane", self._check_snmp),
+            ("management_plane", self._check_banners),
+            ("management_plane", self._check_users),
+            ("management_plane", self._check_vty_lines),
+            ("management_plane", self._check_console),
+            ("management_plane", self._check_archive),
+            ("management_plane", self._check_login_security),
+            ("management_plane", self._check_cdp_lldp),
+            ("control_plane",    self._check_stp),
+            ("control_plane",    self._check_vtp),
+            ("control_plane",    self._check_dhcp_snooping),
+            ("control_plane",    self._check_arp_inspection),
+            ("control_plane",    self._check_errdisable),
+            ("control_plane",    self._check_udld),
+            ("data_plane",       self._check_interfaces),
+            ("role_specific",    self._check_role_specific),
+        ]
+
+        for category, func in check_groups:
+            try:
+                findings = func(cfg, data, host_info, ports)
+                for f in findings:
+                    f.category = f.category or category
+                result.findings.extend(findings)
+            except Exception as exc:
+                result.findings.append(
+                    Finding(func.__name__, Status.ERROR, str(exc), category)
+                )
+                log.exception("Check %s raised an exception", func.__name__)
+
+        return result
+
+    # ===================================================================
+    #                    MANAGEMENT  PLANE  CHECKS
+    # ===================================================================
+
+    # ── SERVICES ──────────────────────────────────────────────
+    def _check_services(self, cfg: ParsedConfig, data: DeviceData,
+                        host: HostnameInfo, ports: dict) -> list[Finding]:
+        f: list[Finding] = []
+        mp = self.policy.get("management_plane", {})
+
+        # service password-encryption
+        if _enabled(mp, "service_password_encryption"):
+            f.append(self._present(cfg, r"^service password-encryption",
+                     "service_password_encryption", "service password-encryption",
+                     "service password-encryption"))
+
+        # service timestamps debug
+        if _enabled(mp, "service_timestamps_debug"):
+            exp = mp.get("service_timestamps_debug", {}).get(
+                "expected",  "service timestamps debug datetime msec localtime show-timezone year")
+            f.append(self._present(cfg, re.escape(exp),
+                     "service_timestamps_debug", exp, exp))
+
+        # service timestamps log
+        if _enabled(mp, "service_timestamps_log"):
+            exp = mp.get("service_timestamps_log", {}).get(
+                "expected", "service timestamps log datetime msec localtime show-timezone year")
+            f.append(self._present(cfg, re.escape(exp),
+                     "service_timestamps_log", exp, exp))
+
+        # tcp-keepalives
+        if _enabled(mp, "service_tcp_keepalives_in"):
+            f.append(self._present(cfg, r"^service tcp-keepalives-in",
+                     "service_tcp_keepalives_in", "service tcp-keepalives-in",
+                     "service tcp-keepalives-in"))
+        if _enabled(mp, "service_tcp_keepalives_out"):
+            f.append(self._present(cfg, r"^service tcp-keepalives-out",
+                     "service_tcp_keepalives_out", "service tcp-keepalives-out",
+                     "service tcp-keepalives-out"))
+
+        # no service pad
+        if _enabled(mp, "no_service_pad"):
+            f.append(self._absent(cfg, r"^service pad$", "no_service_pad",
+                     "service pad", "no service pad"))
+
+        # no service config
+        if _enabled(mp, "no_service_config"):
+            f.append(self._absent(cfg, r"^service config$", "no_service_config",
+                     "service config", "no service config"))
+
+        return f
+
+    # ── IP SETTINGS ───────────────────────────────────────────
+    def _check_ip_settings(self, cfg: ParsedConfig, data: DeviceData,
+                           host: HostnameInfo, ports: dict) -> list[Finding]:
+        f: list[Finding] = []
+        mp = self.policy.get("management_plane", {})
+
+        simple_present = [
+            ("ip_cef", r"^ip cef", "ip cef", "ip cef"),
+        ]
+        simple_absent = [
+            ("no_ip_source_route", r"^ip source-route", "ip source-route", "no ip source-route"),
+            ("no_ip_bootp_server", r"^ip bootp server", "ip bootp server", "no ip bootp server"),
+            ("no_ip_http_server", r"^ip http server$", "ip http server", "no ip http server"),
+            ("no_ip_http_secure_server", r"^ip http secure-server", "ip http secure-server",
+             "no ip http secure-server"),
+            ("no_ip_gratuitous_arps", r"^ip gratuitous-arps", "ip gratuitous-arps",
+             "no ip gratuitous-arps"),
+            ("no_ip_domain_lookup", r"^ip domain.lookup", "ip domain lookup",
+             "no ip domain lookup"),
+        ]
+        for name, pattern, desc, remed in simple_present:
+            if _enabled(mp, name):
+                f.append(self._present(cfg, pattern, name, desc, remed))
+        for name, pattern, desc, remed in simple_absent:
+            if _enabled(mp, name):
+                f.append(self._absent(cfg, pattern, name, desc, remed))
+
+        # ip http secure-server (when HTTPS management IS desired)
+        if _enabled(mp, "ip_http_secure_server"):
+            f.append(self._present(cfg, r"^ip http secure-server",
+                     "ip_http_secure_server", "ip http secure-server",
+                     "ip http secure-server"))
+
+        # ip domain-name
+        if _enabled(mp, "ip_domain_name"):
+            expected = mp.get("ip_domain_name", {}).get("expected", "")
+            if expected:
+                pattern = rf"^ip domain.name\s+{re.escape(expected)}"
+                f.append(self._present(cfg, pattern, "ip_domain_name",
+                         f"ip domain-name {expected}", f"ip domain-name {expected}"))
+            else:
+                f.append(self._present(cfg, r"^ip domain.name\s+\S+",
+                         "ip_domain_name", "ip domain-name set",
+                         "ip domain-name <your-domain>"))
+
+        return f
+
+    # ── SSH ───────────────────────────────────────────────────
+    def _check_ssh(self, cfg: ParsedConfig, data: DeviceData,
+                   host: HostnameInfo, ports: dict) -> list[Finding]:
+        f: list[Finding] = []
+        mp = self.policy.get("management_plane", {})
+
+        # SSH version
+        if _enabled(mp, "ssh_version"):
+            ver = mp.get("ssh_version", {}).get("version", 2)
+            f.append(self._present(cfg, rf"^ip ssh version\s+{ver}",
+                     "ssh_version", f"ip ssh version {ver}", f"ip ssh version {ver}"))
+
+        # SSH timeout
+        if _enabled(mp, "ssh_timeout"):
+            max_s = mp.get("ssh_timeout", {}).get("max_seconds", 60)
+            lines = cfg.find_lines(r"^ip ssh time-out\s+\d+")
+            if lines:
+                m = re.search(r"(\d+)", lines[0])
+                actual = int(m.group(1)) if m else 999
+                if actual <= max_s:
+                    f.append(Finding("ssh_timeout", Status.PASS,
+                             f"SSH timeout {actual}s <= {max_s}s"))
+                else:
+                    f.append(Finding("ssh_timeout", Status.FAIL,
+                             f"SSH timeout {actual}s > {max_s}s",
+                             remediation=f"ip ssh time-out {max_s}"))
+            else:
+                f.append(Finding("ssh_timeout", Status.FAIL,
+                         "SSH timeout not configured",
+                         remediation=f"ip ssh time-out {max_s}"))
+
+        # SSH auth retries
+        if _enabled(mp, "ssh_authentication_retries"):
+            max_r = mp.get("ssh_authentication_retries", {}).get("max_retries", 3)
+            lines = cfg.find_lines(r"^ip ssh authentication-retries\s+\d+")
+            if lines:
+                m = re.search(r"(\d+)", lines[0])
+                actual = int(m.group(1)) if m else 999
+                if actual <= max_r:
+                    f.append(Finding("ssh_auth_retries", Status.PASS,
+                             f"SSH retries {actual} <= {max_r}"))
+                else:
+                    f.append(Finding("ssh_auth_retries", Status.FAIL,
+                             f"SSH retries {actual} > {max_r}",
+                             remediation=f"ip ssh authentication-retries {max_r}"))
+            else:
+                f.append(Finding("ssh_auth_retries", Status.WARN,
+                         "SSH authentication-retries not explicitly set"))
+
+        # SSH source-interface
+        if _enabled(mp, "ssh_source_interface"):
+            intf = mp.get("ssh_source_interface", {}).get("interface", "")
+            if intf:
+                f.append(self._present(cfg, rf"^ip ssh source-interface\s+{re.escape(intf)}",
+                         "ssh_source_interface",
+                         f"ip ssh source-interface {intf}",
+                         f"ip ssh source-interface {intf}"))
+
+        return f
+
+    # ── AAA ───────────────────────────────────────────────────
+    def _check_aaa(self, cfg: ParsedConfig, data: DeviceData,
+                   host: HostnameInfo, ports: dict) -> list[Finding]:
+        f: list[Finding] = []
+        mp = self.policy.get("management_plane", {})
+
+        if _enabled(mp, "aaa_new_model"):
+            f.append(self._present(cfg, r"^aaa new-model",
+                     "aaa_new_model", "aaa new-model", "aaa new-model"))
+
+        # AAA line checks — expected exact line
+        for check_name in ("aaa_authentication_login", "aaa_authentication_enable",
+                           "aaa_authorization_console", "aaa_authorization_exec",
+                           "aaa_accounting_exec", "aaa_accounting_connection",
+                           "aaa_session_id"):
+            node = mp.get(check_name, {})
+            if not node.get("enabled", False):
+                continue
+            expected = node.get("expected", "")
+            if expected:
+                f.append(self._present(cfg, re.escape(expected), check_name,
+                         expected, expected))
+
+        # AAA authorization commands (per level)
+        if _enabled(mp, "aaa_authorization_commands"):
+            node = mp["aaa_authorization_commands"]
+            for level in node.get("levels", [15]):
+                prefix = node.get("expected_prefix",
+                                  "aaa authorization commands {level} default group tacacs+ local")
+                expected = prefix.format(level=level)
+                name = f"aaa_authorization_commands_{level}"
+                f.append(self._present(cfg, re.escape(expected), name,
+                         expected, expected))
+
+        # AAA accounting commands (per level)
+        if _enabled(mp, "aaa_accounting_commands"):
+            node = mp["aaa_accounting_commands"]
+            for level in node.get("levels", [15]):
+                prefix = node.get("expected_prefix",
+                                  "aaa accounting commands {level} default start-stop group tacacs+")
+                expected = prefix.format(level=level)
+                name = f"aaa_accounting_commands_{level}"
+                f.append(self._present(cfg, re.escape(expected), name,
+                         expected, expected))
+
+        # TACACS server
+        if _enabled(mp, "tacacs_server"):
+            min_svr = mp.get("tacacs_server", {}).get("min_servers", 1)
+            servers = cfg.find_lines(r"^tacacs server\s+")
+            if len(servers) >= min_svr:
+                f.append(Finding("tacacs_server", Status.PASS,
+                         f"{len(servers)} TACACS server(s) configured"))
+            else:
+                f.append(Finding("tacacs_server", Status.FAIL,
+                         f"Expected >= {min_svr} TACACS server(s), found {len(servers)}",
+                         remediation="tacacs server <name>"))
+
+        # RADIUS server
+        if _enabled(mp, "radius_server"):
+            min_svr = mp.get("radius_server", {}).get("min_servers", 1)
+            servers = cfg.find_lines(r"^radius server\s+")
+            if len(servers) >= min_svr:
+                f.append(Finding("radius_server", Status.PASS,
+                         f"{len(servers)} RADIUS server(s) configured"))
+            else:
+                f.append(Finding("radius_server", Status.FAIL,
+                         f"Expected >= {min_svr} RADIUS server(s), found {len(servers)}",
+                         remediation="radius server <name>"))
+
+        return f
+
+    # ── NTP ───────────────────────────────────────────────────
+    def _check_ntp(self, cfg: ParsedConfig, data: DeviceData,
+                   host: HostnameInfo, ports: dict) -> list[Finding]:
+        f: list[Finding] = []
+        mp = self.policy.get("management_plane", {})
+
+        if _enabled(mp, "ntp_servers"):
+            node = mp.get("ntp_servers", {})
+            min_svr = node.get("min_servers", 1)
+            expected = node.get("expected_servers", [])
+            actual = cfg.find_lines(r"^ntp server\s+")
+
+            if expected:
+                for srv in expected:
+                    if cfg.has_line(rf"^ntp server\s+{re.escape(srv)}"):
+                        f.append(Finding("ntp_server", Status.PASS,
+                                 f"NTP server {srv} configured"))
+                    else:
+                        f.append(Finding("ntp_server", Status.FAIL,
+                                 f"NTP server {srv} missing",
+                                 remediation=f"ntp server {srv}"))
+            elif len(actual) >= min_svr:
+                f.append(Finding("ntp_servers", Status.PASS,
+                         f"{len(actual)} NTP server(s) configured"))
+            else:
+                f.append(Finding("ntp_servers", Status.FAIL,
+                         f"Expected >= {min_svr} NTP server(s), found {len(actual)}",
+                         remediation="ntp server <ip>"))
+
+        if _enabled(mp, "ntp_authenticate"):
+            f.append(self._present(cfg, r"^ntp authenticate",
+                     "ntp_authenticate", "ntp authenticate", "ntp authenticate"))
+
+        if _enabled(mp, "ntp_source_interface"):
+            intf = mp.get("ntp_source_interface", {}).get("interface", "")
+            if intf:
+                f.append(self._present(cfg, rf"^ntp source\s+{re.escape(intf)}",
+                         "ntp_source_interface",
+                         f"ntp source {intf}", f"ntp source {intf}"))
+
+        return f
+
+    # ── LOGGING ───────────────────────────────────────────────
+    def _check_logging(self, cfg: ParsedConfig, data: DeviceData,
+                       host: HostnameInfo, ports: dict) -> list[Finding]:
+        f: list[Finding] = []
+        mp = self.policy.get("management_plane", {})
+
+        if _enabled(mp, "logging_buffered"):
+            f.append(self._present(cfg, r"^logging buffered",
+                     "logging_buffered", "logging buffered",
+                     "logging buffered 64000 informational"))
+
+        if _enabled(mp, "logging_console"):
+            lvl = mp.get("logging_console", {}).get("level", "critical")
+            f.append(self._present(cfg, r"^logging console",
+                     "logging_console", f"logging console {lvl}",
+                     f"logging console {lvl}"))
+
+        if _enabled(mp, "no_logging_console"):
+            f.append(self._absent(cfg, r"^logging console",
+                     "no_logging_console", "logging console", "no logging console"))
+
+        if _enabled(mp, "logging_trap"):
+            f.append(self._present(cfg, r"^logging trap",
+                     "logging_trap", "logging trap",
+                     "logging trap informational"))
+
+        if _enabled(mp, "logging_host"):
+            node = mp.get("logging_host", {})
+            expected = node.get("expected_hosts", [])
+            min_h = node.get("min_hosts", 1)
+            actual = cfg.find_lines(r"^logging host\s+\S+|^logging\s+\d+\.\d+\.\d+\.\d+")
+            if expected:
+                for h in expected:
+                    if cfg.has_line(rf"^logging (host\s+)?{re.escape(h)}"):
+                        f.append(Finding("logging_host", Status.PASS,
+                                 f"Logging host {h} configured"))
+                    else:
+                        f.append(Finding("logging_host", Status.FAIL,
+                                 f"Logging host {h} missing",
+                                 remediation=f"logging host {h}"))
+            elif len(actual) >= min_h:
+                f.append(Finding("logging_host", Status.PASS,
+                         f"{len(actual)} logging host(s) configured"))
+            else:
+                f.append(Finding("logging_host", Status.FAIL,
+                         f"Expected >= {min_h} logging host(s), found {len(actual)}",
+                         remediation="logging host <ip>"))
+
+        if _enabled(mp, "logging_source_interface"):
+            intf = mp.get("logging_source_interface", {}).get("interface", "")
+            if intf:
+                f.append(self._present(cfg, rf"^logging source-interface\s+{re.escape(intf)}",
+                         "logging_source_interface",
+                         f"logging source-interface {intf}",
+                         f"logging source-interface {intf}"))
+
+        return f
+
+    # ── SNMP ──────────────────────────────────────────────────
+    def _check_snmp(self, cfg: ParsedConfig, data: DeviceData,
+                    host: HostnameInfo, ports: dict) -> list[Finding]:
+        f: list[Finding] = []
+        mp = self.policy.get("management_plane", {})
+
+        if _enabled(mp, "snmp_no_community_public"):
+            f.append(self._absent(cfg, r"^snmp-server community public",
+                     "snmp_no_community_public",
+                     "snmp-server community public",
+                     "no snmp-server community public"))
+
+        if _enabled(mp, "snmp_no_community_private"):
+            f.append(self._absent(cfg, r"^snmp-server community private",
+                     "snmp_no_community_private",
+                     "snmp-server community private",
+                     "no snmp-server community private"))
+
+        if _enabled(mp, "snmp_v3_only"):
+            groups = cfg.find_lines(r"^snmp-server group\s+\S+\s+v3\s+priv")
+            if groups:
+                f.append(Finding("snmp_v3_only", Status.PASS,
+                         f"SNMPv3 group(s) configured: {len(groups)}"))
+            else:
+                f.append(Finding("snmp_v3_only", Status.FAIL,
+                         "No SNMPv3 priv group found",
+                         remediation="snmp-server group <name> v3 priv"))
+
+        if _enabled(mp, "snmp_ifindex_persist"):
+            f.append(self._present(cfg, r"^snmp-server ifindex persist",
+                     "snmp_ifindex_persist", "snmp-server ifindex persist",
+                     "snmp-server ifindex persist"))
+
+        return f
+
+    # ── BANNERS ───────────────────────────────────────────────
+    def _check_banners(self, cfg: ParsedConfig, data: DeviceData,
+                       host: HostnameInfo, ports: dict) -> list[Finding]:
+        f: list[Finding] = []
+        mp = self.policy.get("management_plane", {})
+
+        for banner_type in ("login", "motd", "exec"):
+            key = f"banner_{banner_type}"
+            if not _enabled(mp, key):
+                continue
+            if cfg.has_line(rf"^banner {banner_type}\s+"):
+                f.append(Finding(key, Status.PASS, f"banner {banner_type} present"))
+            else:
+                f.append(Finding(key, Status.FAIL, f"banner {banner_type} missing",
+                         remediation=f"banner {banner_type} ^<text>^"))
+
+        return f
+
+    # ── LOCAL USERS ───────────────────────────────────────────
+    def _check_users(self, cfg: ParsedConfig, data: DeviceData,
+                     host: HostnameInfo, ports: dict) -> list[Finding]:
+        f: list[Finding] = []
+        mp = self.policy.get("management_plane", {})
+
+        if _enabled(mp, "enable_secret"):
+            f.append(self._present(cfg, r"^enable secret",
+                     "enable_secret", "enable secret", "enable secret 0 <secret>"))
+
+        if _enabled(mp, "no_enable_password"):
+            f.append(self._absent(cfg, r"^enable password",
+                     "no_enable_password", "enable password",
+                     "no enable password / use enable secret"))
+
+        if _enabled(mp, "username_secret"):
+            pw_users = cfg.find_lines(r"^username\s+\S+.*\bpassword\b")
+            if pw_users:
+                for u in pw_users:
+                    m = re.match(r"username\s+(\S+)", u)
+                    name = m.group(1) if m else "?"
+                    f.append(Finding("username_secret", Status.FAIL,
+                             f"User '{name}' uses 'password' instead of 'secret'",
+                             remediation=f"username {name} secret 0 <secret>"))
+            else:
+                f.append(Finding("username_secret", Status.PASS,
+                         "All local users use 'secret'"))
+
+        return f
+
+    # ── VTY LINES ─────────────────────────────────────────────
+    def _check_vty_lines(self, cfg: ParsedConfig, data: DeviceData,
+                         host: HostnameInfo, ports: dict) -> list[Finding]:
+        f: list[Finding] = []
+        mp = self.policy.get("management_plane", {})
+        vty_sections = cfg.get_line_config_sections(r"^vty\s+")
+
+        if not vty_sections:
+            f.append(Finding("vty_lines", Status.WARN, "No VTY line config found"))
+            return f
+
+        for sec_name, lines in vty_sections.items():
+            label = f"line {sec_name}"
+
+            if _enabled(mp, "vty_transport_input_ssh"):
+                has_ssh_only = any(re.match(r"transport input ssh", l, re.I) for l in lines)
+                if has_ssh_only:
+                    f.append(Finding("vty_transport_ssh", Status.PASS,
+                             f"{label}: transport input ssh", interface=label))
+                else:
+                    f.append(Finding("vty_transport_ssh", Status.FAIL,
+                             f"{label}: transport input is not 'ssh' only",
+                             interface=label,
+                             remediation="transport input ssh"))
+
+            if _enabled(mp, "vty_exec_timeout"):
+                exp_min = mp.get("vty_exec_timeout", {}).get("minutes", 5)
+                exp_sec = mp.get("vty_exec_timeout", {}).get("seconds", 0)
+                timeout_lines = [l for l in lines if l.startswith("exec-timeout")]
+                if timeout_lines:
+                    m = re.match(r"exec-timeout\s+(\d+)\s+(\d+)", timeout_lines[0])
+                    if m:
+                        actual_total = int(m.group(1)) * 60 + int(m.group(2))
+                        exp_total = exp_min * 60 + exp_sec
+                        if actual_total <= exp_total:
+                            f.append(Finding("vty_exec_timeout", Status.PASS,
+                                     f"{label}: exec-timeout {m.group(1)} {m.group(2)}",
+                                     interface=label))
+                        else:
+                            f.append(Finding("vty_exec_timeout", Status.FAIL,
+                                     f"{label}: exec-timeout too long ({m.group(1)} {m.group(2)})",
+                                     interface=label,
+                                     remediation=f"exec-timeout {exp_min} {exp_sec}"))
+                else:
+                    f.append(Finding("vty_exec_timeout", Status.FAIL,
+                             f"{label}: exec-timeout not set",
+                             interface=label,
+                             remediation=f"exec-timeout {exp_min} {exp_sec}"))
+
+            if _enabled(mp, "vty_access_class"):
+                acl = mp.get("vty_access_class", {}).get("acl_name", "")
+                has_acl = any("access-class" in l for l in lines)
+                if has_acl:
+                    f.append(Finding("vty_access_class", Status.PASS,
+                             f"{label}: access-class applied", interface=label))
+                else:
+                    remed = f"access-class {acl} in" if acl else "access-class <acl> in"
+                    f.append(Finding("vty_access_class", Status.FAIL,
+                             f"{label}: no access-class", interface=label,
+                             remediation=remed))
+
+            if _enabled(mp, "vty_logging_synchronous"):
+                if any("logging synchronous" in l for l in lines):
+                    f.append(Finding("vty_logging_sync", Status.PASS,
+                             f"{label}: logging synchronous", interface=label))
+                else:
+                    f.append(Finding("vty_logging_sync", Status.FAIL,
+                             f"{label}: logging synchronous missing", interface=label,
+                             remediation="logging synchronous"))
+
+        return f
+
+    # ── CONSOLE ───────────────────────────────────────────────
+    def _check_console(self, cfg: ParsedConfig, data: DeviceData,
+                       host: HostnameInfo, ports: dict) -> list[Finding]:
+        f: list[Finding] = []
+        mp = self.policy.get("management_plane", {})
+        con_sections = cfg.get_line_config_sections(r"^con\s+")
+
+        if not con_sections:
+            return f
+
+        for sec_name, lines in con_sections.items():
+            label = f"line {sec_name}"
+
+            if _enabled(mp, "console_exec_timeout"):
+                exp_min = mp.get("console_exec_timeout", {}).get("minutes", 5)
+                exp_sec = mp.get("console_exec_timeout", {}).get("seconds", 0)
+                timeout_lines = [l for l in lines if l.startswith("exec-timeout")]
+                if timeout_lines:
+                    m = re.match(r"exec-timeout\s+(\d+)\s+(\d+)", timeout_lines[0])
+                    if m:
+                        actual_total = int(m.group(1)) * 60 + int(m.group(2))
+                        exp_total = exp_min * 60 + exp_sec
+                        if actual_total <= exp_total:
+                            f.append(Finding("console_exec_timeout", Status.PASS,
+                                     f"{label}: exec-timeout {m.group(1)} {m.group(2)}",
+                                     interface=label))
+                        else:
+                            f.append(Finding("console_exec_timeout", Status.FAIL,
+                                     f"{label}: exec-timeout too long",
+                                     interface=label,
+                                     remediation=f"exec-timeout {exp_min} {exp_sec}"))
+                else:
+                    f.append(Finding("console_exec_timeout", Status.FAIL,
+                             f"{label}: exec-timeout not set", interface=label,
+                             remediation=f"exec-timeout {exp_min} {exp_sec}"))
+
+            if _enabled(mp, "console_logging_synchronous"):
+                if any("logging synchronous" in l for l in lines):
+                    f.append(Finding("console_logging_sync", Status.PASS,
+                             f"{label}: logging synchronous", interface=label))
+                else:
+                    f.append(Finding("console_logging_sync", Status.FAIL,
+                             f"{label}: logging synchronous missing",
+                             interface=label, remediation="logging synchronous"))
+
+        return f
+
+    # ── ARCHIVE ───────────────────────────────────────────────
+    def _check_archive(self, cfg: ParsedConfig, data: DeviceData,
+                       host: HostnameInfo, ports: dict) -> list[Finding]:
+        f: list[Finding] = []
+        mp = self.policy.get("management_plane", {})
+        if not _enabled(mp, "archive_logging"):
+            return f
+        if cfg.has_line(r"^archive") and cfg.has_line(r"logging enable"):
+            f.append(Finding("archive_logging", Status.PASS, "Archive config logging enabled"))
+        else:
+            f.append(Finding("archive_logging", Status.FAIL,
+                     "Archive config logging not enabled",
+                     remediation="archive / log config / logging enable"))
+        return f
+
+    # ── LOGIN SECURITY ────────────────────────────────────────
+    def _check_login_security(self, cfg: ParsedConfig, data: DeviceData,
+                              host: HostnameInfo, ports: dict) -> list[Finding]:
+        f: list[Finding] = []
+        mp = self.policy.get("management_plane", {})
+
+        if _enabled(mp, "login_block_for"):
+            node = mp.get("login_block_for", {})
+            secs = node.get("seconds", 120)
+            att = node.get("attempts", 3)
+            within = node.get("within", 60)
+            f.append(self._present(cfg, r"^login block-for",
+                     "login_block_for",
+                     f"login block-for {secs} attempts {att} within {within}",
+                     f"login block-for {secs} attempts {att} within {within}"))
+
+        if _enabled(mp, "login_on_failure_log"):
+            f.append(self._present(cfg, r"^login on-failure log",
+                     "login_on_failure_log", "login on-failure log",
+                     "login on-failure log"))
+
+        if _enabled(mp, "login_on_success_log"):
+            f.append(self._present(cfg, r"^login on-success log",
+                     "login_on_success_log", "login on-success log",
+                     "login on-success log"))
+
+        if _enabled(mp, "login_delay"):
+            f.append(self._present(cfg, r"^login delay\s+\d+",
+                     "login_delay", "login delay",
+                     f"login delay {mp.get('login_delay', {}).get('seconds', 2)}"))
+
+        return f
+
+    # ── CDP / LLDP ────────────────────────────────────────────
+    def _check_cdp_lldp(self, cfg: ParsedConfig, data: DeviceData,
+                        host: HostnameInfo, ports: dict) -> list[Finding]:
+        f: list[Finding] = []
+        mp = self.policy.get("management_plane", {})
+
+        if _enabled(mp, "cdp_global"):
+            want = mp.get("cdp_global", {}).get("state", "enabled")
+            if want == "disabled":
+                f.append(self._present(cfg, r"^no cdp run",
+                         "cdp_global", "no cdp run", "no cdp run"))
+            else:
+                # CDP is enabled by default; ensure 'no cdp run' is absent
+                f.append(self._absent(cfg, r"^no cdp run",
+                         "cdp_global", "no cdp run", "cdp run"))
+
+        if _enabled(mp, "lldp_global"):
+            want = mp.get("lldp_global", {}).get("state", "enabled")
+            if want == "enabled":
+                f.append(self._present(cfg, r"^lldp run",
+                         "lldp_global", "lldp run", "lldp run"))
+            else:
+                f.append(self._absent(cfg, r"^lldp run",
+                         "lldp_global", "lldp run", "no lldp run"))
+
+        return f
+
+    # ===================================================================
+    #                     CONTROL  PLANE  CHECKS
+    # ===================================================================
+
+    # ── STP ───────────────────────────────────────────────────
+    def _check_stp(self, cfg: ParsedConfig, data: DeviceData,
+                   host: HostnameInfo, ports: dict) -> list[Finding]:
+        f: list[Finding] = []
+        cp = self.policy.get("control_plane", {})
+
+        if _enabled(cp, "stp_mode"):
+            mode = cp.get("stp_mode", {}).get("mode", "rapid-pvst")
+            f.append(self._present(cfg, rf"^spanning-tree mode\s+{re.escape(mode)}",
+                     "stp_mode", f"spanning-tree mode {mode}",
+                     f"spanning-tree mode {mode}"))
+
+        if _enabled(cp, "stp_extend_system_id"):
+            f.append(self._present(cfg, r"^spanning-tree extend system-id",
+                     "stp_extend_system_id", "spanning-tree extend system-id",
+                     "spanning-tree extend system-id"))
+
+        if _enabled(cp, "stp_pathcost_method"):
+            method = cp.get("stp_pathcost_method", {}).get("method", "long")
+            f.append(self._present(cfg, rf"^spanning-tree pathcost method\s+{re.escape(method)}",
+                     "stp_pathcost_method",
+                     f"spanning-tree pathcost method {method}",
+                     f"spanning-tree pathcost method {method}"))
+
+        if _enabled(cp, "stp_loopguard_default"):
+            f.append(self._present(cfg, r"^spanning-tree loopguard default",
+                     "stp_loopguard_default", "spanning-tree loopguard default",
+                     "spanning-tree loopguard default"))
+
+        # STP priority (role-dependent)
+        if _enabled(cp, "stp_priority") and host.parsed:
+            node = cp.get("stp_priority", {})
+            if host.is_core:
+                exp = node.get("core_priority", 4096)
+                if exp:
+                    self._check_stp_priority(cfg, data, exp, "core", f)
+            elif host.is_access or host.is_industrial:
+                exp = node.get("access_priority", 32768)
+                if exp:
+                    self._check_stp_priority(cfg, data, exp, "access", f)
+
+        return f
+
+    def _check_stp_priority(self, cfg: ParsedConfig, data: DeviceData,
+                            expected: int, label: str,
+                            f: list[Finding]) -> None:
+        # Try Genie parsed data first
+        if data.stp:
+            for mode_data in data.stp.values():
+                if not isinstance(mode_data, dict):
+                    continue
+                for vid, vinfo in mode_data.get("vlans", {}).items():
+                    bridge = vinfo.get("bridge", {})
+                    prio = bridge.get("priority", None)
+                    if prio is not None:
+                        if prio <= expected:
+                            f.append(Finding("stp_priority", Status.PASS,
+                                     f"VLAN {vid} bridge priority {prio} <= {expected} ({label})"))
+                        else:
+                            f.append(Finding("stp_priority", Status.FAIL,
+                                     f"VLAN {vid} bridge priority {prio} > expected {expected} ({label})",
+                                     remediation=f"spanning-tree vlan {vid} priority {expected}"))
+                        return  # check only first VLAN found
+        # Fallback: regex on running-config
+        lines = cfg.find_lines(r"^spanning-tree vlan\s+\S+\s+priority\s+\d+")
+        if lines:
+            m = re.search(r"priority\s+(\d+)", lines[0])
+            if m:
+                actual = int(m.group(1))
+                if actual <= expected:
+                    f.append(Finding("stp_priority", Status.PASS,
+                             f"STP priority {actual} <= {expected} ({label})"))
+                else:
+                    f.append(Finding("stp_priority", Status.FAIL,
+                             f"STP priority {actual} > expected {expected} ({label})"))
+                return
+        f.append(Finding("stp_priority", Status.WARN,
+                 f"STP priority not explicitly configured ({label})"))
+
+    # ── VTP ───────────────────────────────────────────────────
+    def _check_vtp(self, cfg: ParsedConfig, data: DeviceData,
+                   host: HostnameInfo, ports: dict) -> list[Finding]:
+        f: list[Finding] = []
+        cp = self.policy.get("control_plane", {})
+
+        if not _enabled(cp, "vtp_mode"):
+            return f
+
+        expected = cp.get("vtp_mode", {}).get("expected", "transparent")
+
+        # Try Genie parsed VTP data
+        if data.vtp:
+            actual = (data.vtp.get("vtp", {}).get("operating_mode", "")
+                      or data.vtp.get("operating_mode", "")).lower()
+            if actual == expected.lower():
+                f.append(Finding("vtp_mode", Status.PASS,
+                         f"VTP mode: {actual}"))
+            else:
+                f.append(Finding("vtp_mode", Status.FAIL,
+                         f"VTP mode: {actual or 'unknown'}, expected: {expected}",
+                         remediation=f"vtp mode {expected}"))
+        else:
+            # Fallback to config
+            if cfg.has_line(rf"^vtp mode\s+{re.escape(expected)}"):
+                f.append(Finding("vtp_mode", Status.PASS,
+                         f"VTP mode {expected} in config"))
+            else:
+                f.append(Finding("vtp_mode", Status.WARN,
+                         f"VTP mode not verified (expected: {expected})",
+                         remediation=f"vtp mode {expected}"))
+
+        return f
+
+    # ── DHCP SNOOPING ─────────────────────────────────────────
+    def _check_dhcp_snooping(self, cfg: ParsedConfig, data: DeviceData,
+                             host: HostnameInfo, ports: dict) -> list[Finding]:
+        f: list[Finding] = []
+        cp = self.policy.get("control_plane", {})
+
+        if _enabled(cp, "dhcp_snooping_global"):
+            f.append(self._present(cfg, r"^ip dhcp snooping$",
+                     "dhcp_snooping_global", "ip dhcp snooping",
+                     "ip dhcp snooping"))
+
+        if _enabled(cp, "dhcp_snooping_vlans"):
+            if cfg.has_line(r"^ip dhcp snooping vlan"):
+                f.append(Finding("dhcp_snooping_vlans", Status.PASS,
+                         "DHCP snooping VLAN(s) configured"))
+            else:
+                f.append(Finding("dhcp_snooping_vlans", Status.FAIL,
+                         "No DHCP snooping VLANs configured",
+                         remediation="ip dhcp snooping vlan <vlan-list>"))
+
+        if _enabled(cp, "no_dhcp_snooping_information_option"):
+            f.append(self._absent(cfg,
+                     r"^ip dhcp snooping information option$",
+                     "no_dhcp_snooping_info_option",
+                     "ip dhcp snooping information option",
+                     "no ip dhcp snooping information option"))
+
+        return f
+
+    # ── ARP INSPECTION ────────────────────────────────────────
+    def _check_arp_inspection(self, cfg: ParsedConfig, data: DeviceData,
+                              host: HostnameInfo, ports: dict) -> list[Finding]:
+        f: list[Finding] = []
+        cp = self.policy.get("control_plane", {})
+
+        if _enabled(cp, "arp_inspection_vlans"):
+            if cfg.has_line(r"^ip arp inspection vlan"):
+                f.append(Finding("arp_inspection_vlans", Status.PASS,
+                         "Dynamic ARP Inspection VLAN(s) configured"))
+            else:
+                f.append(Finding("arp_inspection_vlans", Status.FAIL,
+                         "No DAI VLANs configured",
+                         remediation="ip arp inspection vlan <vlan-list>"))
+
+        if _enabled(cp, "arp_inspection_validate"):
+            checks = cp.get("arp_inspection_validate", {}).get("checks", [])
+            if checks:
+                pattern = r"^ip arp inspection validate\s+" + r"\s+".join(
+                    re.escape(c) for c in checks
+                )
+                f.append(self._present(cfg, pattern,
+                         "arp_inspection_validate",
+                         "ip arp inspection validate " + " ".join(checks),
+                         "ip arp inspection validate " + " ".join(checks)))
+
+        return f
+
+    # ── ERRDISABLE ────────────────────────────────────────────
+    def _check_errdisable(self, cfg: ParsedConfig, data: DeviceData,
+                          host: HostnameInfo, ports: dict) -> list[Finding]:
+        f: list[Finding] = []
+        cp = self.policy.get("control_plane", {})
+        if not _enabled(cp, "errdisable_recovery"):
+            return f
+
+        node = cp["errdisable_recovery"]
+        for cause in node.get("causes", []):
+            name = f"errdisable_recovery_{cause}"
+            pattern = rf"^errdisable recovery cause\s+{re.escape(cause)}"
+            f.append(self._present(cfg, pattern, name,
+                     f"errdisable recovery cause {cause}",
+                     f"errdisable recovery cause {cause}"))
+
+        interval = node.get("interval")
+        if interval:
+            f.append(self._present(cfg, rf"^errdisable recovery interval\s+{interval}",
+                     "errdisable_recovery_interval",
+                     f"errdisable recovery interval {interval}",
+                     f"errdisable recovery interval {interval}"))
+
+        return f
+
+    # ── UDLD ──────────────────────────────────────────────────
+    def _check_udld(self, cfg: ParsedConfig, data: DeviceData,
+                    host: HostnameInfo, ports: dict) -> list[Finding]:
+        f: list[Finding] = []
+        cp = self.policy.get("control_plane", {})
+        if not _enabled(cp, "udld_global"):
+            return f
+        mode = cp.get("udld_global", {}).get("mode", "enable")
+        f.append(self._present(cfg, rf"^udld\s+{re.escape(mode)}",
+                 "udld_global", f"udld {mode}", f"udld {mode}"))
+        return f
+
+    # ===================================================================
+    #                       DATA  PLANE  CHECKS
+    #       (per-interface, role-aware: access / trunk / unused)
+    # ===================================================================
+
+    def _check_interfaces(self, cfg: ParsedConfig, data: DeviceData,
+                          host: HostnameInfo, ports: dict[str, PortInfo]) -> list[Finding]:
+        f: list[Finding] = []
+        dp = self.policy.get("data_plane", {})
+
+        for intf_name, pi in ports.items():
+            role = pi.role
+
+            if role == PortRole.ACCESS:
+                f.extend(self._check_access_port(cfg, dp, pi))
+            elif role in (PortRole.TRUNK_UPLINK, PortRole.TRUNK_DOWNLINK, PortRole.TRUNK_UNKNOWN):
+                f.extend(self._check_trunk_port(cfg, dp, pi))
+            elif role == PortRole.UNUSED:
+                f.extend(self._check_unused_port(cfg, dp, pi))
+            # Routed / SVI / Loopback / MGMT are generally not subject to
+            # switchport-level data-plane checks.
+
+        return f
+
+    # ── ACCESS PORT CHECKS ────────────────────────────────────
+    def _check_access_port(self, cfg: ParsedConfig, dp: dict,
+                           pi: PortInfo) -> list[Finding]:
+        f: list[Finding] = []
+        intf = pi.name
+
+        # Storm control
+        f.extend(self._check_storm_control(dp, pi))
+
+        # BPDU guard
+        if _enabled(dp, "bpdu_guard"):
+            if pi_has(pi, r"spanning-tree bpduguard enable"):
+                f.append(Finding("bpdu_guard", Status.PASS,
+                         f"{intf}: BPDU guard enabled", interface=intf))
+            else:
+                f.append(Finding("bpdu_guard", Status.FAIL,
+                         f"{intf}: BPDU guard missing (access port)",
+                         interface=intf,
+                         remediation="spanning-tree bpduguard enable"))
+
+        # Portfast
+        if _enabled(dp, "portfast"):
+            if pi_has(pi, r"spanning-tree portfast$"):
+                f.append(Finding("portfast", Status.PASS,
+                         f"{intf}: portfast enabled", interface=intf))
+            else:
+                f.append(Finding("portfast", Status.FAIL,
+                         f"{intf}: portfast missing (access port)",
+                         interface=intf,
+                         remediation="spanning-tree portfast"))
+
+        # Switchport nonegotiate
+        if _enabled(dp, "switchport_nonegotiate"):
+            if pi_has(pi, r"switchport nonegotiate"):
+                f.append(Finding("switchport_nonegotiate", Status.PASS,
+                         f"{intf}: nonegotiate set", interface=intf))
+            else:
+                f.append(Finding("switchport_nonegotiate", Status.FAIL,
+                         f"{intf}: switchport nonegotiate missing",
+                         interface=intf,
+                         remediation="switchport nonegotiate"))
+
+        # Explicit switchport mode
+        if _enabled(dp, "switchport_mode_explicit"):
+            if pi.switchport_mode == "access":
+                f.append(Finding("switchport_mode_explicit", Status.PASS,
+                         f"{intf}: mode access explicitly set", interface=intf))
+            else:
+                f.append(Finding("switchport_mode_explicit", Status.FAIL,
+                         f"{intf}: switchport mode not explicitly 'access'",
+                         interface=intf,
+                         remediation="switchport mode access"))
+
+        # Access VLAN not in disallowed list
+        if _enabled(dp, "access_vlan_set"):
+            bad_vlans = dp.get("access_vlan_set", {}).get("disallowed_vlans", [1])
+            if pi.access_vlan and pi.access_vlan not in bad_vlans:
+                f.append(Finding("access_vlan_set", Status.PASS,
+                         f"{intf}: access VLAN {pi.access_vlan}", interface=intf))
+            elif pi.access_vlan in bad_vlans:
+                f.append(Finding("access_vlan_set", Status.FAIL,
+                         f"{intf}: access VLAN {pi.access_vlan} is disallowed",
+                         interface=intf,
+                         remediation="switchport access vlan <vlan>"))
+            else:
+                f.append(Finding("access_vlan_set", Status.FAIL,
+                         f"{intf}: no access VLAN configured",
+                         interface=intf,
+                         remediation="switchport access vlan <vlan>"))
+
+        # Description
+        if _enabled(dp, "interface_description"):
+            if pi.description:
+                f.append(Finding("interface_description", Status.PASS,
+                         f"{intf}: description present", interface=intf))
+            else:
+                f.append(Finding("interface_description", Status.FAIL,
+                         f"{intf}: no description", interface=intf,
+                         remediation="description <text>"))
+
+        return f
+
+    # ── TRUNK PORT CHECKS ─────────────────────────────────────
+    def _check_trunk_port(self, cfg: ParsedConfig, dp: dict,
+                          pi: PortInfo) -> list[Finding]:
+        f: list[Finding] = []
+        intf = pi.name
+        is_uplink = pi.role == PortRole.TRUNK_UPLINK
+        is_downlink = pi.role == PortRole.TRUNK_DOWNLINK
+        direction = ("uplink" if is_uplink
+                     else "downlink" if is_downlink
+                     else "unknown-direction trunk")
+
+        # Storm control
+        f.extend(self._check_storm_control(dp, pi))
+
+        # Root guard — only on downlinks, never on uplinks
+        if _enabled(dp, "root_guard"):
+            if is_downlink:
+                if pi_has(pi, r"spanning-tree guard root"):
+                    f.append(Finding("root_guard", Status.PASS,
+                             f"{intf}: root guard on downlink",
+                             interface=intf))
+                else:
+                    f.append(Finding("root_guard", Status.FAIL,
+                             f"{intf}: root guard missing (downlink)",
+                             interface=intf,
+                             remediation="spanning-tree guard root"))
+            elif is_uplink:
+                if pi_has(pi, r"spanning-tree guard root"):
+                    f.append(Finding("root_guard", Status.FAIL,
+                             f"{intf}: root guard on UPLINK — must be removed!",
+                             interface=intf,
+                             remediation="no spanning-tree guard root"))
+                else:
+                    f.append(Finding("root_guard", Status.PASS,
+                             f"{intf}: no root guard on uplink (correct)",
+                             interface=intf))
+            else:
+                # TRUNK_UNKNOWN
+                if pi_has(pi, r"spanning-tree guard root"):
+                    f.append(Finding("root_guard", Status.WARN,
+                             f"{intf}: root guard present but direction unknown — verify manually",
+                             interface=intf))
+                else:
+                    f.append(Finding("root_guard", Status.WARN,
+                             f"{intf}: no root guard — direction unknown, verify manually",
+                             interface=intf))
+
+        # Switchport nonegotiate
+        if _enabled(dp, "switchport_nonegotiate"):
+            if pi_has(pi, r"switchport nonegotiate"):
+                f.append(Finding("switchport_nonegotiate", Status.PASS,
+                         f"{intf}: nonegotiate ({direction})", interface=intf))
+            else:
+                f.append(Finding("switchport_nonegotiate", Status.FAIL,
+                         f"{intf}: nonegotiate missing ({direction})",
+                         interface=intf,
+                         remediation="switchport nonegotiate"))
+
+        # Trunk allowed VLANs — should not be "all"
+        if _enabled(dp, "trunk_allowed_vlans"):
+            if pi.trunk_allowed_vlans and pi.trunk_allowed_vlans.lower() != "all":
+                f.append(Finding("trunk_allowed_vlans", Status.PASS,
+                         f"{intf}: trunk allowed vlans pruned ({direction})",
+                         interface=intf))
+            else:
+                f.append(Finding("trunk_allowed_vlans", Status.FAIL,
+                         f"{intf}: trunk allows ALL VLANs ({direction})",
+                         interface=intf,
+                         remediation="switchport trunk allowed vlan <list>"))
+
+        # Description
+        if _enabled(dp, "interface_description"):
+            if pi.description:
+                f.append(Finding("interface_description", Status.PASS,
+                         f"{intf}: description present ({direction})",
+                         interface=intf))
+            else:
+                f.append(Finding("interface_description", Status.FAIL,
+                         f"{intf}: no description ({direction})",
+                         interface=intf, remediation="description <text>"))
+
+        # DHCP snooping trust
+        if _enabled(dp, "dhcp_snooping_trust"):
+            trust_node = dp.get("dhcp_snooping_trust", {})
+            want_trust = (
+                (is_uplink and trust_node.get("on_uplinks", True)) or
+                (is_downlink and trust_node.get("on_downlinks", True))
+            )
+            has_trust = pi_has(pi, r"ip dhcp snooping trust")
+            if want_trust:
+                if has_trust:
+                    f.append(Finding("dhcp_snooping_trust", Status.PASS,
+                             f"{intf}: DHCP snooping trust ({direction})",
+                             interface=intf))
+                else:
+                    f.append(Finding("dhcp_snooping_trust", Status.FAIL,
+                             f"{intf}: DHCP snooping trust missing ({direction})",
+                             interface=intf,
+                             remediation="ip dhcp snooping trust"))
+
+        # ARP inspection trust
+        if _enabled(dp, "arp_inspection_trust"):
+            trust_node = dp.get("arp_inspection_trust", {})
+            want_trust = (
+                (is_uplink and trust_node.get("on_uplinks", True)) or
+                (is_downlink and trust_node.get("on_downlinks", True))
+            )
+            has_trust = pi_has(pi, r"ip arp inspection trust")
+            if want_trust:
+                if has_trust:
+                    f.append(Finding("arp_inspection_trust", Status.PASS,
+                             f"{intf}: DAI trust ({direction})",
+                             interface=intf))
+                else:
+                    f.append(Finding("arp_inspection_trust", Status.FAIL,
+                             f"{intf}: DAI trust missing ({direction})",
+                             interface=intf,
+                             remediation="ip arp inspection trust"))
+
+        return f
+
+    # ── UNUSED PORT CHECKS ────────────────────────────────────
+    def _check_unused_port(self, cfg: ParsedConfig, dp: dict,
+                           pi: PortInfo) -> list[Finding]:
+        f: list[Finding] = []
+        intf = pi.name
+        if not _enabled(dp, "unused_ports"):
+            return f
+        node = dp.get("unused_ports", {})
+
+        if node.get("must_be_shutdown", True) and not pi.admin_down:
+            f.append(Finding("unused_shutdown", Status.FAIL,
+                     f"{intf}: unused port not shut down",
+                     interface=intf, remediation="shutdown"))
+
+        if node.get("must_be_access_mode", True):
+            if pi.switchport_mode != "access":
+                f.append(Finding("unused_access_mode", Status.FAIL,
+                         f"{intf}: unused port not in access mode",
+                         interface=intf, remediation="switchport mode access"))
+
+        parking = self.policy.get("_audit_settings", {}).get("parking_vlan", 999)
+        if node.get("must_be_in_parking_vlan", True):
+            if pi.access_vlan != parking:
+                f.append(Finding("unused_parking_vlan", Status.FAIL,
+                         f"{intf}: unused port not in parking VLAN {parking} (is {pi.access_vlan})",
+                         interface=intf,
+                         remediation=f"switchport access vlan {parking}"))
+
+        if node.get("must_have_nonegotiate", True):
+            if not pi_has(pi, r"switchport nonegotiate"):
+                f.append(Finding("unused_nonegotiate", Status.FAIL,
+                         f"{intf}: unused port missing nonegotiate",
+                         interface=intf, remediation="switchport nonegotiate"))
+
+        if node.get("must_have_bpduguard", True):
+            if not pi_has(pi, r"spanning-tree bpduguard enable"):
+                f.append(Finding("unused_bpduguard", Status.FAIL,
+                         f"{intf}: unused port missing BPDU guard",
+                         interface=intf, remediation="spanning-tree bpduguard enable"))
+
+        if node.get("must_have_no_cdp", True):
+            if not pi_has(pi, r"no cdp enable"):
+                f.append(Finding("unused_no_cdp", Status.FAIL,
+                         f"{intf}: unused port has CDP enabled",
+                         interface=intf, remediation="no cdp enable"))
+
+        if node.get("must_have_no_lldp", True):
+            has_no_tx = pi_has(pi, r"no lldp transmit")
+            has_no_rx = pi_has(pi, r"no lldp receive")
+            if not (has_no_tx and has_no_rx):
+                f.append(Finding("unused_no_lldp", Status.FAIL,
+                         f"{intf}: unused port has LLDP enabled",
+                         interface=intf,
+                         remediation="no lldp transmit / no lldp receive"))
+
+        if node.get("must_have_description", True):
+            exp_desc = node.get("expected_description", "UNUSED")
+            if exp_desc.lower() in pi.description.lower():
+                f.append(Finding("unused_description", Status.PASS,
+                         f"{intf}: description contains '{exp_desc}'",
+                         interface=intf))
+            else:
+                f.append(Finding("unused_description", Status.FAIL,
+                         f"{intf}: description missing or wrong (expected '{exp_desc}')",
+                         interface=intf,
+                         remediation=f'description {exp_desc}'))
+
+        return f
+
+    # ── STORM CONTROL (speed-aware) ───────────────────────────
+    def _check_storm_control(self, dp: dict, pi: PortInfo) -> list[Finding]:
+        """Check storm-control levels against speed-based thresholds."""
+        f: list[Finding] = []
+        if not _enabled(dp, "storm_control"):
+            return f
+
+        node = dp.get("storm_control", {})
+        intf = pi.name
+        speed = pi.speed_mbps or 1000  # default to 1G if unknown
+
+        # Pick threshold tier
+        thresholds = node.get("thresholds_by_speed", {})
+        tier = thresholds.get(speed) or thresholds.get(str(speed))
+        if tier is None:
+            # Find the nearest tier
+            for spd in sorted(thresholds.keys(), key=lambda x: int(x), reverse=True):
+                if speed >= int(spd):
+                    tier = thresholds[spd]
+                    break
+        if tier is None:
+            tier = node.get("default_thresholds", {})
+
+        for sc_type in node.get("types", ["broadcast", "multicast"]):
+            expected_level = tier.get(sc_type)
+            if expected_level is None:
+                continue
+
+            # Look in interface config for matching storm-control line
+            pattern = rf"storm-control\s+{re.escape(sc_type)}\s+level\s+([\d.]+)"
+            match = None
+            for line in pi.config_lines:
+                m = re.search(pattern, line, re.IGNORECASE)
+                if m:
+                    match = m
+                    break
+
+            if match:
+                actual = float(match.group(1))
+                if actual <= expected_level:
+                    f.append(Finding("storm_control", Status.PASS,
+                             f"{intf}: {sc_type} storm-control {actual}% <= {expected_level}% "
+                             f"({speed}Mbps tier)",
+                             interface=intf))
+                else:
+                    f.append(Finding("storm_control", Status.FAIL,
+                             f"{intf}: {sc_type} storm-control {actual}% > {expected_level}% "
+                             f"({speed}Mbps tier)",
+                             interface=intf,
+                             remediation=f"storm-control {sc_type} level {expected_level}"))
+            else:
+                f.append(Finding("storm_control", Status.FAIL,
+                         f"{intf}: {sc_type} storm-control not configured ({speed}Mbps tier)",
+                         interface=intf,
+                         remediation=f"storm-control {sc_type} level {expected_level}"))
+
+        # Storm-control action
+        expected_action = node.get("action", "shutdown")
+        if expected_action:
+            if pi_has(pi, rf"storm-control action\s+{re.escape(expected_action)}"):
+                f.append(Finding("storm_control_action", Status.PASS,
+                         f"{intf}: storm-control action {expected_action}",
+                         interface=intf))
+            else:
+                f.append(Finding("storm_control_action", Status.FAIL,
+                         f"{intf}: storm-control action not '{expected_action}'",
+                         interface=intf,
+                         remediation=f"storm-control action {expected_action}"))
+
+        return f
+
+    # ===================================================================
+    #                     ROLE-SPECIFIC  CHECKS
+    # ===================================================================
+
+    def _check_role_specific(self, cfg: ParsedConfig, data: DeviceData,
+                             host: HostnameInfo,
+                             ports: dict[str, PortInfo]) -> list[Finding]:
+        f: list[Finding] = []
+        rs = self.policy.get("role_specific", {})
+
+        if host.is_core:
+            f.extend(self._check_core_role(cfg, data, host, ports, rs))
+        elif host.is_access:
+            f.extend(self._check_access_role(cfg, data, host, ports, rs))
+
+        return f
+
+    def _check_core_role(self, cfg, data, host, ports, rs) -> list[Finding]:
+        f: list[Finding] = []
+        core_pol = rs.get("core_switch", {})
+
+        if _enabled(core_pol, "stp_root_check") and data.stp:
+            # Check if this switch is root for VLAN 1
+            is_root = False
+            for mode_data in data.stp.values():
+                if not isinstance(mode_data, dict):
+                    continue
+                for vid, vinfo in mode_data.get("vlans", {}).items():
+                    root = vinfo.get("root", {})
+                    bridge = vinfo.get("bridge", {})
+                    if (root.get("address") and bridge.get("address") and
+                            root["address"] == bridge["address"]):
+                        is_root = True
+                        break
+                if is_root:
+                    break
+
+            if is_root:
+                f.append(Finding("core_stp_root", Status.PASS,
+                         "Core switch IS the STP root bridge", "role_specific"))
+            else:
+                f.append(Finding("core_stp_root", Status.WARN,
+                         "Core switch is NOT the STP root bridge — verify",
+                         "role_specific"))
+
+        return f
+
+    def _check_access_role(self, cfg, data, host, ports, rs) -> list[Finding]:
+        f: list[Finding] = []
+        asw_pol = rs.get("access_switch", {})
+
+        if _enabled(asw_pol, "stp_not_root") and data.stp:
+            is_root = False
+            for mode_data in data.stp.values():
+                if not isinstance(mode_data, dict):
+                    continue
+                for vid, vinfo in mode_data.get("vlans", {}).items():
+                    root = vinfo.get("root", {})
+                    bridge = vinfo.get("bridge", {})
+                    if (root.get("address") and bridge.get("address") and
+                            root["address"] == bridge["address"]):
+                        is_root = True
+                        break
+            if is_root:
+                f.append(Finding("asw_not_root", Status.FAIL,
+                         "Access switch IS the STP root — this should be the core!",
+                         "role_specific"))
+            else:
+                f.append(Finding("asw_not_root", Status.PASS,
+                         "Access switch is not STP root (correct)", "role_specific"))
+
+        if _enabled(asw_pol, "uplink_redundancy"):
+            po_uplinks = [p for p in ports.values()
+                          if p.role == PortRole.TRUNK_UPLINK
+                          and p.name.startswith("Port-channel")]
+            if po_uplinks:
+                f.append(Finding("uplink_redundancy", Status.PASS,
+                         "Uplink uses port-channel", "role_specific"))
+            else:
+                f.append(Finding("uplink_redundancy", Status.WARN,
+                         "No port-channel uplink detected", "role_specific"))
+
+        return f
+
+    # ===================================================================
+    #                         LOW-LEVEL HELPERS
+    # ===================================================================
+
+    def _present(self, cfg: ParsedConfig, pattern: str, name: str,
+                 description: str, remediation: str) -> Finding:
+        """PASS if *pattern* is found in global config; FAIL otherwise."""
+        if cfg.has_line(pattern):
+            return Finding(name, Status.PASS, description)
+        return Finding(name, Status.FAIL, f"Missing: {description}",
+                       remediation=remediation)
+
+    def _absent(self, cfg: ParsedConfig, pattern: str, name: str,
+                bad_description: str, remediation: str) -> Finding:
+        """PASS if *pattern* is NOT found in global config; FAIL otherwise."""
+        if cfg.has_line(pattern):
+            return Finding(name, Status.FAIL, f"Found: {bad_description}",
+                           remediation=remediation)
+        return Finding(name, Status.PASS, f"Absent: {bad_description} (good)")
+
+
+# ---------------------------------------------------------------------------
+# Module-level helpers
+# ---------------------------------------------------------------------------
+
+def pi_has(pi: PortInfo, pattern: str) -> bool:
+    """Check if any of *pi*'s config lines match *pattern*."""
+    rx = re.compile(pattern, re.IGNORECASE)
+    return any(rx.search(line) for line in pi.config_lines)

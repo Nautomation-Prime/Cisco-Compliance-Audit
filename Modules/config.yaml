@@ -1,0 +1,6 @@
+jump_host: 10.112.250.6
+cred_target: MyApp/ADM
+
+settings:
+  timeout: 30
+  retries: 3

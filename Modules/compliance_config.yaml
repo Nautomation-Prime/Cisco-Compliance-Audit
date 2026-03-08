@@ -1,0 +1,671 @@
+# ╔═══════════════════════════════════════════════════════════════════╗
+# ║         CISCO IOS-XE  COMPLIANCE  AUDIT  CONFIGURATION          ║
+# ║                                                                 ║
+# ║  Every check can be toggled with  enabled: true / false         ║
+# ║  Parameters under each check set the expected (compliant) value ║
+# ╚═══════════════════════════════════════════════════════════════════╝
+
+
+# ─── CONNECTION ───────────────────────────────────────────────────
+connection:
+  jump_host: "10.112.250.6"
+  cred_target: "MyApp/ADM"
+  timeout: 30
+  retries: 3
+  device_type: "cisco_xe"          # Netmiko device type for IOS-XE
+
+
+# ─── DEVICE INVENTORY ────────────────────────────────────────────
+# Hostname is parsed to auto-detect role (ASW/CSW/SDW/ISW).
+# You can also pass devices via CLI:  python -m Modules --device <ip>
+devices: []
+  # - hostname: GB-MKD1-005ASW001
+  #   ip: 10.1.1.1
+  # - hostname: GB-MKD1-005CSW001
+  #   ip: 10.1.1.2
+
+
+# ─── AUDIT SETTINGS ──────────────────────────────────────────────
+audit_settings:
+  parking_vlan: 999               # VLAN for unused ports
+  native_vlan: 1                  # Expected native VLAN on trunks (for checking)
+  html_report: true               # Generate an HTML report alongside console output
+  json_report: true               # Also dump raw JSON findings
+  output_dir: "./reports"         # Where to write reports
+  collect_timeout: 30             # Per-command collection timeout (seconds)
+
+
+# ═══════════════════════════════════════════════════════════════════
+#                      COMPLIANCE  CHECKS
+# ═══════════════════════════════════════════════════════════════════
+
+compliance:
+
+  # ┌───────────────────────────────────────────────────────────────┐
+  # │                    MANAGEMENT  PLANE                          │
+  # └───────────────────────────────────────────────────────────────┘
+  management_plane:
+
+    # ── SERVICES ────────────────────────────────────────────────
+    service_password_encryption:
+      enabled: true
+      # Expect: service password-encryption
+
+    service_timestamps_debug:
+      enabled: true
+      expected: "service timestamps debug datetime msec localtime show-timezone year"
+
+    service_timestamps_log:
+      enabled: true
+      expected: "service timestamps log datetime msec localtime show-timezone year"
+
+    service_tcp_keepalives_in:
+      enabled: true
+      # Expect: service tcp-keepalives-in
+
+    service_tcp_keepalives_out:
+      enabled: true
+      # Expect: service tcp-keepalives-out
+
+    no_service_pad:
+      enabled: true
+      # Expect: no service pad
+
+    no_service_finger:
+      enabled: false        # rare on modern IOS-XE
+      # Expect: no service finger
+
+    no_service_config:
+      enabled: true
+      # Expect: no service config
+
+    no_service_tcp_small_servers:
+      enabled: false        # only relevant on very old IOS
+    no_service_udp_small_servers:
+      enabled: false
+
+    # ── IP SETTINGS ─────────────────────────────────────────────
+    no_ip_source_route:
+      enabled: true
+      # Expect: no ip source-route
+
+    no_ip_finger:
+      enabled: false        # not present on most IOS-XE
+    no_ip_bootp_server:
+      enabled: true
+      # Expect: no ip bootp server
+
+    no_ip_http_server:
+      enabled: true
+      # Expect: no ip http server  (disable plain HTTP)
+
+    ip_http_secure_server:
+      enabled: false        # Set true if you WANT HTTPS management enabled
+      # Expect: ip http secure-server
+
+    no_ip_http_secure_server:
+      enabled: true         # Set true if you want HTTPS OFF
+      # Expect: no ip http secure-server
+
+    ip_http_authentication:
+      enabled: false
+      method: "local"       # local | aaa
+
+    ip_http_access_class:
+      enabled: false
+      acl_name: ""
+
+    no_ip_gratuitous_arps:
+      enabled: true
+      # Expect: no ip gratuitous-arps
+
+    ip_cef:
+      enabled: true
+      # Expect: ip cef
+
+    no_ip_domain_lookup:
+      enabled: true
+      # Expect: no ip domain lookup
+
+    ip_domain_name:
+      enabled: true
+      expected: ""          # Set your corporate domain, e.g. "corp.example.com"
+
+    # ── SSH ─────────────────────────────────────────────────────
+    ssh_version:
+      enabled: true
+      version: 2
+      # Expect: ip ssh version 2
+
+    ssh_timeout:
+      enabled: true
+      max_seconds: 60
+      # Expect: ip ssh time-out <n>  where n <= max_seconds
+
+    ssh_authentication_retries:
+      enabled: true
+      max_retries: 3
+      # Expect: ip ssh authentication-retries <n>
+
+    ssh_source_interface:
+      enabled: false
+      interface: ""         # e.g. "Loopback0" or "Vlan100"
+
+    ssh_rsa_min_modulus:
+      enabled: true
+      min_bits: 2048
+
+    # ── AAA ─────────────────────────────────────────────────────
+    aaa_new_model:
+      enabled: true
+      # Expect: aaa new-model
+
+    aaa_authentication_login:
+      enabled: true
+      expected: "aaa authentication login default group tacacs+ local"
+
+    aaa_authentication_enable:
+      enabled: true
+      expected: "aaa authentication enable default group tacacs+ enable"
+
+    aaa_authorization_console:
+      enabled: false
+      # Expect: aaa authorization console
+
+    aaa_authorization_exec:
+      enabled: true
+      expected: "aaa authorization exec default group tacacs+ local"
+
+    aaa_authorization_commands:
+      enabled: true
+      levels: [1, 15]
+      expected_prefix: "aaa authorization commands {level} default group tacacs+ local"
+
+    aaa_accounting_exec:
+      enabled: true
+      expected: "aaa accounting exec default start-stop group tacacs+"
+
+    aaa_accounting_commands:
+      enabled: true
+      levels: [1, 15]
+      expected_prefix: "aaa accounting commands {level} default start-stop group tacacs+"
+
+    aaa_accounting_connection:
+      enabled: false
+      expected: "aaa accounting connection default start-stop group tacacs+"
+
+    aaa_session_id:
+      enabled: true
+      expected: "aaa session-id common"
+
+    tacacs_server:
+      enabled: true
+      # Just checks at least one 'tacacs server' block exists
+      min_servers: 1
+
+    tacacs_source_interface:
+      enabled: false
+      interface: ""
+
+    radius_server:
+      enabled: false
+      min_servers: 0
+
+    # ── NTP ─────────────────────────────────────────────────────
+    ntp_servers:
+      enabled: true
+      expected_servers: []    # e.g. ["10.10.10.1", "10.10.10.2"]
+      min_servers: 1
+
+    ntp_authenticate:
+      enabled: false
+      # Expect: ntp authenticate + ntp authentication-key + ntp trusted-key
+
+    ntp_source_interface:
+      enabled: false
+      interface: ""
+
+    clock_timezone:
+      enabled: false
+      timezone: "GMT"
+      offset: 0
+
+    # ── LOGGING ─────────────────────────────────────────────────
+    logging_buffered:
+      enabled: true
+      min_size: 64000
+      level: "informational"   # emergencies|alerts|critical|errors|warnings|notifications|informational|debugging
+
+    logging_console:
+      enabled: true
+      # Some orgs want 'logging console critical', others 'no logging console'
+      level: "critical"
+
+    logging_monitor:
+      enabled: false
+      level: "warnings"
+
+    logging_trap:
+      enabled: true
+      level: "informational"
+
+    logging_host:
+      enabled: true
+      expected_hosts: []       # e.g. ["10.20.30.1", "10.20.30.2"]
+      min_hosts: 1
+
+    logging_source_interface:
+      enabled: false
+      interface: ""
+
+    logging_origin_id:
+      enabled: false
+      type: "hostname"         # hostname | ip | string
+
+    no_logging_console:
+      enabled: false           # Enable this INSTEAD of logging_console if policy is "no console logging at all"
+
+    # ── SNMP ────────────────────────────────────────────────────
+    snmp_v3_only:
+      enabled: false
+      # Checks: snmp-server group ... v3 priv
+
+    snmp_no_community_public:
+      enabled: true
+      # Checks that 'snmp-server community public' does NOT exist
+
+    snmp_no_community_private:
+      enabled: true
+      # Checks that 'snmp-server community private' does NOT exist
+
+    snmp_community_acl:
+      enabled: false
+      # Any snmp-server community line should include an ACL reference
+
+    snmp_server_host:
+      enabled: false
+      expected_hosts: []
+
+    snmp_contact:
+      enabled: false
+      expected: ""
+
+    snmp_location:
+      enabled: false
+      expected: ""
+
+    snmp_ifindex_persist:
+      enabled: false
+      # Expect: snmp-server ifindex persist
+
+    # ── BANNERS ─────────────────────────────────────────────────
+    banner_login:
+      enabled: true
+      # Just checks that 'banner login' exists (content not validated)
+      required_text: ""       # Optional: substring that MUST appear in banner
+
+    banner_motd:
+      enabled: false
+      required_text: ""
+
+    banner_exec:
+      enabled: false
+      required_text: ""
+
+    # ── LOCAL USERS ─────────────────────────────────────────────
+    enable_secret:
+      enabled: true
+      # Checks: 'enable secret' is present (not 'enable password')
+
+    no_enable_password:
+      enabled: true
+      # Checks: 'enable password' does NOT exist
+
+    username_secret:
+      enabled: true
+      # Checks: all 'username' definitions use 'secret' not 'password'
+
+    # ── VTY LINES ───────────────────────────────────────────────
+    vty_transport_input_ssh:
+      enabled: true
+      # Expect: transport input ssh (no telnet)
+
+    vty_exec_timeout:
+      enabled: true
+      minutes: 5
+      seconds: 0
+
+    vty_access_class:
+      enabled: false
+      acl_name: ""            # Expected access-class ACL
+
+    vty_logging_synchronous:
+      enabled: true
+
+    vty_login_authentication:
+      enabled: false
+      method_list: "default"
+
+    # ── CONSOLE LINE ────────────────────────────────────────────
+    console_exec_timeout:
+      enabled: true
+      minutes: 5
+      seconds: 0
+
+    console_logging_synchronous:
+      enabled: true
+
+    console_login_authentication:
+      enabled: false
+      method_list: "default"
+
+    # ── ARCHIVE / CONFIG LOGGING ────────────────────────────────
+    archive_logging:
+      enabled: false
+      # Expect: archive / log config / logging enable
+
+    # ── LOGIN SECURITY ──────────────────────────────────────────
+    login_block_for:
+      enabled: true
+      seconds: 120
+      attempts: 3
+      within: 60
+      # Expect: login block-for 120 attempts 3 within 60
+
+    login_on_failure_log:
+      enabled: true
+    login_on_success_log:
+      enabled: true
+
+    login_delay:
+      enabled: false
+      seconds: 2
+
+    # ── CDP / LLDP ──────────────────────────────────────────────
+    # NOTE: CDP is needed for uplink/downlink detection, so be careful
+    # about disabling it globally when you rely on CDP for the audit.
+    cdp_global:
+      enabled: false
+      state: "enabled"         # "enabled" or "disabled"
+
+    lldp_global:
+      enabled: false
+      state: "enabled"
+
+
+  # ┌───────────────────────────────────────────────────────────────┐
+  # │                     CONTROL  PLANE                            │
+  # └───────────────────────────────────────────────────────────────┘
+  control_plane:
+
+    # ── SPANNING TREE ───────────────────────────────────────────
+    stp_mode:
+      enabled: true
+      mode: "rapid-pvst"       # rapid-pvst | mst
+
+    stp_extend_system_id:
+      enabled: true
+      # Expect: spanning-tree extend system-id
+
+    stp_pathcost_method:
+      enabled: true
+      method: "long"
+      # Expect: spanning-tree pathcost method long
+
+    stp_loopguard_default:
+      enabled: true
+      # Expect: spanning-tree loopguard default
+
+    stp_priority:
+      enabled: true
+      # Role-dependent expected values
+      core_priority: 4096      # CSW should be root or near-root
+      access_priority: 32768   # ASW default or higher
+      # Set to 0 to skip the priority check for that role
+
+    stp_backbonefast:
+      enabled: false
+      # Only relevant for classic STP, not rapid-pvst
+
+    stp_uplinkfast:
+      enabled: false
+      # Only relevant for classic STP, not rapid-pvst
+
+    # ── VTP ─────────────────────────────────────────────────────
+    vtp_mode:
+      enabled: true
+      expected: "transparent"   # transparent | off | client | server
+
+    vtp_domain:
+      enabled: false
+      expected: ""
+
+    # ── DHCP SNOOPING ──────────────────────────────────────────
+    dhcp_snooping_global:
+      enabled: true
+      # Expect: ip dhcp snooping
+
+    dhcp_snooping_vlans:
+      enabled: true
+      vlans: ""                 # e.g. "10,20,30-50"  — leave blank to just check it exists for any VLAN
+
+    no_dhcp_snooping_information_option:
+      enabled: false
+      # Expect: no ip dhcp snooping information option
+
+    # ── DYNAMIC ARP INSPECTION ──────────────────────────────────
+    arp_inspection_vlans:
+      enabled: true
+      vlans: ""                 # e.g. "10,20,30" — blank = just check at least one VLAN
+
+    arp_inspection_validate:
+      enabled: false
+      checks: ["src-mac", "dst-mac", "ip"]
+      # Expect: ip arp inspection validate src-mac dst-mac ip
+
+    # ── ERRDISABLE RECOVERY ─────────────────────────────────────
+    errdisable_recovery:
+      enabled: true
+      causes:
+        - bpduguard
+        - storm-control
+        - psecure-violation
+        - arp-inspection
+        - dhcp-rate-limit
+        - link-flap
+      interval: 300             # Expect: errdisable recovery interval <n>
+
+    # ── UDLD ────────────────────────────────────────────────────
+    udld_global:
+      enabled: false
+      mode: "enable"            # enable | aggressive
+
+    # ── CONTROL-PLANE POLICING ──────────────────────────────────
+    control_plane_policing:
+      enabled: false
+      # Just checks that 'service-policy' is applied under 'control-plane'
+
+    # ── IP SOURCE GUARD ─────────────────────────────────────────
+    ip_source_guard:
+      enabled: false
+      # Checked per-interface on access ports
+
+
+  # ┌───────────────────────────────────────────────────────────────┐
+  # │                       DATA  PLANE                             │
+  # │            (Interface-level checks by port role)              │
+  # └───────────────────────────────────────────────────────────────┘
+  data_plane:
+
+    # ── STORM CONTROL ───────────────────────────────────────────
+    # Thresholds vary by port speed. Keys are speed in Mbps.
+    storm_control:
+      enabled: true
+      action: "shutdown"        # shutdown | trap
+      types:
+        - broadcast
+        - multicast
+        # - unicast             # Uncomment if your policy requires unicast storm control
+      thresholds_by_speed:
+        10000:                  # 10 Gbps
+          broadcast: 1.00
+          multicast: 1.00
+          unicast: 1.00
+        1000:                   # 1 Gbps
+          broadcast: 10.00
+          multicast: 10.00
+          unicast: 10.00
+        100:                    # 100 Mbps
+          broadcast: 20.00
+          multicast: 20.00
+          unicast: 20.00
+      default_thresholds:       # Fallback when speed is unknown
+        broadcast: 10.00
+        multicast: 10.00
+        unicast: 10.00
+
+    # ── BPDU GUARD ──────────────────────────────────────────────
+    # Applied only on ACCESS ports (never on trunk uplinks/downlinks)
+    bpdu_guard:
+      enabled: true
+      # Expect: spanning-tree bpduguard enable  (per-interface)
+
+    # ── ROOT GUARD ──────────────────────────────────────────────
+    # Applied only on TRUNK DOWNLINKS (to access layer switches).
+    # NEVER applied on uplinks — the auditor auto-detects uplinks
+    # using show spanning-tree root + CDP/LLDP neighbor roles.
+    root_guard:
+      enabled: true
+      # Expect: spanning-tree guard root  (per-interface)
+
+    # ── PORTFAST ────────────────────────────────────────────────
+    portfast:
+      enabled: true
+      # Applied on access ports only
+      # Expect: spanning-tree portfast
+
+    # ── SWITCHPORT NONEGOTIATE ──────────────────────────────────
+    switchport_nonegotiate:
+      enabled: true
+      # All switchports should have DTP disabled
+      # Expect: switchport nonegotiate
+
+    # ── PORT SECURITY ───────────────────────────────────────────
+    port_security:
+      enabled: false
+      # Access ports only
+      max_mac: 2
+      violation: "restrict"     # restrict | shutdown | protect
+      aging_type: "inactivity"
+      aging_time: 60            # minutes
+
+    # ── TRUNK ALLOWED VLANs ─────────────────────────────────────
+    trunk_allowed_vlans:
+      enabled: true
+      # Trunk ports should NOT allow ALL VLANs. Any explicit pruning = compliant.
+      # Expect: switchport trunk allowed vlan <list>  (not "all")
+
+    # ── SWITCHPORT MODE EXPLICIT ────────────────────────────────
+    switchport_mode_explicit:
+      enabled: true
+      # Every switchport should have an explicit 'switchport mode access'
+      # or 'switchport mode trunk'. Dynamic desirable/auto = non-compliant.
+
+    # ── ACCESS VLAN ─────────────────────────────────────────────
+    access_vlan_set:
+      enabled: true
+      # Access ports should have a specific VLAN assigned (not default VLAN 1)
+      disallowed_vlans: [1]     # VLANs that should NOT be used for data access
+
+    # ── INTERFACE DESCRIPTION ───────────────────────────────────
+    interface_description:
+      enabled: true
+      # All active (non-shutdown) ports should have a description
+
+    # ── DHCP SNOOPING TRUST ─────────────────────────────────────
+    dhcp_snooping_trust:
+      enabled: true
+      # Expect on trunk uplinks and (optionally) downlinks
+      on_uplinks: true
+      on_downlinks: true
+
+    # ── DHCP SNOOPING RATE LIMIT ────────────────────────────────
+    dhcp_snooping_limit_rate:
+      enabled: false
+      rate: 15                  # packets per second on access ports
+
+    # ── ARP INSPECTION TRUST ────────────────────────────────────
+    arp_inspection_trust:
+      enabled: true
+      # Trust on trunk uplinks and (optionally) downlinks
+      on_uplinks: true
+      on_downlinks: true
+
+    # ── UNUSED PORT HARDENING ───────────────────────────────────
+    unused_ports:
+      enabled: true
+      must_be_shutdown: true
+      must_be_access_mode: true
+      must_be_in_parking_vlan: true   # Uses audit_settings.parking_vlan
+      must_have_nonegotiate: true
+      must_have_bpduguard: true
+      must_have_no_cdp: true
+      must_have_no_lldp: true
+      must_have_description: true
+      expected_description: "UNUSED"  # Partial match (case-insensitive)
+
+    # ── CDP PER-INTERFACE ───────────────────────────────────────
+    no_cdp_on_access_ports:
+      enabled: false
+      # Expect: no cdp enable  (on access-facing ports)
+
+    # ── IP PROXY-ARP ────────────────────────────────────────────
+    no_ip_proxy_arp:
+      enabled: false
+      # Checks L3 interfaces have 'no ip proxy-arp'
+
+    # ── NATIVE VLAN ON TRUNKS ───────────────────────────────────
+    trunk_native_vlan:
+      enabled: false
+      expected_vlan: 999        # Expected native VLAN on trunks (best practice: non-default)
+
+
+  # ┌───────────────────────────────────────────────────────────────┐
+  # │                   ROLE-SPECIFIC  CHECKS                       │
+  # └───────────────────────────────────────────────────────────────┘
+  role_specific:
+
+    core_switch:
+      # CSW should be STP root (or root for a set of VLANs)
+      stp_root_check:
+        enabled: true
+        # If this CSW should be root for all VLANs, enable this.
+        # Verifies operational STP role is "root" for VLAN 1
+
+      hsrp_vrrp:
+        enabled: false
+        # Checks that HSRP or VRRP is configured on SVIs
+
+      routing_protocol_auth:
+        enabled: false
+        # Checks EIGRP/OSPF/BGP neighbor authentication
+
+    access_switch:
+      # ASW should NOT be STP root
+      stp_not_root:
+        enabled: true
+        # Verify this ASW is NOT the STP root for any VLAN
+
+      uplink_redundancy:
+        enabled: false
+        # Check that the ASW has a port-channel uplink (link aggregation)
+
+    sdwan_router:
+      # SDW-specific checks (placeholder for future)
+      placeholder:
+        enabled: false
+
+    industrial_switch:
+      # ISW-specific checks (placeholder for future)
+      placeholder:
+        enabled: false

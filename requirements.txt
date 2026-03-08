@@ -1,0 +1,7 @@
+netmiko>=4.2.0
+paramiko>=3.4.0
+pyats[library]>=24.0
+genie>=24.0
+rich>=13.7.0
+PyYAML>=6.0
+pywin32>=306; sys_platform == "win32"
