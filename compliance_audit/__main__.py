@@ -1,14 +1,14 @@
 """
-Entry point for  python -m Modules
+Entry point for  python -m compliance_audit
 
 Usage examples
 --------------
-    python -m Modules
-    python -m Modules --config custom.yaml
-    python -m Modules --device 10.1.1.1
-    python -m Modules --device GB-MKD1-005ASW001:10.1.1.1
-    python -m Modules --no-jump
-    python -m Modules --categories management_plane control_plane
+    python -m compliance_audit
+    python -m compliance_audit --config custom.yaml
+    python -m compliance_audit --device 10.1.1.1
+    python -m compliance_audit --device GB-MKD1-005ASW001:10.1.1.1
+    python -m compliance_audit --no-jump
+    python -m compliance_audit --categories management_plane control_plane
 """
 
 import argparse
@@ -20,7 +20,7 @@ from .auditor import run_audit
 
 def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
-        prog="python -m Modules",
+        prog="python -m compliance_audit",
         description="Cisco IOS-XE Compliance Auditor",
     )
     p.add_argument(

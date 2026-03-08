@@ -66,7 +66,7 @@ Built on **PyATS/Genie** for structured parsing, **Netmiko** for transport, and 
 
 ```text
 ┌─────────────────────────────────────────────────────────┐
-│                     python -m Modules                   │
+│                 python -m compliance_audit              │
 │                      (__main__.py)                      │
 └────────────────────────┬────────────────────────────────┘
                          │
@@ -105,7 +105,7 @@ Built on **PyATS/Genie** for structured parsing, **Netmiko** for transport, and 
 - **SSH enabled** on all devices (`ip ssh version 2`)
 - **Privileged EXEC** (enable) access — the tool runs `show running-config`
 
-> **Windows users:** Install WSL with `wsl --install` from an elevated PowerShell, then work inside the Linux environment. All `pip install` and `python -m Modules` commands should be run inside WSL, not native Windows.
+> **Windows users:** Install WSL with `wsl --install` from an elevated PowerShell, then work inside the Linux environment. All `pip install` and `python -m compliance_audit` commands should be run inside WSL, not native Windows.
 
 ---
 
@@ -144,10 +144,10 @@ pip install -r requirements.txt
 
 ```bash
 # 1. Edit the config with your devices
-#    Modules/compliance_config.yaml
+#    compliance_audit/compliance_config.yaml
 
 # 2. Run the audit against a single device
-python -m Modules --device GB-MKD1-005ASW001:10.1.1.1
+python -m compliance_audit --device GB-MKD1-005ASW001:10.1.1.1
 
 # 3. View the reports in ./reports/
 ```
@@ -162,40 +162,40 @@ The tool will prompt for credentials if they are not found in environment variab
 
 ```bash
 # Audit a single device (hostname:ip format)
-python -m Modules --device GB-MKD1-005ASW001:10.1.1.1
+python -m compliance_audit --device GB-MKD1-005ASW001:10.1.1.1
 
 # Audit multiple devices
-python -m Modules --device GB-MKD1-005ASW001:10.1.1.1 --device GB-MKD1-005CSW001:10.1.1.2
+python -m compliance_audit --device GB-MKD1-005ASW001:10.1.1.1 --device GB-MKD1-005CSW001:10.1.1.2
 
 # Audit by IP only (hostname won't be parsed for role)
-python -m Modules --device 10.1.1.1
+python -m compliance_audit --device 10.1.1.1
 
 # Audit all devices listed in compliance_config.yaml
-python -m Modules
+python -m compliance_audit
 
 # Skip the jump host (connect directly)
-python -m Modules --device 10.1.1.1 --no-jump
+python -m compliance_audit --device 10.1.1.1 --no-jump
 
 # Only run management plane checks
-python -m Modules --categories management_plane
+python -m compliance_audit --categories management_plane
 
 # Only run data plane and control plane checks
-python -m Modules --categories data_plane control_plane
+python -m compliance_audit --categories data_plane control_plane
 
 # Use a custom config file
-python -m Modules --config /path/to/my_policy.yaml
+python -m compliance_audit --config /path/to/my_policy.yaml
 
 # Verbose output (INFO level)
-python -m Modules -v
+python -m compliance_audit -v
 
 # Debug output (DEBUG level)
-python -m Modules -vv
+python -m compliance_audit -vv
 ```
 
 ### CLI Reference
 
 ```python
-python -m Modules [-h] [-c CONFIG] [-d DEVICES] [--no-jump]
+python -m compliance_audit [-h] [-c CONFIG] [-d DEVICES] [--no-jump]
                   [--categories CATEGORIES [CATEGORIES ...]] [-v]
 
 Options:
@@ -213,7 +213,7 @@ Options:
 
 ## Configuration Guide
 
-All configuration lives in `Modules/compliance_config.yaml`. The file is heavily commented and designed to be human-friendly.
+All configuration lives in `compliance_audit/compliance_config.yaml`. The file is heavily commented and designed to be human-friendly.
 
 ### Connection Settings
 
@@ -602,9 +602,9 @@ For the enable secret (if needed):
 
 ```text
 Cisco-Compliance-Audit/
-├── Modules/
+├── compliance_audit/
 │   ├── __init__.py             # Package exports and version
-│   ├── __main__.py             # CLI entry point (python -m Modules)
+│   ├── __main__.py             # CLI entry point (python -m compliance_audit)
 │   ├── compliance_config.yaml  # ★ Master configuration — all checks here
 │   ├── config.yaml             # Legacy connection config (still works)
 │   ├── config_loader.py        # YAML config loader
@@ -656,10 +656,20 @@ The `_present()` helper checks that a regex matches at least one global config l
 
 ### Adding a New Device Role
 
-1. **Update `hostname_parser.py`** — add the role code to `ROLE_MAP` and `ROLE_DISPLAY`
-2. **Update the regex** `HOSTNAME_PATTERN` to accept the new code
-3. **Add role-specific checks** in `compliance_engine.py` under `_check_role_specific()`
-4. **Add config entries** under `compliance.role_specific` in the YAML
+Role codes are configured in the YAML — no code changes needed:
+
+1. **Add the role** to `hostname_roles` in `compliance_config.yaml`:
+
+    ```yaml
+    hostname_roles:
+      - code: DSW
+        role: distribution_switch
+        display: "Distribution Switch"
+        trunk_signal: uplink
+    ```
+
+2. **Add role-specific checks** under `compliance.role_specific` in the YAML
+3. **(Optional)** Add engine logic in `compliance_engine.py` under `_check_role_specific()` if the new role needs custom checks beyond what config toggles provide
 
 ---
 
@@ -671,7 +681,7 @@ The `_present()` helper checks that a regex matches at least one global config l
 | `Connection failed` | Check SSH reachability, credentials, and that `ip ssh version 2` is configured on the device. |
 | `Hostname did not match naming convention` | Role-specific checks are skipped. Use the `hostname:ip` format on the CLI to provide a parseable hostname. |
 | `TRUNK_UNKNOWN` ports in report | Uplink/downlink direction could not be determined. Check that CDP is enabled and the neighbor's hostname follows the naming convention. |
-| `Config file not found` | The tool looks for `compliance_config.yaml` in the current directory, then in the `Modules/` directory. Use `--config` for a custom path. |
+| `Config file not found` | The tool looks for `compliance_config.yaml` in the current directory, then in the `compliance_audit/` directory. Use `--config` for a custom path. |
 | Timeout on `show` commands | Increase `collect_timeout` in `audit_settings` or check device responsiveness. |
 | Large devices with many interfaces slow to audit | This is expected — every interface is checked individually. Consider using `--categories` to focus on specific check groups. |
 
