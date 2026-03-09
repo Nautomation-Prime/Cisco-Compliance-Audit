@@ -16,6 +16,28 @@ connection:
   device_type: "cisco_xe"          # Netmiko device type for IOS-XE
 
 
+# ─── DEVICE INVENTORY ────────────────────────────────────────────
+# List the switches to audit.  Each entry needs:
+#   hostname  – used to detect the device role (parsed against hostname_roles)
+#   ip        – management IP (or DNS name) the auditor connects to
+#
+# Add as many entries as you need — one per line, indented under "devices:".
+# To skip the inventory and audit a single device ad-hoc, use the CLI:
+#   python -m compliance_audit --device GB-MKD1-005ASW001:10.1.1.1
+#
+# Examples:
+devices:
+  - hostname: GB-SITE1-001ASW001
+    ip: 10.1.1.1
+  - hostname: GB-SITE1-001ASW002
+    ip: 10.1.2.1
+  # - hostname: placeholder
+  #   ip: 10.1.3.1
+  # - hostname: placeholder
+  #   ip: 10.1.4.1
+  #
+
+
 # ─── HOSTNAME ROLE CODES ─────────────────────────────────────────
 # Maps the 2-4 letter code in the hostname to its meaning.
 # The auditor uses these to:
@@ -82,40 +104,12 @@ endpoint_neighbors:
     - "Trans-Bridge"      # Cisco APs report this CDP capability (R T)
 
 
-# ─── DEVICE INVENTORY ────────────────────────────────────────────
-# List the switches to audit.  Each entry needs:
-#   hostname  – used to detect the device role (parsed against hostname_roles)
-#   ip        – management IP (or DNS name) the auditor connects to
-#
-# Add as many entries as you need — one per line, indented under "devices:".
-# To skip the inventory and audit a single device ad-hoc, use the CLI:
-#   python -m compliance_audit --device GB-MKD1-005ASW001:10.1.1.1
-#
-# Examples:
-devices: []
-  # - hostname: GB-MKD1-005ASW001
-  #   ip: 10.1.1.1
-  # - hostname: GB-MKD1-005ASW002
-  #   ip: 10.1.1.2
-  # - hostname: GB-MKD1-005CSW001
-  #   ip: 10.1.2.1
-  # - hostname: GB-MKD1-005ISW001
-  #   ip: 10.1.3.1
-  #
-  # To enable, remove the [] on the "devices:" line and uncomment:
-  # devices:
-  #   - hostname: GB-MKD1-005ASW001
-  #     ip: 10.1.1.1
-  #   - hostname: GB-MKD1-005ASW002
-  #     ip: 10.1.1.2
-
-
 # ─── AUDIT SETTINGS ──────────────────────────────────────────────
 audit_settings:
-  parking_vlan: 999               # VLAN for unused ports
-  native_vlan: 1                  # Expected native VLAN on trunks (for checking)
+  parking_vlan: 99                # VLAN for unused ports
+  native_vlan: 99                 # Expected native VLAN on trunks (for checking)
   html_report: true               # Generate an HTML report alongside console output
-  json_report: true               # Also dump raw JSON findings
+  json_report: false               # Also dump raw JSON findings
   output_dir: "./reports"         # Where to write reports
   collect_timeout: 30             # Per-command collection timeout (seconds)
 
@@ -138,22 +132,22 @@ compliance:
 
     service_timestamps_debug:
       enabled: true
-      expected: "service timestamps debug datetime msec localtime show-timezone year"
+      expected: "service timestamps debug datetime msec localtime show-timezone"
 
     service_timestamps_log:
       enabled: true
-      expected: "service timestamps log datetime msec localtime show-timezone year"
+      expected: "service timestamps log datetime msec localtime show-timezone"
 
     service_tcp_keepalives_in:
-      enabled: true
+      enabled: false
       # Expect: service tcp-keepalives-in
 
     service_tcp_keepalives_out:
-      enabled: true
+      enabled: false
       # Expect: service tcp-keepalives-out
 
     no_service_pad:
-      enabled: true
+      enabled: false
       # Expect: no service pad
 
     no_service_finger:
@@ -161,7 +155,7 @@ compliance:
       # Expect: no service finger
 
     no_service_config:
-      enabled: true
+      enabled: false
       # Expect: no service config
 
     no_service_tcp_small_servers:
@@ -177,7 +171,7 @@ compliance:
     no_ip_finger:
       enabled: false        # not present on most IOS-XE
     no_ip_bootp_server:
-      enabled: true
+      enabled: false
       # Expect: no ip bootp server
 
     no_ip_http_server:
@@ -201,20 +195,20 @@ compliance:
       acl_name: ""
 
     no_ip_gratuitous_arps:
-      enabled: true
+      enabled: false
       # Expect: no ip gratuitous-arps
 
     ip_cef:
-      enabled: true
+      enabled: false
       # Expect: ip cef
 
     no_ip_domain_lookup:
-      enabled: true
+      enabled: false
       # Expect: no ip domain lookup
 
     ip_domain_name:
       enabled: true
-      expected: ""          # Set your corporate domain, e.g. "corp.example.com"
+      expected: "cns.muellergroup.com"          # Set your corporate domain, e.g. "corp.example.com"
 
     # ── SSH ─────────────────────────────────────────────────────
     ssh_version:
@@ -247,11 +241,11 @@ compliance:
 
     aaa_authentication_login:
       enabled: true
-      expected: "aaa authentication login default group tacacs+ local"
+      expected: "aaa authentication login default group AAA_NOC local"
 
     aaa_authentication_enable:
       enabled: true
-      expected: "aaa authentication enable default group tacacs+ enable"
+      expected: "aaa authentication enable default group AAA_NOC enable"
 
     aaa_authorization_console:
       enabled: false
@@ -259,32 +253,32 @@ compliance:
 
     aaa_authorization_exec:
       enabled: true
-      expected: "aaa authorization exec default group tacacs+ local"
+      expected: "aaa authorization exec default group AAA_NOC local"
 
     aaa_authorization_commands:
       enabled: true
       levels: [1, 15]
-      expected_prefix: "aaa authorization commands {level} default group tacacs+ local"
+      expected_prefix: "aaa authorization commands 15 default group AAA_NOC local"
 
     aaa_accounting_exec:
-      enabled: true
-      expected: "aaa accounting exec default start-stop group tacacs+"
+      enabled: false
+      expected: "aaa accounting exec default start-stop group AAA_NOC"
 
     aaa_accounting_commands:
-      enabled: true
+      enabled: false
       levels: [1, 15]
-      expected_prefix: "aaa accounting commands {level} default start-stop group tacacs+"
+      expected_prefix: "aaa accounting commands 15 default start-stop group AAA_NOC"
 
     aaa_accounting_connection:
       enabled: false
-      expected: "aaa accounting connection default start-stop group tacacs+"
+      expected: "aaa accounting connection default start-stop group AAA_NOC"
 
     aaa_session_id:
-      enabled: true
+      enabled: false
       expected: "aaa session-id common"
 
     tacacs_server:
-      enabled: true
+      enabled: false
       # Just checks at least one 'tacacs server' block exists
       min_servers: 1
 
@@ -299,7 +293,7 @@ compliance:
     # ── NTP ─────────────────────────────────────────────────────
     ntp_servers:
       enabled: true
-      expected_servers: []    # e.g. ["10.10.10.1", "10.10.10.2"]
+      expected_servers: ["10.80.50.19", "10.97.2.83"]    # e.g. ["10.10.10.1", "10.10.10.2"]
       min_servers: 1
 
     ntp_authenticate:
@@ -331,12 +325,12 @@ compliance:
       level: "warnings"
 
     logging_trap:
-      enabled: true
+      enabled: false
       level: "informational"
 
     logging_host:
       enabled: true
-      expected_hosts: []       # e.g. ["10.20.30.1", "10.20.30.2"]
+      expected_hosts: ["10.251.6.62", "10.6.252.6"]       # e.g. ["10.20.30.1", "10.20.30.2"]
       min_hosts: 1
 
     logging_source_interface:
@@ -385,7 +379,7 @@ compliance:
 
     # ── BANNERS ─────────────────────────────────────────────────
     banner_login:
-      enabled: true
+      enabled: false
       # Just checks that 'banner login' exists (content not validated)
       required_text: ""       # Optional: substring that MUST appear in banner
 
@@ -394,7 +388,7 @@ compliance:
       required_text: ""
 
     banner_exec:
-      enabled: false
+      enabled: true
       required_text: ""
 
     # ── LOCAL USERS ─────────────────────────────────────────────
@@ -416,7 +410,7 @@ compliance:
       # Expect: transport input ssh (no telnet)
 
     vty_exec_timeout:
-      enabled: true
+      enabled: false
       minutes: 5
       seconds: 0
 
@@ -425,7 +419,7 @@ compliance:
       acl_name: ""            # Expected access-class ACL
 
     vty_logging_synchronous:
-      enabled: true
+      enabled: false
 
     vty_login_authentication:
       enabled: false
@@ -433,12 +427,12 @@ compliance:
 
     # ── CONSOLE LINE ────────────────────────────────────────────
     console_exec_timeout:
-      enabled: true
+      enabled: false
       minutes: 5
       seconds: 0
 
     console_logging_synchronous:
-      enabled: true
+      enabled: false
 
     console_login_authentication:
       enabled: false
@@ -451,7 +445,7 @@ compliance:
 
     # ── LOGIN SECURITY ──────────────────────────────────────────
     login_block_for:
-      enabled: true
+      enabled: false
       seconds: 120
       attempts: 3
       within: 60
@@ -489,16 +483,16 @@ compliance:
       mode: "rapid-pvst"       # rapid-pvst | mst
 
     stp_extend_system_id:
-      enabled: true
+      enabled: false
       # Expect: spanning-tree extend system-id
 
     stp_pathcost_method:
-      enabled: true
+      enabled: false
       method: "long"
       # Expect: spanning-tree pathcost method long
 
     stp_loopguard_default:
-      enabled: true
+      enabled: false
       # Expect: spanning-tree loopguard default
 
     stp_priority:
@@ -519,8 +513,8 @@ compliance:
 
     # ── VTP ─────────────────────────────────────────────────────
     vtp_mode:
-      enabled: true
-      expected: "transparent"   # transparent | off | client | server
+      enabled: false
+      expected: "off"   # transparent | off | client | server
 
     vtp_domain:
       enabled: false
@@ -541,7 +535,7 @@ compliance:
 
     # ── DYNAMIC ARP INSPECTION ──────────────────────────────────
     arp_inspection_vlans:
-      enabled: true
+      enabled: false
       vlans: ""                 # e.g. "10,20,30" — blank = just check at least one VLAN
 
     arp_inspection_validate:
@@ -551,7 +545,7 @@ compliance:
 
     # ── ERRDISABLE RECOVERY ─────────────────────────────────────
     errdisable_recovery:
-      enabled: true
+      enabled: false
       causes:
         - bpduguard
         - storm-control
@@ -589,7 +583,7 @@ compliance:
     storm_control:
       enabled: true             # Master toggle for all storm control checks
       check_thresholds: true    # Enable/disable threshold validation independently
-      check_action: true        # Enable/disable action validation independently
+      check_action: false        # Enable/disable action validation independently
       action: "shutdown"        # shutdown | trap
       types:
         - broadcast
@@ -677,7 +671,7 @@ compliance:
 
     # ── TRUNK ALLOWED VLANs ─────────────────────────────────────
     trunk_allowed_vlans:
-      enabled: true
+      enabled: false
       # Trunk ports should NOT allow ALL VLANs. Any explicit pruning = compliant.
       # Expect: switchport trunk allowed vlan <list>  (not "all")
 
@@ -689,7 +683,7 @@ compliance:
 
     # ── ACCESS VLAN ─────────────────────────────────────────────
     access_vlan_set:
-      enabled: true
+      enabled: false
       # Access ports should have a specific VLAN assigned (not default VLAN 1)
       disallowed_vlans: [1]     # VLANs that should NOT be used for data access
 
@@ -714,7 +708,7 @@ compliance:
 
     # ── ARP INSPECTION TRUST ────────────────────────────────────
     arp_inspection_trust:
-      enabled: true
+      enabled: false
       # Trust on trunk uplinks and (optionally) downlinks.
       # Endpoint trunks (APs) typically do NOT need trust.
       on_uplinks: true
@@ -725,14 +719,14 @@ compliance:
     unused_ports:
       enabled: true
       must_be_shutdown: true
-      must_be_access_mode: true
-      must_be_in_parking_vlan: true   # Uses audit_settings.parking_vlan
-      must_have_nonegotiate: true
-      must_have_bpduguard: true
-      must_have_no_cdp: true
-      must_have_no_lldp: true
+      must_be_access_mode: false
+      must_be_in_parking_vlan: false   # Uses audit_settings.parking_vlan
+      must_have_nonegotiate: false
+      must_have_bpduguard: false
+      must_have_no_cdp: false
+      must_have_no_lldp: false
       must_have_description: true
-      expected_description: "UNUSED"  # Partial match (case-insensitive)
+      expected_description: "* unused *"  # Partial match (case-insensitive)
 
     # ── CDP PER-INTERFACE ───────────────────────────────────────
     no_cdp_on_access_ports:
@@ -746,8 +740,8 @@ compliance:
 
     # ── NATIVE VLAN ON TRUNKS ───────────────────────────────────
     trunk_native_vlan:
-      enabled: false
-      expected_vlan: 999        # Expected native VLAN on trunks (best practice: non-default)
+      enabled: true
+      expected_vlan: 99         # Expected native VLAN on trunks (best practice: non-default)
 
 
   # ┌───────────────────────────────────────────────────────────────┐
