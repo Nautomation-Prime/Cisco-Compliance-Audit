@@ -218,7 +218,7 @@ All configuration lives in `compliance_audit/compliance_config.yaml`. The file i
 
 ```yaml
 connection:
-  jump_host: "10.112.250.6"       # Jump/bastion host IP (leave blank to skip)
+  jump_host: "192.0.20.60"       # Jump/bastion host IP (leave blank to skip)
   timeout: 30                     # SSH connection timeout (seconds)
   retries: 3                      # Connection retry attempts
   device_type: "cisco_xe"         # Netmiko device type
