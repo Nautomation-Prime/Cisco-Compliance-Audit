@@ -505,8 +505,9 @@ compliance:
       enabled: true
       # Role-dependent expected values
       core_priority: 4096      # CSW should be root or near-root
-      access_priority: 32768   # ASW default or higher
+      access_priority: 36863   # ASW default (32768) + max VLAN ID (4095)
       # Set to 0 to skip the priority check for that role
+      # Note: Displayed priority = base priority + VLAN ID
 
     stp_backbonefast:
       enabled: false
