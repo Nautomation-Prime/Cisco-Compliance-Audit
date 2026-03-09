@@ -1,10 +1,8 @@
 import getpass
 import os
 import logging
-from .config_loader import Config
 
 log = logging.getLogger(__name__)
-cfg = Config("compliance_config.yaml")
 
 class CredentialHandler:
     """
@@ -19,9 +17,10 @@ class CredentialHandler:
         Initialize the credential handler.
 
         Args:
-            target: Credential target name (default from config or 'MyApp/ADM').
+            target: Unused parameter, kept for backward compatibility.
         """
-        self.target = target or os.environ.get("CREDENTIAL_TARGET", cfg.cred_target or "MyApp/ADM")
+        # target parameter is kept for backward compatibility but no longer used
+        pass
 
     def get_secret_with_fallback(self) -> tuple[str, str]:
         """
