@@ -823,6 +823,7 @@ class ComplianceEngine:
                             expected: int, label: str,
                             f: list[Finding]) -> None:
         # Try Genie parsed data first
+        checked_vlans = False
         if data.stp:
             for mode_data in data.stp.values():
                 if not isinstance(mode_data, dict):
@@ -831,6 +832,7 @@ class ComplianceEngine:
                     bridge = vinfo.get("bridge", {})
                     prio = bridge.get("priority", None)
                     if prio is not None:
+                        checked_vlans = True
                         if prio <= expected:
                             f.append(Finding("stp_priority", Status.PASS,
                                      f"VLAN {vid} bridge priority {prio} <= {expected} ({label})"))
@@ -838,20 +840,28 @@ class ComplianceEngine:
                             f.append(Finding("stp_priority", Status.FAIL,
                                      f"VLAN {vid} bridge priority {prio} > expected {expected} ({label})",
                                      remediation=f"spanning-tree vlan {vid} priority {expected}"))
-                        return  # check only first VLAN found
+            if checked_vlans:
+                return  # Successfully checked all VLANs from parsed data
+
         # Fallback: regex on running-config
         lines = cfg.find_lines(r"^spanning-tree vlan\s+\S+\s+priority\s+\d+")
         if lines:
-            m = re.search(r"priority\s+(\d+)", lines[0])
-            if m:
-                actual = int(m.group(1))
-                if actual <= expected:
-                    f.append(Finding("stp_priority", Status.PASS,
-                             f"STP priority {actual} <= {expected} ({label})"))
-                else:
-                    f.append(Finding("stp_priority", Status.FAIL,
-                             f"STP priority {actual} > expected {expected} ({label})"))
+            for line in lines:
+                m = re.search(r"vlan\s+(\S+)\s+priority\s+(\d+)", line)
+                if m:
+                    vlan_spec = m.group(1)
+                    actual = int(m.group(2))
+                    checked_vlans = True
+                    if actual <= expected:
+                        f.append(Finding("stp_priority", Status.PASS,
+                                 f"VLAN {vlan_spec} STP priority {actual} <= {expected} ({label})"))
+                    else:
+                        f.append(Finding("stp_priority", Status.FAIL,
+                                 f"VLAN {vlan_spec} STP priority {actual} > expected {expected} ({label})",
+                                 remediation=f"spanning-tree vlan {vlan_spec} priority {expected}"))
+            if checked_vlans:
                 return
+
         f.append(Finding("stp_priority", Status.WARN,
                  f"STP priority not explicitly configured ({label})"))
 
