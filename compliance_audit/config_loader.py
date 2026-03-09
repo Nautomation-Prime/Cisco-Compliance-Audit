@@ -11,7 +11,7 @@ class Config:
       compliance_config.yaml.
     """
 
-    def __init__(self, config_file: str = "config.yaml"):
+    def __init__(self, config_file: str = "compliance_config.yaml"):
         self._config_file = Path(config_file)
         if not self._config_file.exists():
             # Try relative to this module's directory
