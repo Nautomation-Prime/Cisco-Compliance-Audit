@@ -369,7 +369,7 @@ STP is the trusted primary signal. CDP/LLDP acts as a tiebreaker when STP data i
 
 ## Storm Control — Speed-Aware Thresholds
 
-Storm control thresholds should differ based on port speed. A 1% threshold on a 10G port is 100 Mbps of storm traffic, while 1% on a 100M port is only 1 Mbps. The config supports speed-based tiers:
+Storm control thresholds should differ based on port speed. A 1% threshold on a 10G port is 100 Mbps of storm traffic, while 1% on a 100M port is only 1 Mbps. The config supports speed-based tiers with both **rising** (upper) and **falling** (lower) thresholds:
 
 ```yaml
 storm_control:
@@ -379,21 +379,43 @@ storm_control:
     - broadcast
     - multicast
   thresholds_by_speed:
-    10000:                    # 10 Gbps ports
-      broadcast: 1.00
-      multicast: 1.00
-    1000:                     # 1 Gbps ports
-      broadcast: 10.00
-      multicast: 10.00
-    100:                      # 100 Mbps ports
-      broadcast: 20.00
-      multicast: 20.00
+    10000:                    # 10 Gbps ports (TenGigabitEthernet/Te)
+      broadcast:
+        rising: 0.10
+        falling: 0.07
+      multicast:
+        rising: 0.10
+        falling: 0.07
+    1000:                     # 1 Gbps ports (GigabitEthernet/Gi)
+      broadcast:
+        rising: 1.00
+        falling: 0.70
+      multicast:
+        rising: 1.00
+        falling: 0.70
+    100:                      # 100 Mbps ports (FastEthernet/Fa)
+      broadcast:
+        rising: 10.00
+        falling: 7.00
+      multicast:
+        rising: 10.00
+        falling: 7.00
   default_thresholds:         # Fallback when speed is unknown
-    broadcast: 10.00
-    multicast: 10.00
+    broadcast:
+      rising: 1.00
+      falling: 0.70
+    multicast:
+      rising: 1.00
+      falling: 0.70
 ```
 
 The tool reads the operational speed from `show interfaces` (via Genie) and selects the matching tier. If the speed doesn't match exactly, it picks the nearest lower tier.
+
+The compliance check validates both the rising and falling thresholds. For example, on a 1G port, the expected configuration would be:
+```
+storm-control broadcast level 1.00 0.70
+storm-control multicast level 1.00 0.70
+```
 
 ---
 

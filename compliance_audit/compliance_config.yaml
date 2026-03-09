@@ -584,6 +584,7 @@ compliance:
 
     # ── STORM CONTROL ───────────────────────────────────────────
     # Thresholds vary by port speed. Keys are speed in Mbps.
+    # Each threshold has a rising value (upper limit) and falling value (lower limit)
     storm_control:
       enabled: true
       action: "shutdown"        # shutdown | trap
@@ -592,22 +593,46 @@ compliance:
         - multicast
         # - unicast             # Uncomment if your policy requires unicast storm control
       thresholds_by_speed:
-        10000:                  # 10 Gbps
-          broadcast: 1.00
-          multicast: 1.00
-          unicast: 1.00
-        1000:                   # 1 Gbps
-          broadcast: 10.00
-          multicast: 10.00
-          unicast: 10.00
-        100:                    # 100 Mbps
-          broadcast: 20.00
-          multicast: 20.00
-          unicast: 20.00
-      default_thresholds:       # Fallback when speed is unknown
-        broadcast: 10.00
-        multicast: 10.00
-        unicast: 10.00
+        10000:                  # 10 Gbps (TenGigabitEthernet/Te)
+          broadcast:
+            rising: 0.10
+            falling: 0.07
+          multicast:
+            rising: 0.10
+            falling: 0.07
+          unicast:
+            rising: 0.10
+            falling: 0.07
+        1000:                   # 1 Gbps (GigabitEthernet/Gi)
+          broadcast:
+            rising: 1.00
+            falling: 0.70
+          multicast:
+            rising: 1.00
+            falling: 0.70
+          unicast:
+            rising: 1.00
+            falling: 0.70
+        100:                    # 100 Mbps (FastEthernet/Fa)
+          broadcast:
+            rising: 10.00
+            falling: 7.00
+          multicast:
+            rising: 10.00
+            falling: 7.00
+          unicast:
+            rising: 10.00
+            falling: 7.00
+      default_thresholds:       # Fallback when speed is unknown (defaults to 1G values)
+        broadcast:
+          rising: 1.00
+          falling: 0.70
+        multicast:
+          rising: 1.00
+          falling: 0.70
+        unicast:
+          rising: 1.00
+          falling: 0.70
 
     # ── BPDU GUARD ──────────────────────────────────────────────
     # Applied on ACCESS ports and TRUNK_ENDPOINT ports (APs etc.).
