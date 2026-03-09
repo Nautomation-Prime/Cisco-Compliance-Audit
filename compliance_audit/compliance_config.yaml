@@ -1,31 +1,54 @@
 # ╔═══════════════════════════════════════════════════════════════════╗
-# ║         CISCO IOS-XE  COMPLIANCE  AUDIT  CONFIGURATION          ║
-# ║                                                                 ║
-# ║  Every check can be toggled with  enabled: true / false         ║
-# ║  Parameters under each check set the expected (compliant) value ║
+# ║         CISCO IOS-XE  COMPLIANCE  AUDIT  CONFIGURATION            ║
+# ║                                                                   ║
+# ║  Every check can be toggled with  enabled: true / false           ║
+# ║  Parameters under each check set the expected (compliant) value   ║
+# ║                                                                   ║
+# ║  Tip: Copy this file per site and run with:                       ║
+# ║       python -m compliance_audit -c site_london.yaml              ║
 # ╚═══════════════════════════════════════════════════════════════════╝
 
 
-# ─── CONNECTION ───────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════
+# §1  AUDIT  SETTINGS  (how the audit runs)
+# ═══════════════════════════════════════════════════════════════════
+# These control the audit behaviour — report formats, concurrency,
+# timeouts, and reference VLANs.  You'll tweak these most often.
+
+audit_settings:
+  max_workers: 5                  # Max concurrent device audits (1 = sequential)
+  collect_timeout: 30             # Per-command collection timeout (seconds)
+  output_dir: "./reports"         # Where to write reports
+  html_report: true               # Generate an HTML report alongside console output
+  json_report: false              # Also dump raw JSON findings
+  parking_vlan: 99                # VLAN for unused ports
+  native_vlan: 99                 # Expected native VLAN on trunks (for checking)
+
+
+# ═══════════════════════════════════════════════════════════════════
+# §2  CONNECTION  (how to reach the devices)
+# ═══════════════════════════════════════════════════════════════════
+
 connection:
-  jump_host: "192.0.2.60"
-  use_jump_host: false               # Set false to connect directly (or use --no-jump)
-  cred_target: "MyApp/ADM"
-  timeout: 30
-  retries: 3
   device_type: "cisco_xe"          # Netmiko device type for IOS-XE
+  timeout: 30                      # SSH connection timeout (seconds)
+  retries: 3                       # Connection retry attempts
+  cred_target: "MyApp/ADM"         # Credential vault target (or leave blank for prompt)
+  jump_host: "192.0.2.60"          # Jump/bastion host IP
+  use_jump_host: false             # Set false to connect directly (or use --no-jump)
 
 
-# ─── DEVICE INVENTORY ────────────────────────────────────────────
-# List the switches to audit.  Each entry needs:
+# ═══════════════════════════════════════════════════════════════════
+# §3  DEVICE  INVENTORY  (what to audit)
+# ═══════════════════════════════════════════════════════════════════
+# Each entry needs:
 #   hostname  – used to detect the device role (parsed against hostname_roles)
 #   ip        – management IP (or DNS name) the auditor connects to
 #
 # Add as many entries as you need — one per line, indented under "devices:".
 # To skip the inventory and audit a single device ad-hoc, use the CLI:
 #   python -m compliance_audit --device GB-SITE1-001ASW001:10.1.1.1
-#
-# Examples:
+
 devices:
   - hostname: GB-SITE1-001ASW001
     ip: 192.0.2.61
@@ -35,10 +58,17 @@ devices:
   #   ip: 10.1.3.1
   # - hostname: placeholder
   #   ip: 10.1.4.1
-  #
 
 
-# ─── HOSTNAME ROLE CODES ─────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════
+# §4  CLASSIFICATION  (how the auditor understands your network)
+# ═══════════════════════════════════════════════════════════════════
+# These sections tell the auditor how to identify device roles and
+# endpoint neighbours.  Set them once per organisation — you rarely
+# need to change them between runs.
+
+
+# ─── 4a  HOSTNAME ROLE CODES ─────────────────────────────────────
 # Maps the 2-4 letter code in the hostname to its meaning.
 # The auditor uses these to:
 #   • detect the device role (for role-specific checks)
@@ -55,6 +85,7 @@ devices:
 #
 # You can add, remove, or rename entries freely.  The hostname regex
 # is built dynamically from whatever codes are listed here.
+
 hostname_roles:
   - code: ASW
     role: access_switch
@@ -82,7 +113,7 @@ hostname_roles:
     trunk_signal: none
 
 
-# ─── ENDPOINT NEIGHBORS (APs, etc.) ──────────────────────────────
+# ─── 4b  ENDPOINT NEIGHBORS (APs, etc.) ──────────────────────────
 # Trunks to endpoints (e.g. Cisco APs) are detected via CDP / LLDP
 # and classified as TRUNK_ENDPOINT instead of TRUNK_DOWNLINK.
 # This matters because endpoint trunks should get BPDU guard (like
@@ -94,6 +125,7 @@ hostname_roles:
 #   capabilities       – CDP capability keyword (e.g. "Trans-Bridge" for APs)
 #
 # All regexes are case-insensitive.
+
 endpoint_neighbors:
   enabled: true
   hostname_patterns:
@@ -109,19 +141,12 @@ endpoint_neighbors:
     - "Trans-Bridge"      # Cisco APs report this CDP capability (R T)
 
 
-# ─── AUDIT SETTINGS ──────────────────────────────────────────────
-audit_settings:
-  parking_vlan: 99                # VLAN for unused ports
-  native_vlan: 99                 # Expected native VLAN on trunks (for checking)
-  html_report: true               # Generate an HTML report alongside console output
-  json_report: false               # Also dump raw JSON findings
-  output_dir: "./reports"         # Where to write reports
-  collect_timeout: 30             # Per-command collection timeout (seconds)
-
-
 # ═══════════════════════════════════════════════════════════════════
-#                      COMPLIANCE  CHECKS
+# §5  COMPLIANCE  CHECKS  (what to audit)
 # ═══════════════════════════════════════════════════════════════════
+# Every check has  enabled: true/false  plus check-specific params.
+# Checks are grouped into four categories that can also be selected
+# on the command line with  --categories management_plane data_plane
 
 compliance:
 

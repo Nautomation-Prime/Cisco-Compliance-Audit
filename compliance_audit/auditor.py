@@ -1,15 +1,22 @@
 """
 Main orchestrator — connects to devices, collects data, runs the
 compliance engine, and produces reports.
+
+Supports concurrent device auditing via ThreadPoolExecutor.
+The number of parallel workers is controlled by ``audit_settings.max_workers``
+in the compliance YAML config (default: 5, set to 1 for sequential).
 """
 
 import logging
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
 import yaml
 from rich.console import Console
+from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, MofNCompleteColumn
 
 from .credentials import CredentialHandler
 from .jump_manager import JumpManager
@@ -35,6 +42,84 @@ def load_compliance_config(path: str) -> dict:
         sys.exit(1)
     with open(p, "r", encoding="utf-8") as fh:
         return yaml.safe_load(fh) or {}
+
+
+@dataclass
+class _DeviceJob:
+    """All parameters needed to audit a single device."""
+    hostname: str
+    ip: str
+    username: str
+    password: str
+    device_type: str
+    jump: Optional[JumpManager]
+    enable_secret: Optional[str]
+    timeout: int
+    compliance_policy: dict
+    role_config: Optional[list]
+    endpoint_config: Optional[dict]
+    audit_settings: dict
+
+
+def _audit_single_device(job: _DeviceJob) -> Optional[AuditResult]:
+    """
+    Audit one device end-to-end (connect → collect → classify → check).
+
+    Designed to run inside a thread. Returns None on connection failure.
+    """
+    hostname, ip = job.hostname, job.ip
+    log.info("Starting audit of %s (%s)", hostname, ip)
+
+    # Parse hostname for role
+    host_info = parse_hostname(hostname, role_config=job.role_config)
+
+    # Connect
+    connector = DeviceConnector(
+        ip=ip,
+        username=job.username,
+        password=job.password,
+        device_type=job.device_type,
+        jump=job.jump,
+        **({"secret": job.enable_secret} if job.enable_secret else {}),
+    )
+    try:
+        conn = connector.connect()
+    except Exception as exc:
+        log.error("Connection to %s (%s) failed: %s", hostname, ip, exc)
+        return None
+
+    try:
+        # Collect
+        collector = DataCollector(timeout=job.timeout)
+        data = collector.collect(conn, ip=ip)
+        data.hostname = hostname
+
+        # Classify ports
+        ports = classify_ports(
+            data,
+            role_config=job.role_config,
+            endpoint_config=job.endpoint_config,
+        )
+
+        # Audit
+        engine = ComplianceEngine(job.compliance_policy)
+        result = engine.audit(data, host_info, ports)
+
+        # Save per-device reports
+        out_dir = job.audit_settings.get("output_dir", "./reports")
+        if job.audit_settings.get("json_report", True):
+            save_json(result, out_dir)
+        if job.audit_settings.get("html_report", True):
+            save_html(result, out_dir)
+
+        log.info("Completed audit of %s — score %s%%", hostname, result.score_pct)
+        return result
+
+    finally:
+        try:
+            conn.disconnect()
+        except Exception:
+            pass
 
 
 def run_audit(
@@ -113,89 +198,88 @@ def run_audit(
         jump = JumpManager(jump_host, username, password)
         jump.connect()
 
-    # ── Collector + Engine ─────────────────────────────────
-    timeout = audit_settings.get("collect_timeout", 30)
-    collector = DataCollector(timeout=timeout)
-    engine = ComplianceEngine(compliance_policy)
+    # ── Concurrency settings ───────────────────────────────
+    max_workers = max(1, audit_settings.get("max_workers", 5))
     device_type = conn_cfg.get("device_type", "cisco_xe")
+    timeout = audit_settings.get("collect_timeout", 30)
+
+    console.print(
+        f"[cyan]Auditing {len(devices)} device(s) with up to "
+        f"{max_workers} concurrent worker(s) ...[/]"
+    )
+    console.print()
+
+    # ── Build jobs ─────────────────────────────────────────
+    jobs: list[_DeviceJob] = []
+    for dev_entry in devices:
+        ip = dev_entry.get("ip", "")
+        hostname = dev_entry.get("hostname", ip)
+        jobs.append(_DeviceJob(
+            hostname=hostname,
+            ip=ip,
+            username=username,
+            password=password,
+            device_type=device_type,
+            jump=jump,
+            enable_secret=enable_secret,
+            timeout=timeout,
+            compliance_policy=compliance_policy,
+            role_config=role_config,
+            endpoint_config=endpoint_config,
+            audit_settings=audit_settings,
+        ))
+
+    # ── Execute audits concurrently ────────────────────────
     results: list[AuditResult] = []
 
     try:
-        for dev_entry in devices:
-            ip = dev_entry.get("ip", "")
-            hostname = dev_entry.get("hostname", ip)
-            console.rule(f"[bold cyan]{hostname}  ({ip})[/]")
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[bold cyan]{task.description}"),
+            BarColumn(),
+            MofNCompleteColumn(),
+            console=console,
+        ) as progress:
+            task_id = progress.add_task("Auditing devices", total=len(jobs))
 
-            # Parse hostname for role
-            host_info = parse_hostname(hostname, role_config=role_config)
-            if host_info.parsed:
-                console.print(f"  Role detected: [bold]{host_info.role_display}[/]")
-            else:
-                console.print("  [yellow]Hostname did not match naming convention — "
-                              "role-specific checks may be skipped.[/]")
-
-            # Connect
-            connector = DeviceConnector(
-                ip=ip,
-                username=username,
-                password=password,
-                device_type=device_type,
-                jump=jump,
-                **({"secret": enable_secret} if enable_secret else {}),
-            )
-            try:
-                conn = connector.connect()
-            except Exception as exc:
-                console.print(f"  [bold red]Connection failed:[/] {exc}")
-                log.exception("Connection to %s failed", ip)
-                continue
-
-            try:
-                # Collect
-                console.print("  Collecting device data ...")
-                data = collector.collect(conn, ip=ip)
-                data.hostname = hostname  # prefer inventory hostname
-
-                # Classify ports
-                console.print("  Classifying ports ...")
-                ports = classify_ports(data, role_config=role_config, endpoint_config=endpoint_config)
-                uplinks = [n for n, p in ports.items() if p.role.value == "trunk_uplink"]
-                downlinks = [n for n, p in ports.items() if p.role.value == "trunk_downlink"]
-                endpoints = [n for n, p in ports.items() if p.role.value == "trunk_endpoint"]
-                if uplinks:
-                    console.print(f"    Uplinks  : {', '.join(uplinks)}")
-                if downlinks:
-                    console.print(f"    Downlinks: {', '.join(downlinks)}")
-                if endpoints:
-                    ep_detail = [f"{n} ({ports[n].cdp_neighbor})" for n in endpoints]
-                    console.print(f"    Endpoints: {', '.join(ep_detail)}")
-
-                # Audit
-                console.print("  Running compliance checks ...")
-                result = engine.audit(data, host_info, ports)
-                results.append(result)
-
-                # Print report
-                print_report(result, console=console)
-
-                # Save reports
-                out_dir = audit_settings.get("output_dir", "./reports")
-                if audit_settings.get("json_report", True):
-                    p = save_json(result, out_dir)
-                    console.print(f"  [dim]JSON → {p}[/]")
-                if audit_settings.get("html_report", True):
-                    p = save_html(result, out_dir)
-                    console.print(f"  [dim]HTML → {p}[/]")
-
-            finally:
-                try:
-                    conn.disconnect()
-                except Exception:
-                    pass
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                future_to_job = {
+                    executor.submit(_audit_single_device, job): job
+                    for job in jobs
+                }
+                for future in as_completed(future_to_job):
+                    job = future_to_job[future]
+                    try:
+                        result = future.result()
+                        if result is not None:
+                            results.append(result)
+                            progress.console.print(
+                                f"  [green]✓[/] {job.hostname} ({job.ip}) — "
+                                f"Score: {result.score_pct}%"
+                            )
+                        else:
+                            progress.console.print(
+                                f"  [red]✗[/] {job.hostname} ({job.ip}) — "
+                                f"Connection failed"
+                            )
+                    except Exception as exc:
+                        log.exception("Audit of %s failed", job.hostname)
+                        progress.console.print(
+                            f"  [red]✗[/] {job.hostname} ({job.ip}) — "
+                            f"Error: {exc}"
+                        )
+                    progress.advance(task_id)
 
     finally:
         if jump:
             jump.close()
+
+    # ── Per-device console reports ─────────────────────────
+    if results:
+        console.print()
+        for result in results:
+            console.rule(f"[bold cyan]{result.hostname}  ({result.ip})[/]")
+            print_report(result, console=console)
 
     # ── Final summary ──────────────────────────────────────
     if len(results) > 1:

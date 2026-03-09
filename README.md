@@ -17,10 +17,11 @@ Built on **PyATS/Genie** for structured parsing, **Netmiko** for transport, and 
   - [Basic Examples](#basic-examples)
   - [CLI Reference](#cli-reference)
 - [Configuration Guide](#configuration-guide)
-  - [Connection Settings](#connection-settings)
-  - [Device Inventory](#device-inventory)
-  - [Audit Settings](#audit-settings)
-  - [Compliance Checks](#compliance-checks)
+  - [Multiple Config Files](#multiple-config-files)
+  - [Audit Settings](#audit-settings-1)
+  - [Connection Settings](#connection-settings-2)
+  - [Device Inventory](#device-inventory-3)
+  - [Compliance Checks](#compliance-checks-5)
 - [Hostname Naming Convention](#hostname-naming-convention)
 - [How Port Classification Works](#how-port-classification-works)
   - [Uplink vs Downlink Detection](#uplink-vs-downlink-detection)
@@ -48,6 +49,8 @@ Built on **PyATS/Genie** for structured parsing, **Netmiko** for transport, and 
 | Area | Capability |
 | ------ | ----------- |
 | **90+ compliance checks** | Every check toggleable via `enabled: true/false` in YAML |
+| **Concurrent auditing** | Audit multiple devices in parallel — configurable worker count via `max_workers` |
+| **Multiple config files** | Run different YAML configs per site or purpose with `-c site_london.yaml` |
 | **Role-aware** | Automatically detects device role (Access / Core / SD-WAN / Industrial) from the hostname naming convention |
 | **Port classification** | Every interface is classified as ACCESS, TRUNK_UPLINK, TRUNK_DOWNLINK, UNUSED, ROUTED, SVI, etc. |
 | **Uplink/downlink detection** | Uses STP root-port election + CDP/LLDP neighbor hostname to reliably determine trunk direction |
@@ -56,7 +59,8 @@ Built on **PyATS/Genie** for structured parsing, **Netmiko** for transport, and 
 | **Jump host support** | SSH through a bastion/jump server using Paramiko direct-tcpip channels |
 | **Structured parsing** | Genie parses `show` command output into Python dicts — no fragile regex-on-CLI |
 | **Rich console output** | Colour-coded pass/fail tables with score percentages |
-| **HTML & JSON reports** | Automatically saved per device for evidence and downstream tooling |
+| **Interactive HTML reports** | Dashboard with device grid, collapsible sections, status filtering, and search |
+| **JSON reports** | Structured JSON output per device for downstream tooling and automation |
 | **Credential flexibility** | Environment variables → interactive prompt |
 | **Category filtering** | Audit only management plane, or only data plane, etc. |
 
@@ -71,7 +75,7 @@ Built on **PyATS/Genie** for structured parsing, **Netmiko** for transport, and 
 └────────────────────────┬────────────────────────────────┘
                          │
                     ┌────▼─────┐
-                    │ auditor  │  ← Orchestrator
+                    │ auditor  │  ← Orchestrator (ThreadPool)
                     └────┬─────┘
                          │
           ┌──────────────┼──────────────────┐
@@ -93,7 +97,7 @@ Built on **PyATS/Genie** for structured parsing, **Netmiko** for transport, and 
                   └───────────────┘
 ```
 
-**Data flow:** Connect → Collect show commands → Parse with Genie → Classify every port → Run all enabled checks against policy → Generate reports.
+**Data flow:** Connect → Collect show commands (concurrently across devices) → Parse with Genie → Classify every port → Run all enabled checks against policy → Generate reports.
 
 ---
 
@@ -148,7 +152,13 @@ pip install -r requirements.txt
 # 2. Run the audit against a single device
 python -m compliance_audit --device GB-MKD1-005ASW001:10.1.1.1
 
-# 3. View the reports in ./reports/
+# 3. Or audit all devices in the config (concurrently)
+python -m compliance_audit
+
+# 4. Use a site-specific config file
+python -m compliance_audit -c configs/site_london.yaml
+
+# 5. View the reports in ./reports/
 ```
 
 The tool will prompt for credentials if they are not found in environment variables.
@@ -172,6 +182,10 @@ python -m compliance_audit --device 10.1.1.1
 # Audit all devices listed in compliance_config.yaml
 python -m compliance_audit
 
+# Use a different config file (e.g. per-site configs)
+python -m compliance_audit -c configs/site_london.yaml
+python -m compliance_audit -c configs/site_manchester.yaml
+
 # Skip the jump host (connect directly)
 python -m compliance_audit --device 10.1.1.1 --no-jump
 
@@ -180,9 +194,6 @@ python -m compliance_audit --categories management_plane
 
 # Only run data plane and control plane checks
 python -m compliance_audit --categories data_plane control_plane
-
-# Use a custom config file
-python -m compliance_audit --config /path/to/my_policy.yaml
 
 # Verbose output (INFO level)
 python -m compliance_audit -v
@@ -212,19 +223,60 @@ Options:
 
 ## Configuration Guide
 
-All configuration lives in `compliance_audit/compliance_config.yaml`. The file is heavily commented and designed to be human-friendly.
+All configuration lives in a YAML file (default: `compliance_audit/compliance_config.yaml`). The file is heavily commented and structured into five numbered sections for easy navigation:
 
-### Connection Settings
+| Section | What it controls | How often you edit it |
+| --------- | ------------------ | ---------------------- |
+| **§1 Audit Settings** | Concurrency, reports, timeouts, reference VLANs | Every run |
+| **§2 Connection** | SSH, jump host, credentials | Per environment |
+| **§3 Device Inventory** | List of devices to audit | Per run |
+| **§4 Classification** | Hostname role codes, endpoint neighbour detection | Set once per org |
+| **§5 Compliance Checks** | All 90+ policy checks | When policy changes |
+
+### Multiple Config Files
+
+To manage different sites, environments, or audit scopes, copy the default config and run with `-c`:
+
+```bash
+# Copy the default config for a new site
+cp compliance_audit/compliance_config.yaml configs/site_london.yaml
+cp compliance_audit/compliance_config.yaml configs/site_manchester.yaml
+
+# Run each site independently
+python -m compliance_audit -c configs/site_london.yaml
+python -m compliance_audit -c configs/site_manchester.yaml
+```
+
+Each config file is self-contained — devices, connection settings, and compliance policy are all in one file, so different sites can have different policies.
+
+### Audit Settings (§1)
+
+```yaml
+audit_settings:
+  max_workers: 5              # Concurrent device audits (1 = sequential)
+  collect_timeout: 30         # Per-command timeout (seconds)
+  output_dir: "./reports"     # Where reports are saved
+  html_report: true           # Generate HTML dashboard report
+  json_report: false          # Also dump raw JSON per device
+  parking_vlan: 99            # VLAN for unused ports
+  native_vlan: 99             # Expected native VLAN on trunks
+```
+
+The `max_workers` setting controls how many devices are audited simultaneously. Set to `1` for sequential execution, or increase for faster runs across large inventories. Each worker runs in its own thread with an independent SSH connection.
+
+### Connection Settings (§2)
 
 ```yaml
 connection:
-  jump_host: "192.0.20.60"       # Jump/bastion host IP (leave blank to skip)
-  timeout: 30                     # SSH connection timeout (seconds)
-  retries: 3                      # Connection retry attempts
-  device_type: "cisco_xe"         # Netmiko device type
+  device_type: "cisco_xe"     # Netmiko device type
+  timeout: 30                 # SSH connection timeout (seconds)
+  retries: 3                  # Connection retry attempts
+  cred_target: "MyApp/ADM"   # Credential vault target
+  jump_host: "192.0.2.60"    # Jump/bastion host IP
+  use_jump_host: false        # Set false to connect directly
 ```
 
-### Device Inventory
+### Device Inventory (§3)
 
 ```yaml
 devices:
@@ -238,19 +290,7 @@ devices:
 
 Alternatively, pass devices on the command line with `--device` (overrides the YAML list).
 
-### Audit Settings
-
-```yaml
-audit_settings:
-  parking_vlan: 999           # VLAN assigned to unused ports
-  native_vlan: 1              # Reference native VLAN for trunk checks
-  html_report: true           # Generate HTML report per device
-  json_report: true           # Generate JSON report per device
-  output_dir: "./reports"     # Output directory for reports
-  collect_timeout: 30         # Per-command timeout (seconds)
-```
-
-### Compliance Checks
+### Compliance Checks (§5)
 
 Every check follows the same pattern:
 
@@ -412,7 +452,8 @@ storm_control:
 The tool reads the operational speed from `show interfaces` (via Genie) and selects the matching tier. If the speed doesn't match exactly, it picks the nearest lower tier.
 
 The compliance check validates both the rising and falling thresholds. For example, on a 1G port, the expected configuration would be:
-```
+
+```cisco
 storm-control broadcast level 1.00 0.70
 storm-control multicast level 1.00 0.70
 ```
@@ -560,7 +601,7 @@ The tool generates three types of output:
 
 ### Console Report (always)
 
-Rich-formatted tables with colour-coded pass/fail/warn status, grouped by category, with a compliance score percentage.
+Rich-formatted tables with colour-coded pass/fail/warn status, grouped by category, with a compliance score percentage. During concurrent runs, a progress bar shows device completion status.
 
 ```text
 ╭──────────────── COMPLIANCE AUDIT REPORT ─────────────────╮
@@ -593,13 +634,25 @@ Rich-formatted tables with colour-coded pass/fail/warn status, grouped by catego
 
 ### HTML Report
 
-A self-contained HTML file with the same Rich tables, suitable for emailing or archiving as evidence.
+Self-contained HTML reports with a dark-themed dashboard. Two types are generated:
+
+**Per-device report** — Stat cards showing score/pass/fail/warn/error, findings grouped by category, status filter buttons (All / Fail / Warn / Pass), and a search box to find specific checks.
+
+**Consolidated report** (when auditing multiple devices) — An interactive dashboard with:
+
+- Overall score cards and summary statistics
+- Clickable device grid with score bars — click a device to jump to its section
+- Collapsible per-device sections (expand/collapse all)
+- Global status filter buttons (show only failures, warnings, etc.)
+- Search box that filters across all devices and hides empty sections
+- Back-to-top button for quick navigation
 
 All reports are saved to the `output_dir` (default `./reports/`) with filenames like:
 
 ```text
 reports/GB-MKD1-005ASW001_20260308_143025.json
 reports/GB-MKD1-005ASW001_20260308_143025.html
+reports/consolidated_report_20260308_143025.html
 ```
 
 ---
@@ -624,18 +677,20 @@ Cisco-Compliance-Audit/
 ├── compliance_audit/
 │   ├── __init__.py             # Package exports and version
 │   ├── __main__.py             # CLI entry point (python -m compliance_audit)
-│   ├── compliance_config.yaml  # ★ Master configuration — all checks here
-│   ├── config.yaml             # Legacy connection config (still works)
+│   ├── compliance_config.yaml  # ★ Default configuration — all checks here
 │   ├── config_loader.py        # YAML config loader
 │   ├── credentials.py          # Credential handler (env / prompt)
 │   ├── jump_manager.py         # SSH jump host via Paramiko
 │   ├── netmiko_utils.py        # Netmiko connection wrapper
 │   ├── hostname_parser.py      # Hostname naming convention parser
-│   ├── collector.py            # Data collection + Genie parsing
+│   ├── collector.py            # Data collection + Genie parsing (thread-safe)
 │   ├── port_classifier.py      # Interface role classification
 │   ├── compliance_engine.py    # All compliance checks (~700 lines)
-│   ├── report.py               # Rich console + HTML + JSON reports
-│   └── auditor.py              # Main orchestrator
+│   ├── report.py               # Rich console + interactive HTML + JSON reports
+│   └── auditor.py              # Orchestrator (concurrent via ThreadPoolExecutor)
+├── configs/                    # (optional) Per-site config files
+│   ├── site_london.yaml
+│   └── site_manchester.yaml
 ├── requirements.txt            # Python dependencies
 ├── README.md                   # This file
 └── LICENSE
@@ -703,6 +758,8 @@ Role codes are configured in the YAML — no code changes needed:
 | `Config file not found` | The tool looks for `compliance_config.yaml` in the current directory, then in the `compliance_audit/` directory. Use `--config` for a custom path. |
 | Timeout on `show` commands | Increase `collect_timeout` in `audit_settings` or check device responsiveness. |
 | Large devices with many interfaces slow to audit | This is expected — every interface is checked individually. Consider using `--categories` to focus on specific check groups. |
+| Concurrent audits too slow / too fast | Adjust `max_workers` in `audit_settings`. Use `1` for sequential, or increase for more parallelism. |
+| Want different policies per site | Copy `compliance_config.yaml`, edit each copy, and run with `-c configs/site_name.yaml`. |
 
 ---
 

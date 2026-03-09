@@ -8,6 +8,7 @@ standalone parsers (no live PyATS testbed required).
 
 import re
 import logging
+import threading
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
@@ -15,18 +16,20 @@ log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Genie standalone parsing (optional but strongly recommended)
+# Thread-safe: each thread gets its own GenieDevice instance.
 # ---------------------------------------------------------------------------
 try:
     from genie.conf.base import Device as GenieDevice
 
-    _genie_dev: Optional[GenieDevice] = None
+    _genie_local = threading.local()
 
     def _get_genie_device() -> GenieDevice:
-        global _genie_dev
-        if _genie_dev is None:
-            _genie_dev = GenieDevice("auditor", os="iosxe")
-            _genie_dev.custom.setdefault("abstraction", {})["order"] = ["os"]
-        return _genie_dev
+        dev = getattr(_genie_local, "device", None)
+        if dev is None:
+            dev = GenieDevice("auditor", os="iosxe")
+            dev.custom.setdefault("abstraction", {})["order"] = ["os"]
+            _genie_local.device = dev
+        return dev
 
     def genie_parse(command: str, output: str) -> Optional[dict]:
         """Parse CLI output using Genie. Returns None on failure."""
