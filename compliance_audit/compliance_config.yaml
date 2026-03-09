@@ -8,7 +8,7 @@
 
 # ─── CONNECTION ───────────────────────────────────────────────────
 connection:
-  jump_host: "10.112.250.6"
+  jump_host: "192.0.20.60"
   use_jump_host: true               # Set false to connect directly (or use --no-jump)
   cred_target: "MyApp/ADM"
   timeout: 30
