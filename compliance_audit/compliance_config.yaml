@@ -23,7 +23,7 @@ connection:
 #
 # Add as many entries as you need — one per line, indented under "devices:".
 # To skip the inventory and audit a single device ad-hoc, use the CLI:
-#   python -m compliance_audit --device GB-MKD1-005ASW001:10.1.1.1
+#   python -m compliance_audit --device GB-SITE1-001ASW001:10.1.1.1
 #
 # Examples:
 devices:
