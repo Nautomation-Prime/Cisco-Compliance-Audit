@@ -28,9 +28,9 @@ connection:
 # Examples:
 devices:
   - hostname: GB-SITE1-001ASW001
-    ip: 10.1.1.1
+    ip: 192.0.2.61
   - hostname: GB-SITE1-001ASW002
-    ip: 10.1.2.1
+    ip: 192.0.2.62
   # - hostname: placeholder
   #   ip: 10.1.3.1
   # - hostname: placeholder
