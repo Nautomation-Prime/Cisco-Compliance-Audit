@@ -213,7 +213,7 @@ compliance:
 
     ip_domain_name:
       enabled: true
-      expected: "cns.muellergroup.com"          # Set your corporate domain, e.g. "corp.example.com"
+      expected: "test.domain.com"          # Set your corporate domain, e.g. "corp.example.com"
 
     # ── SSH ─────────────────────────────────────────────────────
     ssh_version:
