@@ -587,7 +587,9 @@ compliance:
     # Thresholds vary by port speed. Keys are speed in Mbps.
     # Each threshold has a rising value (upper limit) and falling value (lower limit)
     storm_control:
-      enabled: true
+      enabled: true             # Master toggle for all storm control checks
+      check_thresholds: true    # Enable/disable threshold validation independently
+      check_action: true        # Enable/disable action validation independently
       action: "shutdown"        # shutdown | trap
       types:
         - broadcast
