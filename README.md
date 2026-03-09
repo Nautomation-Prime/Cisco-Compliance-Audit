@@ -57,7 +57,7 @@ Built on **PyATS/Genie** for structured parsing, **Netmiko** for transport, and 
 | **Structured parsing** | Genie parses `show` command output into Python dicts — no fragile regex-on-CLI |
 | **Rich console output** | Colour-coded pass/fail tables with score percentages |
 | **HTML & JSON reports** | Automatically saved per device for evidence and downstream tooling |
-| **Credential flexibility** | Windows Credential Manager → environment variables → interactive prompt |
+| **Credential flexibility** | Environment variables → interactive prompt |
 | **Category filtering** | Audit only management plane, or only data plane, etc. |
 
 ---
@@ -136,7 +136,6 @@ pip install -r requirements.txt
 | `genie` | Parse `show` output into Python dicts |
 | `rich` | Colour console tables, HTML export |
 | `PyYAML` | Configuration file loading |
-| `pywin32` | Windows Credential Manager (Windows only) |
 
 ---
 
@@ -152,7 +151,7 @@ python -m compliance_audit --device GB-MKD1-005ASW001:10.1.1.1
 # 3. View the reports in ./reports/
 ```
 
-The tool will prompt for credentials if they are not found in environment variables or Windows Credential Manager.
+The tool will prompt for credentials if they are not found in environment variables.
 
 ---
 
@@ -220,7 +219,6 @@ All configuration lives in `compliance_audit/compliance_config.yaml`. The file i
 ```yaml
 connection:
   jump_host: "10.112.250.6"       # Jump/bastion host IP (leave blank to skip)
-  cred_target: "MyApp/ADM"        # Windows Credential Manager target name
   timeout: 30                     # SSH connection timeout (seconds)
   retries: 3                      # Connection retry attempts
   device_type: "cisco_xe"         # Netmiko device type
@@ -589,8 +587,7 @@ reports/GB-MKD1-005ASW001_20260308_143025.html
 The tool attempts to find credentials in this order:
 
 1. **Environment variables** — `SWITCH_USER` / `SWITCH_PASS` (or `CREDENTIAL_USER` / `CREDENTIAL_PASS`)
-2. **Windows Credential Manager** — using the `cred_target` name from config (e.g. `MyApp/ADM`)
-3. **Interactive prompt** — asks for username/password, optionally saves to Credential Manager
+2. **Interactive prompt** — asks for username/password
 
 For the enable secret (if needed):
 
@@ -608,7 +605,7 @@ Cisco-Compliance-Audit/
 │   ├── compliance_config.yaml  # ★ Master configuration — all checks here
 │   ├── config.yaml             # Legacy connection config (still works)
 │   ├── config_loader.py        # YAML config loader
-│   ├── credentials.py          # Credential handler (env / WinCred / prompt)
+│   ├── credentials.py          # Credential handler (env / prompt)
 │   ├── jump_manager.py         # SSH jump host via Paramiko
 │   ├── netmiko_utils.py        # Netmiko connection wrapper
 │   ├── hostname_parser.py      # Hostname naming convention parser
