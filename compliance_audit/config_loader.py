@@ -20,7 +20,6 @@ class Config:
 
         # Example: environment variables for secrets
         self._env = {
-            "CRED_TARGET": os.getenv("CRED_TARGET"),
             "API_TOKEN": os.getenv("API_TOKEN"),
         }
 
@@ -35,13 +34,6 @@ class Config:
     def jump_host(self) -> str:
         conn = self._config.get("connection", {})
         return conn.get("jump_host") or self._config.get("JUMP_HOST", "")
-
-    @property
-    def cred_target(self) -> str:
-        conn = self._config.get("connection", {})
-        return (self._env.get("CRED_TARGET")
-                or conn.get("cred_target")
-                or self._config.get("CRED_TARGET", ""))
 
     @property
     def settings(self) -> dict:

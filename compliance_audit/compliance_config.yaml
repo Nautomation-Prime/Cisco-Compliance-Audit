@@ -33,7 +33,6 @@ connection:
   device_type: "cisco_xe"          # Netmiko device type for IOS-XE
   timeout: 30                      # SSH connection timeout (seconds)
   retries: 3                       # Connection retry attempts
-  cred_target: "MyApp/ADM"         # Credential vault target (or leave blank for prompt)
   jump_host: "192.0.2.60"          # Jump/bastion host IP
   use_jump_host: false             # Set false to connect directly (or use --no-jump)
 

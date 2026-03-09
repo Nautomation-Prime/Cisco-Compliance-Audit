@@ -44,11 +44,9 @@ class CredentialHandler:
 
     def __init__(
         self,
-        target: str | None = None,
         credential_store: str = "none",
         keyring_service: str = "cisco-compliance-audit",
     ) -> None:
-        self._target = target or ""
         self._store = credential_store.lower().strip()
         self._service = keyring_service
 
