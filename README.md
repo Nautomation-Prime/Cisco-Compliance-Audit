@@ -61,7 +61,7 @@ Built on **PyATS/Genie** for structured parsing, **Netmiko** for transport, and 
 | **Rich console output** | Colour-coded pass/fail tables with score percentages |
 | **Interactive HTML reports** | Dashboard with device grid, collapsible sections, status filtering, and search |
 | **JSON reports** | Structured JSON output per device for downstream tooling and automation |
-| **Credential flexibility** | Environment variables → interactive prompt |
+| **Credential flexibility** | OS keyring (optional) → environment variables → interactive prompt |
 | **Category filtering** | Audit only management plane, or only data plane, etc. |
 
 ---
@@ -274,6 +274,8 @@ connection:
   cred_target: "MyApp/ADM"   # Credential vault target
   jump_host: "192.0.2.60"    # Jump/bastion host IP
   use_jump_host: false        # Set false to connect directly
+  credential_store: "none"    # "none" or "keyring" (see Credentials section)
+  keyring_service: "cisco-compliance-audit"  # keyring namespace
 ```
 
 ### Device Inventory (§3)
@@ -661,8 +663,36 @@ reports/consolidated_report_20260308_143025.html
 
 The tool attempts to find credentials in this order:
 
-1. **Environment variables** — `SWITCH_USER` / `SWITCH_PASS` (or `CREDENTIAL_USER` / `CREDENTIAL_PASS`)
-2. **Interactive prompt** — asks for username/password
+1. **OS keyring** — if `credential_store: "keyring"` is set in the config (see below)
+2. **Environment variables** — `SWITCH_USER` / `SWITCH_PASS` (or `CREDENTIAL_USER` / `CREDENTIAL_PASS`)
+3. **Interactive prompt** — asks for username/password
+
+When the keyring backend is enabled, credentials obtained from env-vars or the interactive prompt are **automatically saved** to the OS keyring so subsequent runs are hands-free.
+
+### Using the OS Keyring
+
+Set these two values in the **§2 Connection** section of your config file:
+
+```yaml
+connection:
+  credential_store: "keyring"                    # enables the keyring backend
+  keyring_service: "cisco-compliance-audit"       # namespace — change per site if needed
+```
+
+| OS | Backend used |
+| -- | ------------ |
+| **RHEL / Fedora / Ubuntu** (desktop) | GNOME Keyring via `secretstorage` (D-Bus) |
+| **RHEL / Ubuntu** (headless server) | Encrypted file backend (`~/.local/share/python_keyring/`) |
+| **Windows** | Windows Credential Manager |
+| **macOS** | macOS Keychain |
+
+The `keyring` package is installed automatically with `pip install -r requirements.txt`. If you keep `credential_store: "none"` (the default) the keyring library is **never imported** — no side-effects.
+
+To **delete** stored credentials, use your OS keyring manager or:
+
+```bash
+python -c "import keyring; keyring.delete_password('cisco-compliance-audit', '/username'); keyring.delete_password('cisco-compliance-audit', '/password')"
+```
 
 For the enable secret (if needed):
 
@@ -679,7 +709,7 @@ Cisco-Compliance-Audit/
 │   ├── __main__.py             # CLI entry point (python -m compliance_audit)
 │   ├── compliance_config.yaml  # ★ Default configuration — all checks here
 │   ├── config_loader.py        # YAML config loader
-│   ├── credentials.py          # Credential handler (env / prompt)
+│   ├── credentials.py          # Credential handler (keyring / env / prompt)
 │   ├── jump_manager.py         # SSH jump host via Paramiko
 │   ├── netmiko_utils.py        # Netmiko connection wrapper
 │   ├── hostname_parser.py      # Hostname naming convention parser

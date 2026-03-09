@@ -37,6 +37,25 @@ connection:
   jump_host: "192.0.2.60"          # Jump/bastion host IP
   use_jump_host: false             # Set false to connect directly (or use --no-jump)
 
+  # ── Credential Store ─────────────────────────────────────
+  # Choose how credentials are stored and retrieved.
+  #
+  # Options:
+  #   "none"     – env vars → interactive prompt only (default)
+  #   "keyring"  – use the OS keyring (GNOME Keyring, KWallet on Linux;
+  #                Credential Manager on Windows; Keychain on macOS).
+  #                Requires: pip install keyring
+  #
+  # When set to "keyring":
+  #   • On first run you'll be prompted for username/password
+  #   • Credentials are saved to the OS keyring under service_name below
+  #   • Subsequent runs retrieve them automatically — no prompt needed
+  #   • To update stored creds, delete them from your keyring or set
+  #     credential_store back to "none" and re-store
+  #
+  credential_store: "none"         # "none" or "keyring"
+  keyring_service: "cisco-compliance-audit"   # keyring service name (namespace)
+
 
 # ═══════════════════════════════════════════════════════════════════
 # §3  DEVICE  INVENTORY  (what to audit)

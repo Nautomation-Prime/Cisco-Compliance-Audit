@@ -185,7 +185,13 @@ def run_audit(
 
     # ── Credentials ────────────────────────────────────────
     cred_target = conn_cfg.get("cred_target")
-    cred_handler = CredentialHandler(target=cred_target)
+    cred_store = conn_cfg.get("credential_store", "none")
+    keyring_svc = conn_cfg.get("keyring_service", "cisco-compliance-audit")
+    cred_handler = CredentialHandler(
+        target=cred_target,
+        credential_store=cred_store,
+        keyring_service=keyring_svc,
+    )
     username, password = cred_handler.get_secret_with_fallback()
     enable_secret = cred_handler.get_enable_secret()
 
