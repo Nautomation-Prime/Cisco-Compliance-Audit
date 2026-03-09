@@ -76,6 +76,11 @@ hostname_roles:
     display: "Industrial Switch"
     trunk_signal: downlink       # Seeing an ISW neighbor → local port is a downlink
 
+  - code: DSW
+    role: distribution_switch
+    display: "Distribution Switch"
+    trunk_signal: none
+
 
 # ─── ENDPOINT NEIGHBORS (APs, etc.) ──────────────────────────────
 # Trunks to endpoints (e.g. Cisco APs) are detected via CDP / LLDP
