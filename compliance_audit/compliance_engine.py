@@ -1564,27 +1564,29 @@ class ComplianceEngine:
         core_pol = rs.get("core_switch", {})
 
         if _enabled(core_pol, "stp_root_check") and data.stp:
-            # Check if this switch is root for VLAN 1
-            is_root = False
+            root_vlans = []
+            non_root_vlans = []
             for mode_data in data.stp.values():
                 if not isinstance(mode_data, dict):
                     continue
                 for vid, vinfo in mode_data.get("vlans", {}).items():
                     root = vinfo.get("root", {})
                     bridge = vinfo.get("bridge", {})
-                    if (root.get("address") and bridge.get("address") and
-                            root["address"] == bridge["address"]):
-                        is_root = True
-                        break
-                if is_root:
-                    break
+                    if root.get("address") and bridge.get("address"):
+                        if root["address"] == bridge["address"]:
+                            root_vlans.append(vid)
+                        else:
+                            non_root_vlans.append(vid)
 
-            if is_root:
+            # Report each VLAN where this core switch IS the root (PASS)
+            for vid in root_vlans:
                 f.append(Finding("core_stp_root", Status.PASS,
-                         "Core switch IS the STP root bridge", "role_specific"))
-            else:
+                         f"Core switch IS the STP root bridge for VLAN {vid}", "role_specific"))
+
+            # Report each VLAN where this core switch is NOT the root (WARN)
+            for vid in non_root_vlans:
                 f.append(Finding("core_stp_root", Status.WARN,
-                         "Core switch is NOT the STP root bridge — verify",
+                         f"Core switch is NOT the STP root bridge for VLAN {vid} — verify",
                          "role_specific"))
 
         return f
@@ -1594,7 +1596,7 @@ class ComplianceEngine:
         asw_pol = rs.get("access_switch", {})
 
         if _enabled(asw_pol, "stp_not_root") and data.stp:
-            is_root = False
+            root_vlans = []
             for mode_data in data.stp.values():
                 if not isinstance(mode_data, dict):
                     continue
@@ -1603,12 +1605,14 @@ class ComplianceEngine:
                     bridge = vinfo.get("bridge", {})
                     if (root.get("address") and bridge.get("address") and
                             root["address"] == bridge["address"]):
-                        is_root = True
-                        break
-            if is_root:
-                f.append(Finding("asw_not_root", Status.FAIL,
-                         "Access switch IS the STP root — this should be the core!",
-                         "role_specific"))
+                        root_vlans.append(vid)
+
+            if root_vlans:
+                # Create a finding for each VLAN where this switch is root
+                for vid in root_vlans:
+                    f.append(Finding("asw_not_root", Status.FAIL,
+                             f"Access switch IS the STP root for VLAN {vid} — this should be the core!",
+                             "role_specific"))
             else:
                 f.append(Finding("asw_not_root", Status.PASS,
                          "Access switch is not STP root (correct)", "role_specific"))
