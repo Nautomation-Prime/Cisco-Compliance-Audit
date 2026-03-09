@@ -1426,6 +1426,9 @@ class ComplianceEngine:
         intf = pi.name
         speed = pi.speed_mbps or 1000  # default to 1G if unknown
 
+        # Check if threshold validation is enabled (defaults to true for backward compatibility)
+        check_thresholds = node.get("check_thresholds", True)
+
         # Pick threshold tier
         thresholds = node.get("thresholds_by_speed", {})
         tier = thresholds.get(speed) or thresholds.get(str(speed))
@@ -1438,100 +1441,104 @@ class ComplianceEngine:
         if tier is None:
             tier = node.get("default_thresholds", {})
 
-        for sc_type in node.get("types", ["broadcast", "multicast"]):
-            expected = tier.get(sc_type)
-            if expected is None:
-                continue
+        # Only check thresholds if enabled
+        if check_thresholds:
+            for sc_type in node.get("types", ["broadcast", "multicast"]):
+                expected = tier.get(sc_type)
+                if expected is None:
+                    continue
 
-            # Support both old format (single value) and new format (rising/falling)
-            if isinstance(expected, dict):
-                expected_rising = expected.get("rising")
-                expected_falling = expected.get("falling")
-            else:
-                # Backward compatibility: if it's a single number, use it for both
-                expected_rising = expected
-                expected_falling = None
-
-            # Look in interface config for matching storm-control line
-            # Pattern captures both rising and optional falling threshold
-            pattern = rf"storm-control\s+{re.escape(sc_type)}\s+level\s+([\d.]+)(?:\s+([\d.]+))?"
-            match = None
-            for line in pi.config_lines:
-                m = re.search(pattern, line, re.IGNORECASE)
-                if m:
-                    match = m
-                    break
-
-            if match:
-                actual_rising = float(match.group(1))
-                actual_falling = float(match.group(2)) if match.group(2) else None
-
-                # Check rising threshold
-                rising_ok = actual_rising <= expected_rising
-                # Check falling threshold if both expected and actual are present
-                falling_ok = True
-                if expected_falling is not None and actual_falling is not None:
-                    falling_ok = actual_falling <= expected_falling
-                elif expected_falling is not None and actual_falling is None:
-                    # Expected falling but not configured
-                    falling_ok = False
-
-                if rising_ok and falling_ok:
-                    if actual_falling is not None and expected_falling is not None:
-                        f.append(Finding("storm_control", Status.PASS,
-                                 f"{intf}: {sc_type} storm-control {actual_rising}%/{actual_falling}% "
-                                 f"<= {expected_rising}%/{expected_falling}% ({speed}Mbps tier)",
-                                 interface=intf))
-                    else:
-                        f.append(Finding("storm_control", Status.PASS,
-                                 f"{intf}: {sc_type} storm-control {actual_rising}% <= {expected_rising}% "
-                                 f"({speed}Mbps tier)",
-                                 interface=intf))
+                # Support both old format (single value) and new format (rising/falling)
+                if isinstance(expected, dict):
+                    expected_rising = expected.get("rising")
+                    expected_falling = expected.get("falling")
                 else:
-                    # Build failure message based on what failed
-                    if not rising_ok and not falling_ok:
-                        fail_msg = (f"{intf}: {sc_type} storm-control {actual_rising}%/{actual_falling or 'N/A'}% "
-                                   f"> {expected_rising}%/{expected_falling}% ({speed}Mbps tier)")
-                    elif not rising_ok:
-                        fail_msg = (f"{intf}: {sc_type} storm-control rising {actual_rising}% "
-                                   f"> {expected_rising}% ({speed}Mbps tier)")
-                    else:
-                        if actual_falling is None:
-                            fail_msg = (f"{intf}: {sc_type} storm-control falling threshold not configured "
-                                       f"(expected {expected_falling}%, {speed}Mbps tier)")
-                        else:
-                            fail_msg = (f"{intf}: {sc_type} storm-control falling {actual_falling}% "
-                                       f"> {expected_falling}% ({speed}Mbps tier)")
+                    # Backward compatibility: if it's a single number, use it for both
+                    expected_rising = expected
+                    expected_falling = None
 
+                # Look in interface config for matching storm-control line
+                # Pattern captures both rising and optional falling threshold
+                pattern = rf"storm-control\s+{re.escape(sc_type)}\s+level\s+([\d.]+)(?:\s+([\d.]+))?"
+                match = None
+                for line in pi.config_lines:
+                    m = re.search(pattern, line, re.IGNORECASE)
+                    if m:
+                        match = m
+                        break
+
+                if match:
+                    actual_rising = float(match.group(1))
+                    actual_falling = float(match.group(2)) if match.group(2) else None
+
+                    # Check rising threshold
+                    rising_ok = actual_rising <= expected_rising
+                    # Check falling threshold if both expected and actual are present
+                    falling_ok = True
+                    if expected_falling is not None and actual_falling is not None:
+                        falling_ok = actual_falling <= expected_falling
+                    elif expected_falling is not None and actual_falling is None:
+                        # Expected falling but not configured
+                        falling_ok = False
+
+                    if rising_ok and falling_ok:
+                        if actual_falling is not None and expected_falling is not None:
+                            f.append(Finding("storm_control", Status.PASS,
+                                     f"{intf}: {sc_type} storm-control {actual_rising}%/{actual_falling}% "
+                                     f"<= {expected_rising}%/{expected_falling}% ({speed}Mbps tier)",
+                                     interface=intf))
+                        else:
+                            f.append(Finding("storm_control", Status.PASS,
+                                     f"{intf}: {sc_type} storm-control {actual_rising}% <= {expected_rising}% "
+                                     f"({speed}Mbps tier)",
+                                     interface=intf))
+                    else:
+                        # Build failure message based on what failed
+                        if not rising_ok and not falling_ok:
+                            fail_msg = (f"{intf}: {sc_type} storm-control {actual_rising}%/{actual_falling or 'N/A'}% "
+                                       f"> {expected_rising}%/{expected_falling}% ({speed}Mbps tier)")
+                        elif not rising_ok:
+                            fail_msg = (f"{intf}: {sc_type} storm-control rising {actual_rising}% "
+                                       f"> {expected_rising}% ({speed}Mbps tier)")
+                        else:
+                            if actual_falling is None:
+                                fail_msg = (f"{intf}: {sc_type} storm-control falling threshold not configured "
+                                           f"(expected {expected_falling}%, {speed}Mbps tier)")
+                            else:
+                                fail_msg = (f"{intf}: {sc_type} storm-control falling {actual_falling}% "
+                                           f"> {expected_falling}% ({speed}Mbps tier)")
+
+                        remediation_cmd = f"storm-control {sc_type} level {expected_rising}"
+                        if expected_falling is not None:
+                            remediation_cmd += f" {expected_falling}"
+
+                        f.append(Finding("storm_control", Status.FAIL, fail_msg,
+                                       interface=intf, remediation=remediation_cmd))
+                else:
+                    # Not configured at all
                     remediation_cmd = f"storm-control {sc_type} level {expected_rising}"
                     if expected_falling is not None:
                         remediation_cmd += f" {expected_falling}"
 
-                    f.append(Finding("storm_control", Status.FAIL, fail_msg,
-                                   interface=intf, remediation=remediation_cmd))
-            else:
-                # Not configured at all
-                remediation_cmd = f"storm-control {sc_type} level {expected_rising}"
-                if expected_falling is not None:
-                    remediation_cmd += f" {expected_falling}"
+                    f.append(Finding("storm_control", Status.FAIL,
+                             f"{intf}: {sc_type} storm-control not configured ({speed}Mbps tier)",
+                             interface=intf,
+                             remediation=remediation_cmd))
 
-                f.append(Finding("storm_control", Status.FAIL,
-                         f"{intf}: {sc_type} storm-control not configured ({speed}Mbps tier)",
-                         interface=intf,
-                         remediation=remediation_cmd))
-
-        # Storm-control action
-        expected_action = node.get("action", "shutdown")
-        if expected_action:
-            if pi_has(pi, rf"storm-control action\s+{re.escape(expected_action)}"):
-                f.append(Finding("storm_control_action", Status.PASS,
-                         f"{intf}: storm-control action {expected_action}",
-                         interface=intf))
-            else:
-                f.append(Finding("storm_control_action", Status.FAIL,
-                         f"{intf}: storm-control action not '{expected_action}'",
-                         interface=intf,
-                         remediation=f"storm-control action {expected_action}"))
+        # Storm-control action - only check if enabled (defaults to true for backward compatibility)
+        check_action = node.get("check_action", True)
+        if check_action:
+            expected_action = node.get("action", "shutdown")
+            if expected_action:
+                if pi_has(pi, rf"storm-control action\s+{re.escape(expected_action)}"):
+                    f.append(Finding("storm_control_action", Status.PASS,
+                             f"{intf}: storm-control action {expected_action}",
+                             interface=intf))
+                else:
+                    f.append(Finding("storm_control_action", Status.FAIL,
+                             f"{intf}: storm-control action not '{expected_action}'",
+                             interface=intf,
+                             remediation=f"storm-control action {expected_action}"))
 
         return f
 
