@@ -18,7 +18,7 @@ from .hostname_parser import parse_hostname
 from .collector import DataCollector
 from .port_classifier import classify_ports
 from .compliance_engine import ComplianceEngine, AuditResult
-from .report import print_report, save_json, save_html
+from .report import print_report, save_json, save_html, save_consolidated_html
 
 log = logging.getLogger(__name__)
 console = Console()
@@ -207,5 +207,12 @@ def run_audit(
                 f"({r.pass_count}P / {r.fail_count}F / {r.warn_count}W)"
             )
         console.print()
+
+        # Generate consolidated HTML report for multiple devices
+        out_dir = audit_settings.get("output_dir", "./reports")
+        if audit_settings.get("html_report", True):
+            p = save_consolidated_html(results, out_dir)
+            console.print(f"  [bold cyan]Consolidated HTML report:[/] {p}")
+            console.print()
 
     return results

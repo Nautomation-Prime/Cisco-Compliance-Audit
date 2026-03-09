@@ -145,3 +145,82 @@ def save_html(result: AuditResult, output_dir: str) -> Path:
     filename.write_text(html, encoding="utf-8")
     log.info("HTML report saved to %s", filename)
     return filename
+
+
+def save_consolidated_html(results: list[AuditResult], output_dir: str) -> Path:
+    """Save a consolidated HTML report for multiple devices."""
+    if not results:
+        raise ValueError("No results to generate consolidated report")
+
+    outdir = Path(output_dir)
+    outdir.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = outdir / f"consolidated_report_{ts}.html"
+
+    console = Console(record=True, width=140)
+
+    # Summary page
+    ts_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    total_pass = sum(r.pass_count for r in results)
+    total_fail = sum(r.fail_count for r in results)
+    total_warn = sum(r.warn_count for r in results)
+    total_error = sum(r.error_count for r in results)
+    total_checks = total_pass + total_fail + total_warn + total_error
+    overall_score = round(total_pass / total_checks * 100, 1) if total_checks else 100
+
+    summary_header = (
+        f"[bold]Audit Date:[/bold] {ts_str}\n"
+        f"[bold]Devices Audited:[/bold] {len(results)}\n"
+        f"[bold]Overall Score:[/bold] {overall_score}%  "
+        f"({total_pass} pass / {total_fail} fail / {total_warn} warn / {total_error} error)"
+    )
+    console.print(Panel(summary_header, title="CONSOLIDATED COMPLIANCE AUDIT REPORT",
+                        border_style="cyan", expand=False))
+    console.print()
+
+    # Summary table of all devices
+    summary_table = Table(
+        title="Device Summary",
+        box=box.ROUNDED,
+        show_lines=False,
+        title_style="bold cyan",
+        expand=False,
+    )
+    summary_table.add_column("Hostname", style="cyan", min_width=30)
+    summary_table.add_column("IP Address", min_width=15)
+    summary_table.add_column("Role", min_width=20)
+    summary_table.add_column("Score", justify="center", min_width=8)
+    summary_table.add_column("Pass", justify="center", min_width=6, style="green")
+    summary_table.add_column("Fail", justify="center", min_width=6, style="red")
+    summary_table.add_column("Warn", justify="center", min_width=6, style="yellow")
+    summary_table.add_column("Error", justify="center", min_width=6, style="magenta")
+
+    for r in results:
+        score_style = "bold green" if r.fail_count == 0 else "bold red" if r.fail_count > 5 else "bold yellow"
+        summary_table.add_row(
+            r.hostname,
+            r.ip,
+            r.role_display,
+            Text(f"{r.score_pct}%", style=score_style),
+            str(r.pass_count),
+            str(r.fail_count),
+            str(r.warn_count),
+            str(r.error_count),
+        )
+
+    console.print(summary_table)
+    console.print()
+    console.print()
+
+    # Individual device reports
+    for i, result in enumerate(results):
+        if i > 0:
+            console.print()
+            console.rule(style="cyan")
+            console.print()
+        print_report(result, console=console)
+
+    html = console.export_html(inline_styles=True)
+    filename.write_text(html, encoding="utf-8")
+    log.info("Consolidated HTML report saved to %s", filename)
+    return filename
