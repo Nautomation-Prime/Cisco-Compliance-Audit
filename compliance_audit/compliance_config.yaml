@@ -21,6 +21,8 @@ audit_settings:
   output_dir: "./reports"         # Where to write reports
   html_report: true               # Generate an HTML report alongside console output
   json_report: false              # Also dump raw JSON findings
+  csv_report: false               # Generate a CSV summary of all findings
+  remediation_script: true        # Generate per-device IOS-XE remediation config snippets
   parking_vlan: 99                # VLAN for unused ports
   native_vlan: 99                 # Expected native VLAN on trunks (for checking)
 

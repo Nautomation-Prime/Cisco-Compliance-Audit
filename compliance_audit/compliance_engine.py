@@ -47,6 +47,10 @@ class AuditResult:
     role: str
     role_display: str
     findings: list[Finding] = field(default_factory=list)
+    ios_version: str = ""
+    tool_version: str = ""
+    duration_secs: float = 0.0
+    audit_ts: str = ""
 
     @property
     def total(self) -> int:
@@ -147,6 +151,7 @@ class ComplianceEngine:
             ("control_plane",    self._check_arp_inspection),
             ("control_plane",    self._check_errdisable),
             ("control_plane",    self._check_udld),
+            ("control_plane",    self._check_copp),
             ("data_plane",       self._check_interfaces),
             ("role_specific",    self._check_role_specific),
         ]
@@ -250,6 +255,43 @@ class ComplianceEngine:
                      "ip_http_secure_server", "ip http secure-server",
                      "ip http secure-server"))
 
+        # ip http authentication
+        if _enabled(mp, "ip_http_authentication"):
+            method = mp.get("ip_http_authentication", {}).get("method", "local")
+            f.append(self._present(cfg, rf"^ip http authentication\s+{re.escape(method)}",
+                     "ip_http_authentication",
+                     f"ip http authentication {method}",
+                     f"ip http authentication {method}"))
+
+        # ip http access-class
+        if _enabled(mp, "ip_http_access_class"):
+            acl = mp.get("ip_http_access_class", {}).get("acl_name", "")
+            if acl:
+                f.append(self._present(cfg, rf"^ip http access-class\s+{re.escape(acl)}",
+                         "ip_http_access_class",
+                         f"ip http access-class {acl}",
+                         f"ip http access-class {acl}"))
+            else:
+                f.append(self._present(cfg, r"^ip http access-class\s+\S+",
+                         "ip_http_access_class",
+                         "ip http access-class set",
+                         "ip http access-class <acl>"))
+
+        # clock timezone
+        if _enabled(mp, "clock_timezone"):
+            tz_node = mp.get("clock_timezone", {})
+            tz = tz_node.get("timezone", "")
+            if tz:
+                f.append(self._present(cfg, rf"^clock timezone\s+{re.escape(tz)}",
+                         "clock_timezone",
+                         f"clock timezone {tz}",
+                         f"clock timezone {tz} {tz_node.get('offset', 0)}"))
+            else:
+                f.append(self._present(cfg, r"^clock timezone\s+\S+",
+                         "clock_timezone",
+                         "clock timezone configured",
+                         "clock timezone <tz> <offset>"))
+
         # ip domain-name
         if _enabled(mp, "ip_domain_name"):
             expected = mp.get("ip_domain_name", {}).get("expected", "")
@@ -321,6 +363,38 @@ class ComplianceEngine:
                          "ssh_source_interface",
                          f"ip ssh source-interface {intf}",
                          f"ip ssh source-interface {intf}"))
+
+        # SSH RSA minimum modulus size
+        if _enabled(mp, "ssh_rsa_min_modulus"):
+            min_bits = mp.get("ssh_rsa_min_modulus", {}).get("min_bits", 2048)
+            lines = cfg.find_lines(r"^crypto key generate rsa|^ip ssh rsa keypair-name")
+            # Check from show version / running-config for RSA key modulus
+            rsa_lines = cfg.find_lines(r"^ip ssh rsa keypair-name")
+            # Also check show crypto key output stored in raw_commands if available
+            modulus_found = False
+            for gl in cfg.global_lines:
+                m = re.search(r"(\d+)\s*bit", gl)
+                if m and "rsa" in gl.lower():
+                    bits = int(m.group(1))
+                    modulus_found = True
+                    if bits >= min_bits:
+                        f.append(Finding("ssh_rsa_min_modulus", Status.PASS,
+                                 f"RSA key size {bits} >= {min_bits} bits"))
+                    else:
+                        f.append(Finding("ssh_rsa_min_modulus", Status.FAIL,
+                                 f"RSA key size {bits} < {min_bits} bits",
+                                 remediation=f"crypto key generate rsa modulus {min_bits}"))
+                    break
+            if not modulus_found:
+                # Try Genie version data for RSA key info
+                if data and data.version:
+                    f.append(Finding("ssh_rsa_min_modulus", Status.WARN,
+                             f"RSA modulus size not verifiable from config (expected >= {min_bits})",
+                             remediation=f"crypto key generate rsa modulus {min_bits}"))
+                else:
+                    f.append(Finding("ssh_rsa_min_modulus", Status.WARN,
+                             f"RSA modulus could not be determined (expected >= {min_bits})",
+                             remediation=f"crypto key generate rsa modulus {min_bits}"))
 
         return f
 
@@ -493,6 +567,20 @@ class ComplianceEngine:
                          f"logging source-interface {intf}",
                          f"logging source-interface {intf}"))
 
+        # logging monitor
+        if _enabled(mp, "logging_monitor"):
+            lvl = mp.get("logging_monitor", {}).get("level", "warnings")
+            f.append(self._present(cfg, r"^logging monitor",
+                     "logging_monitor", f"logging monitor {lvl}",
+                     f"logging monitor {lvl}"))
+
+        # logging origin-id
+        if _enabled(mp, "logging_origin_id"):
+            id_type = mp.get("logging_origin_id", {}).get("type", "hostname")
+            f.append(self._present(cfg, r"^logging origin-id",
+                     "logging_origin_id", f"logging origin-id {id_type}",
+                     f"logging origin-id {id_type}"))
+
         return f
 
     # ── SNMP ──────────────────────────────────────────────────
@@ -528,6 +616,76 @@ class ComplianceEngine:
                      "snmp_ifindex_persist", "snmp-server ifindex persist",
                      "snmp-server ifindex persist"))
 
+        # SNMP community ACL
+        if _enabled(mp, "snmp_community_acl"):
+            communities = cfg.find_lines(r"^snmp-server community\s+")
+            if communities:
+                all_have_acl = True
+                for comm_line in communities:
+                    # community string + RO/RW + optional ACL
+                    parts = comm_line.split()
+                    # Format: snmp-server community <name> [RO|RW] [ACL]
+                    if len(parts) < 4:
+                        all_have_acl = False
+                        break
+                if all_have_acl:
+                    f.append(Finding("snmp_community_acl", Status.PASS,
+                             f"All {len(communities)} SNMP communities have ACL restrictions"))
+                else:
+                    f.append(Finding("snmp_community_acl", Status.FAIL,
+                             "SNMP community without ACL restriction found",
+                             remediation="snmp-server community <name> RO <acl>"))
+            else:
+                f.append(Finding("snmp_community_acl", Status.PASS,
+                         "No SNMP v1/v2c communities configured"))
+
+        # SNMP server host
+        if _enabled(mp, "snmp_server_host"):
+            node = mp.get("snmp_server_host", {})
+            expected = node.get("expected_hosts", [])
+            if expected:
+                for h in expected:
+                    if cfg.has_line(rf"^snmp-server host\s+{re.escape(h)}"):
+                        f.append(Finding("snmp_server_host", Status.PASS,
+                                 f"SNMP server host {h} configured"))
+                    else:
+                        f.append(Finding("snmp_server_host", Status.FAIL,
+                                 f"SNMP server host {h} missing",
+                                 remediation=f"snmp-server host {h}"))
+            else:
+                actual = cfg.find_lines(r"^snmp-server host\s+")
+                if actual:
+                    f.append(Finding("snmp_server_host", Status.PASS,
+                             f"{len(actual)} SNMP server host(s) configured"))
+                else:
+                    f.append(Finding("snmp_server_host", Status.FAIL,
+                             "No SNMP server host configured",
+                             remediation="snmp-server host <ip>"))
+
+        # SNMP contact
+        if _enabled(mp, "snmp_contact"):
+            expected = mp.get("snmp_contact", {}).get("expected", "")
+            if expected:
+                f.append(self._present(cfg, rf"^snmp-server contact\s+.*{re.escape(expected)}",
+                         "snmp_contact", f"snmp-server contact {expected}",
+                         f"snmp-server contact {expected}"))
+            else:
+                f.append(self._present(cfg, r"^snmp-server contact\s+\S+",
+                         "snmp_contact", "snmp-server contact set",
+                         "snmp-server contact <text>"))
+
+        # SNMP location
+        if _enabled(mp, "snmp_location"):
+            expected = mp.get("snmp_location", {}).get("expected", "")
+            if expected:
+                f.append(self._present(cfg, rf"^snmp-server location\s+.*{re.escape(expected)}",
+                         "snmp_location", f"snmp-server location {expected}",
+                         f"snmp-server location {expected}"))
+            else:
+                f.append(self._present(cfg, r"^snmp-server location\s+\S+",
+                         "snmp_location", "snmp-server location set",
+                         "snmp-server location <text>"))
+
         return f
 
     # ── BANNERS ───────────────────────────────────────────────
@@ -541,7 +699,26 @@ class ComplianceEngine:
             if not _enabled(mp, key):
                 continue
             if cfg.has_line(rf"^banner {banner_type}\s+"):
-                f.append(Finding(key, Status.PASS, f"banner {banner_type} present"))
+                # Check for required text in banner if specified
+                req_text = mp.get(key, {}).get("required_text", "")
+                if req_text:
+                    # Search the raw config for the banner content
+                    banner_found = False
+                    if data.running_config:
+                        banner_rx = re.compile(
+                            rf"banner {banner_type}.*?{re.escape(req_text)}",
+                            re.IGNORECASE | re.DOTALL)
+                        if banner_rx.search(data.running_config):
+                            banner_found = True
+                    if banner_found:
+                        f.append(Finding(key, Status.PASS,
+                                 f"banner {banner_type} present with required text"))
+                    else:
+                        f.append(Finding(key, Status.FAIL,
+                                 f"banner {banner_type} present but missing required text: '{req_text}'",
+                                 remediation=f"banner {banner_type} — must include '{req_text}'"))
+                else:
+                    f.append(Finding(key, Status.PASS, f"banner {banner_type} present"))
             else:
                 f.append(Finding(key, Status.FAIL, f"banner {banner_type} missing",
                          remediation=f"banner {banner_type} ^<text>^"))
@@ -648,6 +825,19 @@ class ComplianceEngine:
                              f"{label}: logging synchronous missing", interface=label,
                              remediation="logging synchronous"))
 
+            # VTY login authentication method list
+            if _enabled(mp, "vty_login_authentication"):
+                method = mp.get("vty_login_authentication", {}).get("method_list", "default")
+                has_auth = any(re.match(r"login authentication", l, re.I) for l in lines)
+                if has_auth:
+                    f.append(Finding("vty_login_authentication", Status.PASS,
+                             f"{label}: login authentication configured", interface=label))
+                else:
+                    f.append(Finding("vty_login_authentication", Status.FAIL,
+                             f"{label}: login authentication not set",
+                             interface=label,
+                             remediation=f"login authentication {method}"))
+
         return f
 
     # ── CONSOLE ───────────────────────────────────────────────
@@ -694,6 +884,19 @@ class ComplianceEngine:
                     f.append(Finding("console_logging_sync", Status.FAIL,
                              f"{label}: logging synchronous missing",
                              interface=label, remediation="logging synchronous"))
+
+            # Console login authentication method list
+            if _enabled(mp, "console_login_authentication"):
+                method = mp.get("console_login_authentication", {}).get("method_list", "default")
+                has_auth = any(re.match(r"login authentication", l, re.I) for l in lines)
+                if has_auth:
+                    f.append(Finding("console_login_authentication", Status.PASS,
+                             f"{label}: login authentication configured", interface=label))
+                else:
+                    f.append(Finding("console_login_authentication", Status.FAIL,
+                             f"{label}: login authentication not set",
+                             interface=label,
+                             remediation=f"login authentication {method}"))
 
         return f
 
@@ -993,6 +1196,23 @@ class ComplianceEngine:
                  "udld_global", f"udld {mode}", f"udld {mode}"))
         return f
 
+    # ── CONTROL-PLANE POLICING ──────────────────────────────
+    def _check_copp(self, cfg: ParsedConfig, data: DeviceData,
+                    host: HostnameInfo, ports: dict) -> list[Finding]:
+        f: list[Finding] = []
+        cp = self.policy.get("control_plane", {})
+        if not _enabled(cp, "control_plane_policing"):
+            return f
+        # Check for service-policy under control-plane
+        if cfg.has_line(r"^control-plane") and cfg.has_line(r"service-policy"):
+            f.append(Finding("control_plane_policing", Status.PASS,
+                     "Control-plane policing (CoPP) configured"))
+        else:
+            f.append(Finding("control_plane_policing", Status.FAIL,
+                     "Control-plane policing (CoPP) not configured",
+                     remediation="control-plane / service-policy input <policy-map>"))
+        return f
+
     # ===================================================================
     #                       DATA  PLANE  CHECKS
     #       (per-interface, role-aware: access / trunk / unused)
@@ -1002,6 +1222,7 @@ class ComplianceEngine:
                           host: HostnameInfo, ports: dict[str, PortInfo]) -> list[Finding]:
         f: list[Finding] = []
         dp = self.policy.get("data_plane", {})
+        self._current_data = data   # stash for trunk_native_vlan lookups
 
         for intf_name, pi in ports.items():
             role = pi.role
@@ -1014,7 +1235,9 @@ class ComplianceEngine:
                 f.extend(self._check_trunk_port(cfg, dp, pi))
             elif role == PortRole.UNUSED:
                 f.extend(self._check_unused_port(cfg, dp, pi))
-            # Routed / SVI / Loopback / MGMT are generally not subject to
+            elif role in (PortRole.ROUTED, PortRole.SVI):
+                f.extend(self._check_routed_port(cfg, dp, pi))
+            # Loopback / MGMT are generally not subject to
             # switchport-level data-plane checks.
 
         return f
@@ -1098,6 +1321,77 @@ class ComplianceEngine:
                 f.append(Finding("interface_description", Status.FAIL,
                          f"{intf}: no description", interface=intf,
                          remediation="description <text>"))
+
+        # Port Security
+        if _enabled(dp, "port_security"):
+            ps_node = dp.get("port_security", {})
+            if pi_has(pi, r"switchport port-security"):
+                f.append(Finding("port_security", Status.PASS,
+                         f"{intf}: port-security enabled", interface=intf))
+                # Check max MAC
+                max_mac = ps_node.get("max_mac")
+                if max_mac:
+                    mac_line = [l for l in pi.config_lines
+                                if re.search(r"port-security maximum", l, re.I)]
+                    if mac_line:
+                        m = re.search(r"maximum\s+(\d+)", mac_line[0])
+                        if m and int(m.group(1)) <= max_mac:
+                            f.append(Finding("port_security_max", Status.PASS,
+                                     f"{intf}: max MAC {m.group(1)} <= {max_mac}",
+                                     interface=intf))
+                        elif m:
+                            f.append(Finding("port_security_max", Status.FAIL,
+                                     f"{intf}: max MAC {m.group(1)} > {max_mac}",
+                                     interface=intf,
+                                     remediation=f"switchport port-security maximum {max_mac}"))
+                # Check violation action
+                violation = ps_node.get("violation")
+                if violation:
+                    if pi_has(pi, rf"port-security violation\s+{re.escape(violation)}"):
+                        f.append(Finding("port_security_violation", Status.PASS,
+                                 f"{intf}: violation mode {violation}", interface=intf))
+                    else:
+                        f.append(Finding("port_security_violation", Status.FAIL,
+                                 f"{intf}: violation mode not '{violation}'",
+                                 interface=intf,
+                                 remediation=f"switchport port-security violation {violation}"))
+            else:
+                f.append(Finding("port_security", Status.FAIL,
+                         f"{intf}: port-security not enabled", interface=intf,
+                         remediation="switchport port-security"))
+
+        # No CDP on access ports
+        if _enabled(dp, "no_cdp_on_access_ports"):
+            if pi_has(pi, r"no cdp enable"):
+                f.append(Finding("no_cdp_on_access", Status.PASS,
+                         f"{intf}: CDP disabled on access port", interface=intf))
+            else:
+                f.append(Finding("no_cdp_on_access", Status.FAIL,
+                         f"{intf}: CDP still enabled on access port",
+                         interface=intf, remediation="no cdp enable"))
+
+        # DHCP snooping limit rate on access ports
+        if _enabled(dp, "dhcp_snooping_limit_rate"):
+            rate = dp.get("dhcp_snooping_limit_rate", {}).get("rate", 15)
+            if pi_has(pi, r"ip dhcp snooping limit rate"):
+                f.append(Finding("dhcp_snooping_limit_rate", Status.PASS,
+                         f"{intf}: DHCP snooping rate limit set", interface=intf))
+            else:
+                f.append(Finding("dhcp_snooping_limit_rate", Status.FAIL,
+                         f"{intf}: DHCP snooping rate limit missing",
+                         interface=intf,
+                         remediation=f"ip dhcp snooping limit rate {rate}"))
+
+        # IP Source Guard on access ports
+        if _enabled(dp, "ip_source_guard"):
+            if pi_has(pi, r"ip verify source"):
+                f.append(Finding("ip_source_guard", Status.PASS,
+                         f"{intf}: IP source guard enabled", interface=intf))
+            else:
+                f.append(Finding("ip_source_guard", Status.FAIL,
+                         f"{intf}: IP source guard not enabled",
+                         interface=intf,
+                         remediation="ip verify source"))
 
         return f
 
@@ -1343,6 +1637,59 @@ class ComplianceEngine:
                              f"{intf}: DAI trust missing ({direction})",
                              interface=intf,
                              remediation="ip arp inspection trust"))
+
+        # Trunk native VLAN
+        if _enabled(dp, "trunk_native_vlan"):
+            expected_native = dp.get("trunk_native_vlan", {}).get("expected_vlan", 99)
+            # Check from Genie switchport data
+            native_vlan = None
+            data = getattr(self, '_current_data', None)
+            if data and data.switchports:
+                sw_data = data.switchports.get(intf) or data.switchports.get(pi.name)
+                if isinstance(sw_data, dict):
+                    native_vlan = sw_data.get("native_vlan")
+            # Fallback to running-config
+            if native_vlan is None:
+                for line in pi.config_lines:
+                    m = re.search(r"switchport trunk native vlan\s+(\d+)", line, re.I)
+                    if m:
+                        native_vlan = int(m.group(1))
+                        break
+            if native_vlan is not None:
+                if native_vlan == expected_native:
+                    f.append(Finding("trunk_native_vlan", Status.PASS,
+                             f"{intf}: native VLAN {native_vlan} ({direction})",
+                             interface=intf))
+                else:
+                    f.append(Finding("trunk_native_vlan", Status.FAIL,
+                             f"{intf}: native VLAN {native_vlan}, expected {expected_native} ({direction})",
+                             interface=intf,
+                             remediation=f"switchport trunk native vlan {expected_native}"))
+            else:
+                f.append(Finding("trunk_native_vlan", Status.WARN,
+                         f"{intf}: native VLAN not determined ({direction})",
+                         interface=intf,
+                         remediation=f"switchport trunk native vlan {expected_native}"))
+
+        return f
+
+    # ── ROUTED PORT CHECKS ────────────────────────────────────
+    def _check_routed_port(self, cfg: ParsedConfig, dp: dict,
+                           pi: PortInfo) -> list[Finding]:
+        """Checks for L3 (routed) interfaces and SVIs."""
+        f: list[Finding] = []
+        intf = pi.name
+
+        # no ip proxy-arp
+        if _enabled(dp, "no_ip_proxy_arp"):
+            if pi_has(pi, r"no ip proxy-arp"):
+                f.append(Finding("no_ip_proxy_arp", Status.PASS,
+                         f"{intf}: ip proxy-arp disabled", interface=intf))
+            else:
+                f.append(Finding("no_ip_proxy_arp", Status.FAIL,
+                         f"{intf}: ip proxy-arp not disabled",
+                         interface=intf,
+                         remediation="no ip proxy-arp"))
 
         return f
 

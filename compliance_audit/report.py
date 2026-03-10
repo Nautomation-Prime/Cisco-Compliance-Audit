@@ -2,9 +2,12 @@
 Rich-based console + file report generation for compliance audit results.
 """
 
+import csv
 import html as html_mod
+import io
 import json
 import logging
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -43,10 +46,17 @@ def print_report(result: AuditResult, console: Optional[Console] = None) -> None
 
     # Header panel
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    version_line = ""
+    if result.ios_version:
+        version_line = f"\n[bold]IOS-XE:[/bold]  {result.ios_version}"
+    timing_line = ""
+    if result.duration_secs:
+        timing_line = f"  ({result.duration_secs}s)"
     header = (
         f"[bold]Device:[/bold]  {result.hostname}  ({result.ip})\n"
-        f"[bold]Role:[/bold]    {result.role_display}\n"
-        f"[bold]Date:[/bold]    {ts}\n"
+        f"[bold]Role:[/bold]    {result.role_display}"
+        f"{version_line}\n"
+        f"[bold]Date:[/bold]    {result.audit_ts or ts}{timing_line}\n"
         f"[bold]Score:[/bold]   {result.score_pct}%  "
         f"({result.pass_count} pass / {result.fail_count} fail / "
         f"{result.warn_count} warn / {result.error_count} error)"
@@ -124,6 +134,10 @@ def save_json(result: AuditResult, output_dir: str) -> Path:
         "fail": result.fail_count,
         "warn": result.warn_count,
         "error": result.error_count,
+        "ios_version": result.ios_version,
+        "tool_version": result.tool_version,
+        "duration_secs": result.duration_secs,
+        "audit_ts": result.audit_ts,
         "findings": [
             {
                 "check": f.check_name,
@@ -420,6 +434,9 @@ def save_html(result: AuditResult, output_dir: str) -> Path:
 <div style="padding:0 24px 12px;">
   <div style="font-size:.95rem;"><strong style="color:var(--accent);">{_esc(result.hostname)}</strong>
   <span style="color:var(--text-dim);"> ({_esc(result.ip)}) &mdash; {_esc(result.role_display)}</span></div>
+  <div style="font-size:.85rem;color:var(--text-dim);margin-top:4px;">
+    {f'IOS-XE: {_esc(result.ios_version)} &nbsp;|&nbsp; ' if result.ios_version else ''}Tool v{_esc(result.tool_version)}{f' &nbsp;|&nbsp; Duration: {result.duration_secs}s' if result.duration_secs else ''}
+  </div>
 </div>
 <div class="filters">
   <label>Filter:</label>
@@ -506,13 +523,20 @@ def save_consolidated_html(results: list[AuditResult], output_dir: str) -> Path:
                 f'{tbl}</div>'
             )
 
+        meta_parts = []
+        if r.ios_version:
+            meta_parts.append(f'IOS-XE: {_esc(r.ios_version)}')
+        if r.duration_secs:
+            meta_parts.append(f'{r.duration_secs}s')
+        meta_str = f' <span class="dev-meta" style="color:var(--text-dim);font-size:.8rem;margin-left:8px;">({" | ".join(meta_parts)})</span>' if meta_parts else ''
+
         sections.append(
             f'<div class="device-section" id="dev-{i}">'
             f'<div class="device-header">'
             f'<div class="left">'
             f'<span class="chevron">&#9654;</span>'
             f'<span class="dev-hostname">{_esc(r.hostname)}</span>'
-            f'<span class="dev-ip">{_esc(r.ip)} &mdash; {_esc(r.role_display)}</span>'
+            f'<span class="dev-ip">{_esc(r.ip)} &mdash; {_esc(r.role_display)}{meta_str}</span>'
             f'</div>'
             f'<span class="dev-score" style="color:{c};">{r.score_pct}%</span>'
             f'</div>'
@@ -570,3 +594,290 @@ def _wrap_html(title: str, body: str) -> str:
         f'<script>{_JS}</script>\n'
         '</body>\n</html>'
     )
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  CSV export
+# ═══════════════════════════════════════════════════════════════════
+
+def save_csv(results: list[AuditResult], output_dir: str) -> Path:
+    """Export all findings from one or more devices as a single CSV file."""
+    outdir = Path(output_dir)
+    outdir.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = outdir / f"compliance_audit_{ts}.csv"
+
+    with open(filename, "w", newline="", encoding="utf-8") as fh:
+        writer = csv.writer(fh)
+        writer.writerow([
+            "hostname", "ip", "role", "category", "check",
+            "status", "interface", "detail", "remediation",
+        ])
+        for r in results:
+            for f in r.findings:
+                if f.status == Status.SKIP:
+                    continue
+                writer.writerow([
+                    r.hostname, r.ip, r.role, f.category, f.check_name,
+                    f.status.value, f.interface, f.detail, f.remediation,
+                ])
+
+    log.info("CSV report saved to %s", filename)
+    return filename
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  Remediation script generator
+# ═══════════════════════════════════════════════════════════════════
+
+def save_remediation_script(result: AuditResult, output_dir: str) -> Path | None:
+    """
+    Generate a per-device IOS-XE config snippet that remediates all FAILs.
+
+    Returns the Path to the script file, or None if there's nothing to fix.
+    """
+    outdir = Path(output_dir)
+    outdir.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = outdir / f"{result.hostname}_remediation_{ts}.txt"
+
+    # Collect all FAIL findings that have a remediation command
+    fails = [f for f in result.findings
+             if f.status == Status.FAIL and f.remediation]
+    if not fails:
+        return None
+
+    # Separate global commands from interface-level commands
+    global_cmds: list[str] = []
+    intf_cmds: dict[str, list[str]] = {}  # {interface_name: [commands]}
+
+    for f in fails:
+        remed = f.remediation.strip()
+        if not remed:
+            continue
+        if f.interface and not f.interface.startswith("line "):
+            intf_cmds.setdefault(f.interface, []).append(remed)
+        elif f.interface and f.interface.startswith("line "):
+            # VTY/console line commands
+            intf_cmds.setdefault(f.interface, []).append(remed)
+        else:
+            global_cmds.append(remed)
+
+    lines: list[str] = []
+    lines.append(f"! Remediation script for {result.hostname} ({result.ip})")
+    lines.append(f"! Generated: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}")
+    lines.append(f"! Findings to fix: {len(fails)}")
+    lines.append("!")
+    lines.append("configure terminal")
+    lines.append("!")
+
+    # Global commands (deduplicated, order preserved)
+    if global_cmds:
+        lines.append("! --- Global Configuration ---")
+        seen: set[str] = set()
+        for cmd in global_cmds:
+            if cmd not in seen:
+                seen.add(cmd)
+                lines.append(cmd)
+        lines.append("!")
+
+    # Interface commands
+    for intf_name in sorted(intf_cmds.keys()):
+        cmds = intf_cmds[intf_name]
+        if intf_name.startswith("line "):
+            lines.append(f"{intf_name}")
+        else:
+            lines.append(f"interface {intf_name}")
+        seen_intf: set[str] = set()
+        for cmd in cmds:
+            if cmd not in seen_intf:
+                seen_intf.add(cmd)
+                lines.append(f" {cmd}")
+        lines.append("!")
+
+    lines.append("end")
+    lines.append("write memory")
+    lines.append("!")
+
+    filename.write_text("\n".join(lines), encoding="utf-8")
+    log.info("Remediation script saved to %s", filename)
+    return filename
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  Delta / baseline comparison report
+# ═══════════════════════════════════════════════════════════════════
+
+def load_baseline(baseline_path: str) -> dict | None:
+    """Load a previous JSON audit result as a baseline for comparison."""
+    p = Path(baseline_path)
+    if not p.exists():
+        log.warning("Baseline file not found: %s", baseline_path)
+        return None
+    try:
+        return json.loads(p.read_text(encoding="utf-8"))
+    except Exception as exc:
+        log.warning("Failed to load baseline %s: %s", baseline_path, exc)
+        return None
+
+
+def _find_latest_baseline(output_dir: str, hostname: str) -> Path | None:
+    """Find the most recent JSON audit file for a given hostname."""
+    outdir = Path(output_dir)
+    if not outdir.exists():
+        return None
+    candidates = sorted(
+        outdir.glob(f"{hostname}_*.json"),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    # Return the second-most-recent (the most recent is the one just written)
+    return candidates[1] if len(candidates) >= 2 else None
+
+
+@dataclass
+class DeltaEntry:
+    """One finding that changed between baseline and current."""
+    check_name: str
+    category: str
+    interface: str
+    old_status: str
+    new_status: str
+    detail: str
+    remediation: str
+
+
+def compute_delta(
+    baseline: dict,
+    current: AuditResult,
+) -> dict:
+    """
+    Compare baseline JSON to current AuditResult.
+
+    Returns a dict with:
+      - resolved: findings that were FAIL/WARN and are now PASS
+      - new_failures: findings that are now FAIL/WARN but were PASS or absent
+      - unchanged_fails: still failing
+      - score_change: current - baseline score
+    """
+    # Build lookup from baseline: (check, interface) → status
+    base_map: dict[tuple[str, str], dict] = {}
+    for f in baseline.get("findings", []):
+        key = (f.get("check", ""), f.get("interface", ""))
+        base_map[key] = f
+
+    resolved: list[dict] = []
+    new_failures: list[dict] = []
+    unchanged_fails: list[dict] = []
+
+    for f in current.findings:
+        if f.status == Status.SKIP:
+            continue
+        key = (f.check_name, f.interface)
+        base_finding = base_map.pop(key, None)
+
+        if f.status in (Status.FAIL, Status.WARN):
+            if base_finding and base_finding.get("status") in ("FAIL", "WARN"):
+                unchanged_fails.append({
+                    "check": f.check_name, "category": f.category,
+                    "interface": f.interface, "status": f.status.value,
+                    "detail": f.detail, "remediation": f.remediation,
+                })
+            else:
+                new_failures.append({
+                    "check": f.check_name, "category": f.category,
+                    "interface": f.interface,
+                    "old_status": base_finding.get("status", "N/A") if base_finding else "NEW",
+                    "new_status": f.status.value,
+                    "detail": f.detail, "remediation": f.remediation,
+                })
+        elif f.status == Status.PASS and base_finding:
+            if base_finding.get("status") in ("FAIL", "WARN"):
+                resolved.append({
+                    "check": f.check_name, "category": f.category,
+                    "interface": f.interface,
+                    "old_status": base_finding["status"],
+                    "new_status": "PASS",
+                    "detail": f.detail,
+                })
+
+    # Any remaining in base_map that were FAIL/WARN but absent now = resolved
+    for key, bf in base_map.items():
+        if bf.get("status") in ("FAIL", "WARN"):
+            resolved.append({
+                "check": bf.get("check", key[0]), "category": bf.get("category", ""),
+                "interface": bf.get("interface", key[1]),
+                "old_status": bf["status"], "new_status": "REMOVED",
+                "detail": "Check no longer present in audit",
+            })
+
+    base_score = baseline.get("score_pct", 0)
+    return {
+        "baseline_score": base_score,
+        "current_score": current.score_pct,
+        "score_change": round(current.score_pct - base_score, 1),
+        "resolved_count": len(resolved),
+        "new_failure_count": len(new_failures),
+        "unchanged_fail_count": len(unchanged_fails),
+        "resolved": resolved,
+        "new_failures": new_failures,
+        "unchanged_fails": unchanged_fails,
+    }
+
+
+def save_delta_report(
+    delta: dict,
+    hostname: str,
+    output_dir: str,
+) -> Path:
+    """Save a JSON delta report showing what changed since the baseline."""
+    outdir = Path(output_dir)
+    outdir.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = outdir / f"{hostname}_delta_{ts}.json"
+    filename.write_text(json.dumps(delta, indent=2), encoding="utf-8")
+    log.info("Delta report saved to %s", filename)
+    return filename
+
+
+def print_delta_summary(delta: dict, hostname: str,
+                        console: Optional[Console] = None) -> None:
+    """Print a coloured delta summary to the console."""
+    con = console or Console()
+    sc = delta["score_change"]
+    sc_style = "green" if sc > 0 else "red" if sc < 0 else "yellow"
+    arrow = "▲" if sc > 0 else "▼" if sc < 0 else "─"
+
+    con.print(Panel(
+        f"[bold]Baseline:[/] {delta['baseline_score']}% → "
+        f"[bold]Current:[/] {delta['current_score']}%  "
+        f"[{sc_style}]{arrow} {sc:+.1f}%[/]\n"
+        f"[green]Resolved: {delta['resolved_count']}[/]  "
+        f"[red]New failures: {delta['new_failure_count']}[/]  "
+        f"[yellow]Unchanged fails: {delta['unchanged_fail_count']}[/]",
+        title=f"DELTA — {hostname}",
+        border_style="cyan",
+        expand=False,
+    ))
+
+    if delta["new_failures"]:
+        table = Table(title="New Failures", box=box.ROUNDED, expand=False)
+        table.add_column("Check", style="cyan")
+        table.add_column("Interface")
+        table.add_column("Status", style="bold red")
+        table.add_column("Detail")
+        for nf in delta["new_failures"]:
+            table.add_row(nf["check"], nf.get("interface", ""),
+                         nf["new_status"], nf["detail"])
+        con.print(table)
+
+    if delta["resolved"]:
+        table = Table(title="Resolved", box=box.ROUNDED, expand=False)
+        table.add_column("Check", style="cyan")
+        table.add_column("Interface")
+        table.add_column("Was", style="yellow")
+        table.add_column("Now", style="green")
+        for r in delta["resolved"]:
+            table.add_row(r["check"], r.get("interface", ""),
+                         r["old_status"], r["new_status"])
+        con.print(table)

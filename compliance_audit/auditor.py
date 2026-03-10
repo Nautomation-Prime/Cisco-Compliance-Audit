@@ -9,8 +9,10 @@ in the compliance YAML config (default: 5, set to 1 for sequential).
 
 import logging
 import sys
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -22,10 +24,15 @@ from .credentials import CredentialHandler
 from .jump_manager import JumpManager
 from .netmiko_utils import DeviceConnector
 from .hostname_parser import parse_hostname
-from .collector import DataCollector
+from .collector import DataCollector, OfflineCollector
 from .port_classifier import classify_ports
 from .compliance_engine import ComplianceEngine, AuditResult
-from .report import print_report, save_json, save_html, save_consolidated_html
+from .report import (
+    print_report, save_json, save_html, save_consolidated_html,
+    save_csv, save_remediation_script,
+    _find_latest_baseline, load_baseline, compute_delta,
+    save_delta_report, print_delta_summary,
+)
 
 log = logging.getLogger(__name__)
 console = Console()
@@ -66,34 +73,48 @@ def _audit_single_device(job: _DeviceJob) -> Optional[AuditResult]:
     Audit one device end-to-end (connect → collect → classify → check).
 
     Designed to run inside a thread. Returns None on connection failure.
+    In dry-run mode, loads data from files instead of SSH.
     """
     hostname, ip = job.hostname, job.ip
     log.info("Starting audit of %s (%s)", hostname, ip)
+    t_start = time.monotonic()
 
     # Parse hostname for role
     host_info = parse_hostname(hostname, role_config=job.role_config)
 
-    # Connect
-    connector = DeviceConnector(
-        ip=ip,
-        username=job.username,
-        password=job.password,
-        device_type=job.device_type,
-        jump=job.jump,
-        **({"secret": job.enable_secret} if job.enable_secret else {}),
-    )
-    try:
-        conn = connector.connect()
-    except Exception as exc:
-        log.error("Connection to %s (%s) failed: %s", hostname, ip, exc)
-        return None
+    dry_run_dir = job.audit_settings.get("_dry_run_dir")
 
-    try:
-        # Collect
+    if dry_run_dir:
+        # ── Dry-run / offline mode ─────────────────────────
+        offline = OfflineCollector(dry_run_dir)
+        data = offline.collect(hostname, ip=ip)
+        if data is None:
+            log.error("Dry-run: no data found for %s", hostname)
+            return None
+        conn = None
+    else:
+        # ── Live SSH connection ────────────────────────────
+        connector = DeviceConnector(
+            ip=ip,
+            username=job.username,
+            password=job.password,
+            device_type=job.device_type,
+            jump=job.jump,
+            retries=job.audit_settings.get("retries",
+                     job.audit_settings.get("_connection", {}).get("retries", 3)),
+            **({"secret": job.enable_secret} if job.enable_secret else {}),
+        )
+        try:
+            conn = connector.connect()
+        except Exception as exc:
+            log.error("Connection to %s (%s) failed: %s", hostname, ip, exc)
+            return None
+
         collector = DataCollector(timeout=job.timeout)
         data = collector.collect(conn, ip=ip)
         data.hostname = hostname
 
+    try:
         # Classify ports
         ports = classify_ports(
             data,
@@ -105,21 +126,46 @@ def _audit_single_device(job: _DeviceJob) -> Optional[AuditResult]:
         engine = ComplianceEngine(job.compliance_policy)
         result = engine.audit(data, host_info, ports)
 
+        # Populate metadata
+        result.duration_secs = round(time.monotonic() - t_start, 1)
+        result.audit_ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+        from . import __version__
+        result.tool_version = __version__
+
+        # Extract IOS-XE version from Genie data
+        if data.version:
+            ver = data.version.get("version", {})
+            result.ios_version = ver.get("version", "") or ver.get("xe_version", "")
+
         # Save per-device reports
         out_dir = job.audit_settings.get("output_dir", "./reports")
         if job.audit_settings.get("json_report", True):
             save_json(result, out_dir)
         if job.audit_settings.get("html_report", True):
             save_html(result, out_dir)
+        if job.audit_settings.get("remediation_script", True):
+            save_remediation_script(result, out_dir)
 
-        log.info("Completed audit of %s — score %s%%", hostname, result.score_pct)
+        # Delta reporting (compare against previous baseline)
+        if job.audit_settings.get("json_report", True):
+            baseline_path = _find_latest_baseline(out_dir, hostname)
+            if baseline_path:
+                baseline = load_baseline(str(baseline_path))
+                if baseline:
+                    delta = compute_delta(baseline, result)
+                    save_delta_report(delta, hostname, out_dir)
+                    result._delta = delta  # stash for console output
+
+        log.info("Completed audit of %s — score %s%% (%.1fs)",
+                 hostname, result.score_pct, result.duration_secs)
         return result
 
     finally:
-        try:
-            conn.disconnect()
-        except Exception:
-            pass
+        if conn:
+            try:
+                conn.disconnect()
+            except Exception:
+                pass
 
 
 def run_audit(
@@ -127,6 +173,9 @@ def run_audit(
     device_overrides: Optional[list[str]] = None,
     skip_jump: bool = False,
     categories: Optional[list[str]] = None,
+    output_dir: Optional[str] = None,
+    dry_run_dir: Optional[str] = None,
+    csv_report: Optional[bool] = None,
 ) -> list[AuditResult]:
     """
     Run the full compliance audit pipeline.
@@ -141,6 +190,12 @@ def run_audit(
         If True, connect directly without jump host.
     categories : list[str] | None
         If given, only run checks in these categories.
+    output_dir : str | None
+        Override the report output directory from the YAML config.
+    dry_run_dir : str | None
+        If set, load command outputs from this directory instead of SSH.
+    csv_report : bool | None
+        If True, override YAML to force CSV generation.
 
     Returns
     -------
@@ -156,6 +211,17 @@ def run_audit(
 
     # Inject audit_settings into policy so the engine can read parking_vlan etc.
     compliance_policy["_audit_settings"] = audit_settings
+
+    # CLI overrides
+    if output_dir:
+        audit_settings["output_dir"] = output_dir
+    if csv_report is not None:
+        audit_settings["csv_report"] = csv_report
+    if dry_run_dir:
+        audit_settings["_dry_run_dir"] = dry_run_dir
+
+    # Inject connection retries into audit_settings so workers can access it
+    audit_settings["_connection"] = conn_cfg
 
     # Filter categories if requested
     if categories:
@@ -178,37 +244,53 @@ def run_audit(
     else:
         devices = cfg.get("devices", []) or []
 
+    # ── Credentials ────────────────────────────────────────
+    username, password, enable_secret = "", "", None
+    jump: Optional[JumpManager] = None
+
+    if not dry_run_dir:
+        cred_store = conn_cfg.get("credential_store", "none")
+        keyring_svc = conn_cfg.get("keyring_service", "cisco-compliance-audit")
+        cred_handler = CredentialHandler(
+            credential_store=cred_store,
+            keyring_service=keyring_svc,
+        )
+        username, password = cred_handler.get_secret_with_fallback()
+        enable_secret = cred_handler.get_enable_secret()
+
+        # ── Jump host (optional) ───────────────────────────
+        jump_host = conn_cfg.get("jump_host")
+        use_jump = conn_cfg.get("use_jump_host", True)
+        if jump_host and use_jump and not skip_jump:
+            console.print(f"[cyan]Connecting to jump host {jump_host} ...[/]")
+            jump = JumpManager(jump_host, username, password)
+            jump.connect()
+    else:
+        console.print("[bold yellow]DRY-RUN MODE[/] — loading saved outputs "
+                      f"from [cyan]{dry_run_dir}[/]")
+        # In dry-run mode, also auto-discover device folders if no devices given
+        if not devices:
+            dr_path = Path(dry_run_dir)
+            if dr_path.is_dir():
+                for child in sorted(dr_path.iterdir()):
+                    if child.is_dir():
+                        devices.append({"hostname": child.name, "ip": child.name})
+                if devices:
+                    console.print(f"  Discovered {len(devices)} device(s) from dry-run directory")
+
     if not devices:
         console.print("[bold yellow]No devices to audit.[/] "
                       "Add devices to compliance_config.yaml or use --device.")
         return []
-
-    # ── Credentials ────────────────────────────────────────
-    cred_store = conn_cfg.get("credential_store", "none")
-    keyring_svc = conn_cfg.get("keyring_service", "cisco-compliance-audit")
-    cred_handler = CredentialHandler(
-        credential_store=cred_store,
-        keyring_service=keyring_svc,
-    )
-    username, password = cred_handler.get_secret_with_fallback()
-    enable_secret = cred_handler.get_enable_secret()
-
-    # ── Jump host (optional) ───────────────────────────────
-    jump: Optional[JumpManager] = None
-    jump_host = conn_cfg.get("jump_host")
-    use_jump = conn_cfg.get("use_jump_host", True)
-    if jump_host and use_jump and not skip_jump:
-        console.print(f"[cyan]Connecting to jump host {jump_host} ...[/]")
-        jump = JumpManager(jump_host, username, password)
-        jump.connect()
 
     # ── Concurrency settings ───────────────────────────────
     max_workers = max(1, audit_settings.get("max_workers", 5))
     device_type = conn_cfg.get("device_type", "cisco_xe")
     timeout = audit_settings.get("collect_timeout", 30)
 
+    mode_label = "offline" if dry_run_dir else "live"
     console.print(
-        f"[cyan]Auditing {len(devices)} device(s) with up to "
+        f"[cyan]Auditing {len(devices)} device(s) ({mode_label}) with up to "
         f"{max_workers} concurrent worker(s) ...[/]"
     )
     console.print()
@@ -284,6 +366,16 @@ def run_audit(
         for result in results:
             console.rule(f"[bold cyan]{result.hostname}  ({result.ip})[/]")
             print_report(result, console=console)
+            # Print delta summary if available
+            delta = getattr(result, "_delta", None)
+            if delta:
+                print_delta_summary(delta, result.hostname, console=console)
+
+    # ── CSV export ─────────────────────────────────────────
+    out_dir = audit_settings.get("output_dir", "./reports")
+    if results and audit_settings.get("csv_report", False):
+        csv_path = save_csv(results, out_dir)
+        console.print(f"  [bold cyan]CSV report:[/] {csv_path}")
 
     # ── Final summary ──────────────────────────────────────
     if len(results) > 1:

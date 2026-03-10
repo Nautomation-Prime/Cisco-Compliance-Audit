@@ -51,6 +51,29 @@ def _build_parser() -> argparse.ArgumentParser:
         default=0,
         help="Increase log verbosity (-v INFO, -vv DEBUG).",
     )
+    p.add_argument(
+        "-o", "--output-dir",
+        default=None,
+        help="Override the report output directory (default: from YAML config).",
+    )
+    p.add_argument(
+        "--fail-threshold",
+        type=float,
+        default=None,
+        metavar="PCT",
+        help="Exit with code 1 if any device scores below this percentage (e.g. 80).",
+    )
+    p.add_argument(
+        "--dry-run",
+        default=None,
+        metavar="DIR",
+        help="Offline mode — read previously saved command outputs from DIR instead of SSH.",
+    )
+    p.add_argument(
+        "--csv",
+        action="store_true",
+        help="Generate a CSV report alongside other outputs.",
+    )
     return p
 
 
@@ -71,10 +94,16 @@ def main() -> None:
         device_overrides=args.devices,
         skip_jump=args.no_jump,
         categories=args.categories,
+        output_dir=args.output_dir,
+        dry_run_dir=args.dry_run,
+        csv_report=args.csv,
     )
 
-    # Exit code: 0 if all pass, 1 if any fail
-    if any(r.fail_count > 0 for r in results):
+    # Exit code: threshold-based or any-fail
+    if args.fail_threshold is not None:
+        if any(r.score_pct < args.fail_threshold for r in results):
+            sys.exit(1)
+    elif any(r.fail_count > 0 for r in results):
         sys.exit(1)
 
 

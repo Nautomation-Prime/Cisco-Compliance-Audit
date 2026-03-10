@@ -278,3 +278,58 @@ class DataCollector:
             )
 
         return data
+
+
+class OfflineCollector:
+    """Load previously saved command outputs from a directory (dry-run mode).
+
+    Expected layout::
+
+        <dir>/<hostname>/show_running-config.txt
+        <dir>/<hostname>/show_version.txt
+        ...
+
+    File names are the command with spaces replaced by underscores.
+    """
+
+    def __init__(self, base_dir: str):
+        self.base_dir = Path(base_dir)
+
+    def collect(self, hostname: str, ip: str = "") -> DeviceData | None:
+        """Return a DeviceData from files, or None if the host dir is missing."""
+        host_dir = self.base_dir / hostname
+        if not host_dir.is_dir():
+            # Try IP as folder name
+            host_dir = self.base_dir / ip
+        if not host_dir.is_dir():
+            log.warning("Dry-run: no data directory for %s in %s", hostname, self.base_dir)
+            return None
+
+        data = DeviceData(hostname=hostname, ip=ip)
+
+        for cmd in COMMANDS:
+            fname = cmd.replace(" ", "_") + ".txt"
+            fpath = host_dir / fname
+            if fpath.exists():
+                data.raw_commands[cmd] = fpath.read_text(encoding="utf-8", errors="replace")
+                log.info("Loaded offline: %s/%s (%d bytes)", hostname, fname, len(data.raw_commands[cmd]))
+            else:
+                data.raw_commands[cmd] = ""
+                log.debug("Dry-run file missing: %s", fpath)
+
+        # Parse running-config
+        data.running_config = data.raw_commands.get("show running-config", "")
+        data.parsed_config = parse_running_config(data.running_config)
+
+        # Genie-parse structured commands
+        if GENIE_AVAILABLE:
+            data.version = genie_parse("show version", data.raw_commands.get("show version", ""))
+            data.interfaces = genie_parse("show interfaces", data.raw_commands.get("show interfaces", ""))
+            data.switchports = genie_parse("show interfaces switchport", data.raw_commands.get("show interfaces switchport", ""))
+            data.stp = genie_parse("show spanning-tree", data.raw_commands.get("show spanning-tree", ""))
+            data.stp_root = genie_parse("show spanning-tree root", data.raw_commands.get("show spanning-tree root", ""))
+            data.cdp = genie_parse("show cdp neighbors detail", data.raw_commands.get("show cdp neighbors detail", ""))
+            data.lldp = genie_parse("show lldp neighbors detail", data.raw_commands.get("show lldp neighbors detail", ""))
+            data.vtp = genie_parse("show vtp status", data.raw_commands.get("show vtp status", ""))
+
+        return data
