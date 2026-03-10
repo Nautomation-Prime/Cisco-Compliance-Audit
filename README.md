@@ -150,7 +150,7 @@ pip install -r requirements.txt
 #    compliance_audit/compliance_config.yaml
 
 # 2. Run the audit against a single device
-python -m compliance_audit --device GB-MKD1-005ASW001:10.1.1.1
+python -m compliance_audit --device GB-SITE1-001ASW001:10.1.1.1
 
 # 3. Or audit all devices in the config (concurrently)
 python -m compliance_audit
@@ -171,10 +171,10 @@ The tool will prompt for credentials if they are not found in environment variab
 
 ```bash
 # Audit a single device (hostname:ip format)
-python -m compliance_audit --device GB-MKD1-005ASW001:10.1.1.1
+python -m compliance_audit --device GB-SITE1-001ASW001:10.1.1.1
 
 # Audit multiple devices
-python -m compliance_audit --device GB-MKD1-005ASW001:10.1.1.1 --device GB-MKD1-005CSW001:10.1.1.2
+python -m compliance_audit --device GB-SITE1-001ASW001:10.1.1.1 --device GB-SITE1-001CSW001:10.1.1.2
 
 # Audit by IP only (hostname won't be parsed for role)
 python -m compliance_audit --device 10.1.1.1
@@ -281,9 +281,9 @@ connection:
 
 ```yaml
 devices:
-  - hostname: GB-MKD1-005ASW001
+  - hostname: GB-SITE1-001ASW001
     ip: 10.1.1.1
-  - hostname: GB-MKD1-005CSW001
+  - hostname: GB-SITE1-001CSW001
     ip: 10.1.1.2
   - hostname: GB-SEV1-001ISW001
     ip: 10.2.3.4
@@ -312,7 +312,7 @@ The tool automatically detects device roles by parsing hostnames against a speci
 ### Format
 
 ```text
-GB-MKD1-005ASW001
+GB-SITE1-001ASW001
 │   │││  │││││ │││
 │   │││  │││││ └── Device number (001 = 1st switch in cabinet)
 │   │││  ││└──── Role code (ASW/CSW/SDW/ISW)
@@ -347,10 +347,10 @@ The digit after the site code is the branch instance (e.g. `MKD1` = first branch
 
 | Hostname | Country | Site | Branch | Cabinet | Role | Device # |
 | ---------- | --------- | ------ | -------- | --------- | ------ | ---------- |
-| `GB-MKD1-005ASW001` | GB | MKD | 1 | 005 | Access Switch | 001 |
+| `GB-SITE1-001ASW001` | GB | MKD | 1 | 005 | Access Switch | 001 |
 | `GB-SEV1-001CSW001` | GB | SEV | 1 | 001 | Core Switch | 001 |
 | `GB-MNC2-003SDW001` | GB | MNC | 2 | 003 | SD-WAN Router | 001 |
-| `GB-MKD1-005ISW001` | GB | MKD | 1 | 005 | Industrial Switch | 001 |
+| `GB-SITE1-001ISW001` | GB | MKD | 1 | 005 | Industrial Switch | 001 |
 
 > **What if the hostname doesn't match?** The audit still runs — it just skips role-specific checks and logs a warning.
 
@@ -606,7 +606,7 @@ Rich-formatted tables with colour-coded pass/fail/warn status, grouped by catego
 
 ```text
 ╭──────────────── COMPLIANCE AUDIT REPORT ─────────────────╮
-│ Device:  GB-MKD1-005ASW001  (10.1.1.1)                   │
+│ Device:  GB-SITE1-001ASW001  (10.1.1.1)                   │
 │ Role:    Access Switch                                     │
 │ Date:    2026-03-08 14:30 UTC                             │
 │ Score:   87.3%  (55 pass / 8 fail / 2 warn / 0 error)    │
@@ -617,7 +617,7 @@ Rich-formatted tables with colour-coded pass/fail/warn status, grouped by catego
 
 ```json
 {
-  "hostname": "GB-MKD1-005ASW001",
+  "hostname": "GB-SITE1-001ASW001",
   "ip": "10.1.1.1",
   "score_pct": 87.3,
   "pass": 55,
@@ -651,8 +651,8 @@ Self-contained HTML reports with a dark-themed dashboard. Two types are generate
 All reports are saved to the `output_dir` (default `./reports/`) with filenames like:
 
 ```text
-reports/GB-MKD1-005ASW001_20260308_143025.json
-reports/GB-MKD1-005ASW001_20260308_143025.html
+reports/GB-SITE1-001ASW001_20260308_143025.json
+reports/GB-SITE1-001ASW002_20260308_143025.html
 reports/consolidated_report_20260308_143025.html
 ```
 
