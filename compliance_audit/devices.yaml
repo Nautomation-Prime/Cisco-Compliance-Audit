@@ -1,5 +1,5 @@
 # ╔═════════════════════════════════════════════════════════════════════╗
-# ║                    DEVICE  INVENTORY                                ║
+# ║                          DEVICE  INVENTORY                          ║
 # ║                                                                     ║
 # ║  Each entry needs:                                                  ║
 # ║    hostname  – used to detect the device role                       ║
