@@ -1575,6 +1575,39 @@ class ComplianceEngine:
                              interface=intf,
                              remediation="ip arp inspection trust"))
 
+        # Trunk native VLAN
+        if _enabled(dp, "trunk_native_vlan"):
+            expected_native = dp.get("trunk_native_vlan", {}).get("expected_vlan", 99)
+            # Check from Genie switchport data
+            native_vlan = None
+            data = getattr(self, '_current_data', None)
+            if data and data.switchports:
+                sw_data = data.switchports.get(intf) or data.switchports.get(pi.name)
+                if isinstance(sw_data, dict):
+                    native_vlan = sw_data.get("native_vlan")
+            # Fallback to running-config
+            if native_vlan is None:
+                for line in pi.config_lines:
+                    m = re.search(r"switchport trunk native vlan\s+(\d+)", line, re.I)
+                    if m:
+                        native_vlan = int(m.group(1))
+                        break
+            if native_vlan is not None:
+                if native_vlan == expected_native:
+                    f.append(Finding("trunk_native_vlan", Status.PASS,
+                             f"{intf}: native VLAN {native_vlan} ({neighbor_desc})",
+                             interface=intf))
+                else:
+                    f.append(Finding("trunk_native_vlan", Status.FAIL,
+                             f"{intf}: native VLAN {native_vlan}, expected {expected_native} ({neighbor_desc})",
+                             interface=intf,
+                             remediation=f"switchport trunk native vlan {expected_native}"))
+            else:
+                f.append(Finding("trunk_native_vlan", Status.WARN,
+                         f"{intf}: native VLAN not determined ({neighbor_desc})",
+                         interface=intf,
+                         remediation=f"switchport trunk native vlan {expected_native}"))
+
         return f
 
     # ── TRUNK PORT CHECKS ─────────────────────────────────────
