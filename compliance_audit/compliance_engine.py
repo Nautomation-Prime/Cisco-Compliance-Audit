@@ -178,6 +178,8 @@ class ComplianceEngine:
     def _check_services(self, cfg: ParsedConfig, data: DeviceData,
                         host: HostnameInfo, ports: dict) -> list[Finding]:
         f: list[Finding] = []
+        if "management_plane" not in self.policy:
+            return f
         mp = self.policy.get("management_plane", {})
 
         # service password-encryption
@@ -226,6 +228,8 @@ class ComplianceEngine:
     def _check_ip_settings(self, cfg: ParsedConfig, data: DeviceData,
                            host: HostnameInfo, ports: dict) -> list[Finding]:
         f: list[Finding] = []
+        if "management_plane" not in self.policy:
+            return f
         mp = self.policy.get("management_plane", {})
 
         simple_present = [
@@ -310,6 +314,8 @@ class ComplianceEngine:
     def _check_ssh(self, cfg: ParsedConfig, data: DeviceData,
                    host: HostnameInfo, ports: dict) -> list[Finding]:
         f: list[Finding] = []
+        if "management_plane" not in self.policy:
+            return f
         mp = self.policy.get("management_plane", {})
 
         # SSH version
@@ -414,6 +420,8 @@ class ComplianceEngine:
     def _check_aaa(self, cfg: ParsedConfig, data: DeviceData,
                    host: HostnameInfo, ports: dict) -> list[Finding]:
         f: list[Finding] = []
+        if "management_plane" not in self.policy:
+            return f
         mp = self.policy.get("management_plane", {})
 
         if _enabled(mp, "aaa_new_model"):
@@ -485,6 +493,8 @@ class ComplianceEngine:
     def _check_ntp(self, cfg: ParsedConfig, data: DeviceData,
                    host: HostnameInfo, ports: dict) -> list[Finding]:
         f: list[Finding] = []
+        if "management_plane" not in self.policy:
+            return f
         mp = self.policy.get("management_plane", {})
 
         if _enabled(mp, "ntp_servers"):
@@ -527,6 +537,8 @@ class ComplianceEngine:
     def _check_logging(self, cfg: ParsedConfig, data: DeviceData,
                        host: HostnameInfo, ports: dict) -> list[Finding]:
         f: list[Finding] = []
+        if "management_plane" not in self.policy:
+            return f
         mp = self.policy.get("management_plane", {})
 
         if _enabled(mp, "logging_buffered"):
@@ -599,6 +611,8 @@ class ComplianceEngine:
     def _check_snmp(self, cfg: ParsedConfig, data: DeviceData,
                     host: HostnameInfo, ports: dict) -> list[Finding]:
         f: list[Finding] = []
+        if "management_plane" not in self.policy:
+            return f
         mp = self.policy.get("management_plane", {})
 
         if _enabled(mp, "snmp_no_community_public"):
@@ -704,6 +718,8 @@ class ComplianceEngine:
     def _check_banners(self, cfg: ParsedConfig, data: DeviceData,
                        host: HostnameInfo, ports: dict) -> list[Finding]:
         f: list[Finding] = []
+        if "management_plane" not in self.policy:
+            return f
         mp = self.policy.get("management_plane", {})
 
         for banner_type in ("login", "motd", "exec"):
@@ -741,6 +757,8 @@ class ComplianceEngine:
     def _check_users(self, cfg: ParsedConfig, data: DeviceData,
                      host: HostnameInfo, ports: dict) -> list[Finding]:
         f: list[Finding] = []
+        if "management_plane" not in self.policy:
+            return f
         mp = self.policy.get("management_plane", {})
 
         if _enabled(mp, "enable_secret"):
@@ -771,6 +789,8 @@ class ComplianceEngine:
     def _check_vty_lines(self, cfg: ParsedConfig, data: DeviceData,
                          host: HostnameInfo, ports: dict) -> list[Finding]:
         f: list[Finding] = []
+        if "management_plane" not in self.policy:
+            return f
         mp = self.policy.get("management_plane", {})
         vty_sections = cfg.get_line_config_sections(r"^vty\s+")
 
@@ -856,6 +876,8 @@ class ComplianceEngine:
     def _check_console(self, cfg: ParsedConfig, data: DeviceData,
                        host: HostnameInfo, ports: dict) -> list[Finding]:
         f: list[Finding] = []
+        if "management_plane" not in self.policy:
+            return f
         mp = self.policy.get("management_plane", {})
         con_sections = cfg.get_line_config_sections(r"^con\s+")
 
@@ -916,6 +938,8 @@ class ComplianceEngine:
     def _check_archive(self, cfg: ParsedConfig, data: DeviceData,
                        host: HostnameInfo, ports: dict) -> list[Finding]:
         f: list[Finding] = []
+        if "management_plane" not in self.policy:
+            return f
         mp = self.policy.get("management_plane", {})
         if not _enabled(mp, "archive_logging"):
             return f
@@ -931,6 +955,8 @@ class ComplianceEngine:
     def _check_login_security(self, cfg: ParsedConfig, data: DeviceData,
                               host: HostnameInfo, ports: dict) -> list[Finding]:
         f: list[Finding] = []
+        if "management_plane" not in self.policy:
+            return f
         mp = self.policy.get("management_plane", {})
 
         if _enabled(mp, "login_block_for"):
@@ -964,6 +990,8 @@ class ComplianceEngine:
     def _check_cdp_lldp(self, cfg: ParsedConfig, data: DeviceData,
                         host: HostnameInfo, ports: dict) -> list[Finding]:
         f: list[Finding] = []
+        if "management_plane" not in self.policy:
+            return f
         mp = self.policy.get("management_plane", {})
 
         if _enabled(mp, "cdp_global"):
@@ -995,6 +1023,8 @@ class ComplianceEngine:
     def _check_stp(self, cfg: ParsedConfig, data: DeviceData,
                    host: HostnameInfo, ports: dict) -> list[Finding]:
         f: list[Finding] = []
+        if "control_plane" not in self.policy:
+            return f
         cp = self.policy.get("control_plane", {})
 
         if _enabled(cp, "stp_mode"):
@@ -1084,6 +1114,8 @@ class ComplianceEngine:
     def _check_vtp(self, cfg: ParsedConfig, data: DeviceData,
                    host: HostnameInfo, ports: dict) -> list[Finding]:
         f: list[Finding] = []
+        if "control_plane" not in self.policy:
+            return f
         cp = self.policy.get("control_plane", {})
 
         if not _enabled(cp, "vtp_mode"):
@@ -1118,6 +1150,8 @@ class ComplianceEngine:
     def _check_dhcp_snooping(self, cfg: ParsedConfig, data: DeviceData,
                              host: HostnameInfo, ports: dict) -> list[Finding]:
         f: list[Finding] = []
+        if "control_plane" not in self.policy:
+            return f
         cp = self.policy.get("control_plane", {})
 
         if _enabled(cp, "dhcp_snooping_global"):
@@ -1147,6 +1181,8 @@ class ComplianceEngine:
     def _check_arp_inspection(self, cfg: ParsedConfig, data: DeviceData,
                               host: HostnameInfo, ports: dict) -> list[Finding]:
         f: list[Finding] = []
+        if "control_plane" not in self.policy:
+            return f
         cp = self.policy.get("control_plane", {})
 
         if _enabled(cp, "arp_inspection_vlans"):
@@ -1175,6 +1211,8 @@ class ComplianceEngine:
     def _check_errdisable(self, cfg: ParsedConfig, data: DeviceData,
                           host: HostnameInfo, ports: dict) -> list[Finding]:
         f: list[Finding] = []
+        if "control_plane" not in self.policy:
+            return f
         cp = self.policy.get("control_plane", {})
         if not _enabled(cp, "errdisable_recovery"):
             return f
@@ -1200,6 +1238,8 @@ class ComplianceEngine:
     def _check_udld(self, cfg: ParsedConfig, data: DeviceData,
                     host: HostnameInfo, ports: dict) -> list[Finding]:
         f: list[Finding] = []
+        if "control_plane" not in self.policy:
+            return f
         cp = self.policy.get("control_plane", {})
         if not _enabled(cp, "udld_global"):
             return f
@@ -1212,6 +1252,8 @@ class ComplianceEngine:
     def _check_copp(self, cfg: ParsedConfig, data: DeviceData,
                     host: HostnameInfo, ports: dict) -> list[Finding]:
         f: list[Finding] = []
+        if "control_plane" not in self.policy:
+            return f
         cp = self.policy.get("control_plane", {})
         if not _enabled(cp, "control_plane_policing"):
             return f
@@ -1233,6 +1275,9 @@ class ComplianceEngine:
     def _check_interfaces(self, cfg: ParsedConfig, data: DeviceData,
                           host: HostnameInfo, ports: dict[str, PortInfo]) -> list[Finding]:
         f: list[Finding] = []
+        # Skip all data plane checks if data_plane not in policy (e.g. category filtering)
+        if "data_plane" not in self.policy:
+            return f
         dp = self.policy.get("data_plane", {})
         self._current_data = data   # stash for trunk_native_vlan lookups
 
@@ -1910,6 +1955,8 @@ class ComplianceEngine:
                              host: HostnameInfo,
                              ports: dict[str, PortInfo]) -> list[Finding]:
         f: list[Finding] = []
+        if "role_specific" not in self.policy:
+            return f
         rs = self.policy.get("role_specific", {})
 
         if host.is_core:
