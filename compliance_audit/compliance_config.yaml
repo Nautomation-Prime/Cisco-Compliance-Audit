@@ -272,7 +272,7 @@ compliance:
       # Expect: ip ssh time-out <n>  where n <= max_seconds
 
     ssh_authentication_retries:
-      enabled: true
+      enabled: false
       max_retries: 3
       # Expect: ip ssh authentication-retries <n>
 
