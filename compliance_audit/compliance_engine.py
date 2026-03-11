@@ -243,8 +243,8 @@ class ComplianceEngine:
              "no ip http secure-server"),
             ("no_ip_gratuitous_arps", r"^ip gratuitous-arps", "ip gratuitous-arps",
              "no ip gratuitous-arps"),
-            ("no_ip_domain_lookup", r"^ip domain.lookup", "ip domain lookup",
-             "no ip domain lookup"),
+            ("no_ip_domain_lookup", r"^ip domain-lookup", "ip domain-lookup",
+             "no ip domain-lookup"),
         ]
         for name, pattern, desc, remed in simple_present:
             if _enabled(mp, name):
@@ -300,11 +300,11 @@ class ComplianceEngine:
         if _enabled(mp, "ip_domain_name"):
             expected = mp.get("ip_domain_name", {}).get("expected", "")
             if expected:
-                pattern = rf"^ip domain.name\s+{re.escape(expected)}"
+                pattern = rf"^ip domain-name\s+{re.escape(expected)}"
                 f.append(self._present(cfg, pattern, "ip_domain_name",
                          f"ip domain-name {expected}", f"ip domain-name {expected}"))
             else:
-                f.append(self._present(cfg, r"^ip domain.name\s+\S+",
+                f.append(self._present(cfg, r"^ip domain-name\s+\S+",
                          "ip_domain_name", "ip domain-name set",
                          "ip domain-name <your-domain>"))
 

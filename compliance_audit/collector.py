@@ -10,6 +10,7 @@ import re
 import logging
 import threading
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Optional
 
 log = logging.getLogger(__name__)
