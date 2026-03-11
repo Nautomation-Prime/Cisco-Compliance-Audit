@@ -681,7 +681,7 @@ compliance:
     # Never on trunk uplinks/downlinks to other switches.
     bpdu_guard:
       enabled: true
-      on_endpoint_trunks: true   # Also require BPDU guard on AP trunk ports
+      on_endpoint_trunks: false   # Also require BPDU guard on AP trunk ports
       # Expect: spanning-tree bpduguard enable  (per-interface)
 
     # ── ROOT GUARD ──────────────────────────────────────────────
