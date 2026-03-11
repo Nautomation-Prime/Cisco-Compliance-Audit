@@ -19,6 +19,8 @@ from typing import Optional
 import yaml
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, MofNCompleteColumn
+from rich.table import Table
+from rich import box
 
 from .credentials import CredentialHandler
 from .jump_manager import JumpManager
@@ -399,39 +401,55 @@ def run_audit(
         if jump:
             jump.close()
 
-    # ── Per-device console reports ─────────────────────────
+    # ── Summary table ────────────────────────────────────────
+    out_dir = audit_settings.get("output_dir", "./reports")
     if results:
         console.print()
-        for result in results:
-            console.rule(f"[bold cyan]{result.hostname}  ({result.ip})[/]")
-            print_report(result, console=console)
-            # Print delta summary if available
-            delta = getattr(result, "_delta", None)
+        console.rule("[bold cyan]AUDIT SUMMARY[/]")
+        summary_table = Table(
+            box=box.ROUNDED, expand=False, show_lines=False,
+            title_style="bold", min_width=90,
+        )
+        summary_table.add_column("Device", style="cyan", min_width=30)
+        summary_table.add_column("IP", min_width=15)
+        summary_table.add_column("Role", min_width=12)
+        summary_table.add_column("Score", justify="center", min_width=7)
+        summary_table.add_column("Pass", justify="center", style="green")
+        summary_table.add_column("Fail", justify="center", style="red")
+        summary_table.add_column("Warn", justify="center", style="yellow")
+        summary_table.add_column("Error", justify="center", style="magenta")
+
+        for r in results:
+            score_style = "bold green" if r.fail_count == 0 else "bold red"
+            summary_table.add_row(
+                r.hostname,
+                r.ip,
+                r.role_display or r.role or "",
+                f"[{score_style}]{r.score_pct}%[/]",
+                str(r.pass_count),
+                str(r.fail_count),
+                str(r.warn_count),
+                str(r.error_count),
+            )
+
+        console.print(summary_table)
+        console.print()
+
+        # Print delta summaries (brief) if available
+        for r in results:
+            delta = getattr(r, "_delta", None)
             if delta:
-                print_delta_summary(delta, result.hostname, console=console)
+                print_delta_summary(delta, r.hostname, console=console)
 
     # ── CSV export ─────────────────────────────────────────
-    out_dir = audit_settings.get("output_dir", "./reports")
     if results and audit_settings.get("csv_report", True):
         csv_path = save_csv(results, out_dir)
         console.print(f"  [bold cyan]CSV report:[/] {csv_path}")
 
-    # ── Final summary ──────────────────────────────────────
-    if len(results) > 1:
-        console.rule("[bold cyan]OVERALL SUMMARY[/]")
-        for r in results:
-            style = "green" if r.fail_count == 0 else "red"
-            console.print(
-                f"  {r.hostname:40s}  Score: [{style}]{r.score_pct}%[/]  "
-                f"({r.pass_count}P / {r.fail_count}F / {r.warn_count}W)"
-            )
+    # ── Consolidated HTML report ───────────────────────────
+    if results and audit_settings.get("html_report", True):
+        p = save_consolidated_html(results, out_dir)
+        console.print(f"  [bold cyan]HTML report:[/] {p}")
         console.print()
-
-        # Generate consolidated HTML report for multiple devices
-        out_dir = audit_settings.get("output_dir", "./reports")
-        if audit_settings.get("html_report", True):
-            p = save_consolidated_html(results, out_dir)
-            console.print(f"  [bold cyan]Consolidated HTML report:[/] {p}")
-            console.print()
 
     return results
