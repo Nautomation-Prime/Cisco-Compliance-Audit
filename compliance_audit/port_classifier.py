@@ -288,7 +288,7 @@ def _map_lldp_neighbors(
                 break
 
 
-_ENDPOINT_DEFAULT_HOSTNAME = [re.compile(r"^AP[\d_-]", re.IGNORECASE)]
+_ENDPOINT_DEFAULT_HOSTNAME = [re.compile(r"^AP[\d_-]+", re.IGNORECASE)]
 _ENDPOINT_DEFAULT_PLATFORM = [re.compile(r"AIR-|C91[2-7]|CW91|MR\d", re.IGNORECASE)]
 _ENDPOINT_DEFAULT_CAPABILITIES = [re.compile(r"Trans-Bridge", re.IGNORECASE)]
 
