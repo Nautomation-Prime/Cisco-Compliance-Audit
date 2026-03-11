@@ -25,6 +25,7 @@ Built on **PyATS/Genie** for structured parsing, **Netmiko** for transport, and 
 - [Hostname Naming Convention](#hostname-naming-convention)
 - [How Port Classification Works](#how-port-classification-works)
   - [Uplink vs Downlink Detection](#uplink-vs-downlink-detection)
+  - [Port-Channel / EtherChannel Awareness](#port-channel--etherchannel-awareness)
 - [Storm Control — Speed-Aware Thresholds](#storm-control--speed-aware-thresholds)
 - [BPDU Guard & Root Guard Logic](#bpdu-guard--root-guard-logic)
 - [Compliance Check Reference](#compliance-check-reference)
@@ -51,18 +52,24 @@ Built on **PyATS/Genie** for structured parsing, **Netmiko** for transport, and 
 | **90+ compliance checks** | Every check toggleable via `enabled: true/false` in YAML |
 | **Concurrent auditing** | Audit multiple devices in parallel — configurable worker count via `max_workers` |
 | **Multiple config files** | Run different YAML configs per site or purpose with `-c site_london.yaml` |
+| **Separate device inventory** | Devices listed in their own `devices.yaml` — swap inventories without touching compliance policy |
 | **Role-aware** | Automatically detects device role (Access / Core / SD-WAN / Industrial) from the hostname naming convention |
 | **Port classification** | Every interface is classified as ACCESS, TRUNK_UPLINK, TRUNK_DOWNLINK, UNUSED, ROUTED, SVI, etc. |
+| **Port-channel awareness** | Detects EtherChannel membership via `show etherchannel summary`; runs checks against the Port-channel interface, not individual members |
 | **Uplink/downlink detection** | Uses STP root-port election + CDP/LLDP neighbor hostname to reliably determine trunk direction |
 | **Speed-aware storm control** | Different threshold tiers for 10G, 1G, and 100M ports |
 | **Direction-aware STP guards** | BPDU guard on access ports only; root guard on downlinks only; flags root guard on uplinks as a failure |
 | **Jump host support** | SSH through a bastion/jump server using Paramiko direct-tcpip channels |
 | **Structured parsing** | Genie parses `show` command output into Python dicts — no fragile regex-on-CLI |
-| **Rich console output** | Colour-coded pass/fail tables with score percentages |
+| **Summary CLI output** | Compact summary table per run — detailed findings in HTML/CSV reports, not flooding the terminal |
 | **Interactive HTML reports** | Dashboard with device grid, collapsible sections, status filtering, and search |
+| **CSV reports** | Exportable CSV summary of all findings across devices |
 | **JSON reports** | Structured JSON output per device for downstream tooling and automation |
+| **Remediation scripts** | Auto-generated per-device IOS-XE config snippets to fix FAILs — port-channel aware |
+| **Dry-run / offline mode** | Audit saved command outputs without live SSH — useful for testing and CI |
 | **Credential flexibility** | OS keyring (optional) → environment variables → interactive prompt |
 | **Category filtering** | Audit only management plane, or only data plane, etc. |
+| **Fail threshold** | Exit with code 1 if any device scores below a configurable percentage |
 
 ---
 
@@ -97,7 +104,7 @@ Built on **PyATS/Genie** for structured parsing, **Netmiko** for transport, and 
                   └───────────────┘
 ```
 
-**Data flow:** Connect → Collect show commands (concurrently across devices) → Parse with Genie → Classify every port → Run all enabled checks against policy → Generate reports.
+**Data flow:** Connect → Collect show commands (concurrently across devices) → Parse with Genie → Detect EtherChannel membership → Classify every port → Run all enabled checks against policy → Generate reports.
 
 ---
 
@@ -146,19 +153,25 @@ pip install -r requirements.txt
 ## Quick Start
 
 ```bash
-# 1. Edit the config with your devices
+# 1. Add your devices to the inventory file
+#    compliance_audit/devices.yaml
+
+# 2. Customise compliance policy (optional)
 #    compliance_audit/compliance_config.yaml
 
-# 2. Run the audit against a single device
+# 3. Run the audit against a single device
 python -m compliance_audit --device GB-SITE1-001ASW001:10.1.1.1
 
-# 3. Or audit all devices in the config (concurrently)
+# 4. Or audit all devices in the inventory (concurrently)
 python -m compliance_audit
 
-# 4. Use a site-specific config file
+# 5. Use a site-specific config file
 python -m compliance_audit -c configs/site_london.yaml
 
-# 5. View the reports in ./reports/
+# 6. Use a different device inventory
+python -m compliance_audit -i inventories/site_london_devices.yaml
+
+# 7. View the reports in ./reports/
 ```
 
 The tool will prompt for credentials if they are not found in environment variables.
@@ -179,8 +192,11 @@ python -m compliance_audit --device GB-SITE1-001ASW001:10.1.1.1 --device GB-SITE
 # Audit by IP only (hostname won't be parsed for role)
 python -m compliance_audit --device 10.1.1.1
 
-# Audit all devices listed in compliance_config.yaml
+# Audit all devices listed in devices.yaml
 python -m compliance_audit
+
+# Use a different device inventory file
+python -m compliance_audit -i inventories/site_london_devices.yaml
 
 # Use a different config file (e.g. per-site configs)
 python -m compliance_audit -c configs/site_london.yaml
@@ -195,6 +211,18 @@ python -m compliance_audit --categories management_plane
 # Only run data plane and control plane checks
 python -m compliance_audit --categories data_plane control_plane
 
+# Override the report output directory
+python -m compliance_audit -o ./my-reports
+
+# Fail if any device scores below 80%
+python -m compliance_audit --fail-threshold 80
+
+# Dry-run mode — audit saved command outputs (no SSH)
+python -m compliance_audit --dry-run ./saved_outputs
+
+# Force CSV report generation
+python -m compliance_audit --csv
+
 # Verbose output (INFO level)
 python -m compliance_audit -v
 
@@ -204,34 +232,41 @@ python -m compliance_audit -vv
 
 ### CLI Reference
 
-```python
-python -m compliance_audit [-h] [-c CONFIG] [-d DEVICES] [--no-jump]
-                  [--categories CATEGORIES [CATEGORIES ...]] [-v]
+```text
+python -m compliance_audit [-h] [-c CONFIG] [-d DEVICES] [-i INVENTORY]
+                           [--no-jump] [--categories CAT [CAT ...]]
+                           [-o OUTPUT_DIR] [--fail-threshold PCT]
+                           [--dry-run DIR] [--csv] [--no-csv] [-v]
 
 Options:
-  -h, --help            Show help and exit
-  -c, --config CONFIG   Path to YAML config (default: compliance_config.yaml)
-  -d, --device DEVICES  Device to audit — IP or hostname:IP (repeatable)
-  --no-jump             Connect directly without jump host
-  --categories CAT ...  Only run checks in named categories
-  -v, --verbose         Increase verbosity (-v = INFO, -vv = DEBUG)
+  -h, --help              Show help and exit
+  -c, --config CONFIG     Path to YAML config (default: compliance_config.yaml)
+  -d, --device DEVICES    Device to audit — IP or hostname:IP (repeatable)
+  -i, --inventory FILE    Path to device inventory YAML (default: devices.yaml)
+  --no-jump               Connect directly without jump host
+  --categories CAT ...    Only run checks in named categories
+  -o, --output-dir DIR    Override the report output directory from config
+  --fail-threshold PCT    Exit code 1 if any device scores below this %
+  --dry-run DIR           Offline mode — read saved command outputs from DIR
+  --csv / --no-csv        Force-enable or disable CSV report generation
+  -v, --verbose           Increase verbosity (-v = INFO, -vv = DEBUG)
 ```
 
-**Exit codes:** `0` = all devices passed, `1` = at least one failure found.
+**Exit codes:** `0` = all devices passed, `1` = at least one failure (or below `--fail-threshold`).
 
 ---
 
 ## Configuration Guide
 
-All configuration lives in a YAML file (default: `compliance_audit/compliance_config.yaml`). The file is heavily commented and structured into five numbered sections for easy navigation:
+All configuration lives in a YAML file (default: `compliance_audit/compliance_config.yaml`). Device inventory is in a separate file (`compliance_audit/devices.yaml`). Both files are heavily commented.
 
-| Section | What it controls | How often you edit it |
-| --------- | ------------------ | ---------------------- |
-| **§1 Audit Settings** | Concurrency, reports, timeouts, reference VLANs | Every run |
-| **§2 Connection** | SSH, jump host, credentials | Per environment |
-| **§3 Device Inventory** | List of devices to audit | Per run |
-| **§4 Classification** | Hostname role codes, endpoint neighbour detection | Set once per org |
-| **§5 Compliance Checks** | All 90+ policy checks | When policy changes |
+| Section | File | What it controls | How often you edit it |
+| --------- | ------ | ------------------ | ---------------------- |
+| **§1 Audit Settings** | `compliance_config.yaml` | Concurrency, reports, timeouts, reference VLANs | Every run |
+| **§2 Connection** | `compliance_config.yaml` | SSH, jump host, credentials | Per environment |
+| **§3 Device Inventory** | `devices.yaml` | List of devices to audit | Per run |
+| **§4 Classification** | `compliance_config.yaml` | Hostname role codes, endpoint neighbour detection | Set once per org |
+| **§5 Compliance Checks** | `compliance_config.yaml` | All 90+ policy checks | When policy changes |
 
 ### Multiple Config Files
 
@@ -247,7 +282,18 @@ python -m compliance_audit -c configs/site_london.yaml
 python -m compliance_audit -c configs/site_manchester.yaml
 ```
 
-Each config file is self-contained — devices, connection settings, and compliance policy are all in one file, so different sites can have different policies.
+Each config file is self-contained for policy — connection settings and compliance checks are all in one file. The device inventory is referenced via `inventory_file` in the config, so different sites can point to their own inventory:
+
+```yaml
+# In configs/site_london.yaml
+inventory_file: "../inventories/london_devices.yaml"
+```
+
+Or override on the command line:
+
+```bash
+python -m compliance_audit -c configs/site_london.yaml -i inventories/london_devices.yaml
+```
 
 ### Audit Settings (§1)
 
@@ -279,7 +325,17 @@ connection:
 
 ### Device Inventory (§3)
 
+Device inventory lives in its own file (default: `compliance_audit/devices.yaml`), keeping it separate from the compliance policy. The config file references it with:
+
 ```yaml
+# In compliance_config.yaml
+inventory_file: "devices.yaml"
+```
+
+The inventory file format:
+
+```yaml
+# devices.yaml
 devices:
   - hostname: GB-SITE1-001ASW001
     ip: 10.1.1.1
@@ -289,7 +345,10 @@ devices:
     ip: 10.2.3.4
 ```
 
-Alternatively, pass devices on the command line with `--device` (overrides the YAML list).
+You can also:
+
+- Override the inventory file with `-i` / `--inventory` on the command line
+- Skip the inventory entirely and pass devices with `--device` (overrides the file)
 
 ### Compliance Checks (§5)
 
@@ -366,12 +425,14 @@ Every interface on the device is classified into a role. This determines which c
 | `TRUNK_UPLINK` | Trunk toward the core (root bridge) | Storm control, nonegotiate, VLAN pruning, DHCP snooping trust, DAI trust. **No root guard.** |
 | `TRUNK_DOWNLINK` | Trunk toward access/industrial switches | Storm control, nonegotiate, VLAN pruning, root guard, DHCP snooping trust, DAI trust |
 | `TRUNK_UNKNOWN` | Trunk where direction could not be determined | Same as trunk but root guard findings are flagged as WARN |
+| `TRUNK_ENDPOINT` | Trunk to an endpoint (wireless AP, etc.) | BPDU guard (like access), storm control, nonegotiate |
 | `UNUSED` | Admin-down, no link | Must be shutdown, parking VLAN, no CDP/LLDP, BPDU guard, description "UNUSED" |
 | `ROUTED` | Physical L3 interface (`no switchport`) | Not subject to switchport checks |
 | `SVI` | Vlan interface | Not subject to switchport checks |
 | `LOOPBACK` | Loopback interface | Skipped |
-| `PORT_CHANNEL` | Logical port-channel | Classified by membership |
 | `MGMT` | AppGigabitEthernet / Management | Skipped |
+
+> **Port-channel interfaces** are classified by their actual switchport mode (ACCESS, TRUNK_UPLINK, etc.) and receive the same checks as physical ports. **Member ports** of a port-channel are automatically detected and excluded — checks and remediation target the Port-channel interface, not individual members.
 
 ### Uplink vs Downlink Detection
 
@@ -405,6 +466,28 @@ The tool runs `show cdp neighbors detail` (and falls back to `show lldp neighbor
 | No | Unknown / None | **TRUNK_UNKNOWN** (manual review) |
 
 STP is the trusted primary signal. CDP/LLDP acts as a tiebreaker when STP data is unavailable or ambiguous.
+
+### Port-Channel / EtherChannel Awareness
+
+The auditor collects `show etherchannel summary` (Genie-parsed) to detect port-channel membership. This ensures:
+
+- **Member ports** (e.g. Gi1/0/21, Gi1/0/22) are excluded from compliance checks — they inherit configuration from the port-channel
+- **Port-channel interfaces** (e.g. Po1) are classified by their actual switchport mode (trunk, access, etc.) and receive the full set of data-plane checks
+- **Remediation scripts** target the Port-channel interface, not individual members
+
+If `show etherchannel summary` data is unavailable (e.g. Genie not installed), the auditor falls back to parsing `channel-group` commands from the running-config.
+
+```text
+Group  Port-channel  Protocol    Ports
+------+-------------+-----------+-----------------------------------------------
+1      Po1(SU)         LACP        Gi1/0/21(P)     Gi1/0/22(P)
+
+→ Gi1/0/21 and Gi1/0/22 are skipped
+→ Port-channel1 is checked as a trunk (or access, etc.)
+→ Remediation targets "interface Port-channel1"
+```
+
+This works with any number of port-channels on a device.
 
 ---
 
@@ -598,20 +681,25 @@ These checks are applied **per interface** based on the port's classified role.
 
 ## Reports & Output
 
-The tool generates three types of output:
+The tool generates several types of output:
 
-### Console Report (always)
+### Console Summary (always)
 
-Rich-formatted tables with colour-coded pass/fail/warn status, grouped by category, with a compliance score percentage. During concurrent runs, a progress bar shows device completion status.
+A compact summary table is printed to the terminal showing device scores at a glance — detailed per-check findings are in the HTML and CSV reports, keeping the console output clean and readable.
 
 ```text
-╭──────────────── COMPLIANCE AUDIT REPORT ─────────────────╮
-│ Device:  GB-SITE1-001ASW001  (10.1.1.1)                   │
-│ Role:    Access Switch                                     │
-│ Date:    2026-03-08 14:30 UTC                             │
-│ Score:   87.3%  (55 pass / 8 fail / 2 warn / 0 error)    │
-╰──────────────────────────────────────────────────────────╯
+─────────────────────── AUDIT SUMMARY ────────────────────────
+╭────────────────────────┬─────────────┬──────────────┬───────┬──────┬──────┬──────┬───────╮
+│ Device                 │ IP          │ Role         │ Score │ Pass │ Fail │ Warn │ Error │
+├────────────────────────┼─────────────┼──────────────┼───────┼──────┼──────┼──────┼───────┤
+│ GB-SITE1-001ASW001     │ 10.1.1.1    │ Access Switch│  87%  │  55  │   8  │   2  │   0   │
+│ GB-SITE1-001CSW001     │ 10.1.1.2    │ Core Switch  │  94%  │  62  │   4  │   1  │   0   │
+╰────────────────────────┴─────────────┴──────────────┴───────┴──────┴──────┴──────┴───────╯
 ```
+
+### CSV Report
+
+Tabular summary of all findings across all devices, suitable for spreadsheet analysis or integration with other tools. Enable with `csv_report: true` in the config or `--csv` on the CLI.
 
 ### JSON Report
 
@@ -652,8 +740,56 @@ All reports are saved to the `output_dir` (default `./reports/`) with filenames 
 
 ```text
 reports/GB-SITE1-001ASW001_20260308_143025.json
+reports/GB-SITE1-001ASW001_20260308_143025.html
+reports/GB-SITE1-001ASW001_remediation_20260308_143025.txt
 reports/GB-SITE1-001ASW002_20260308_143025.html
 reports/consolidated_report_20260308_143025.html
+reports/audit_summary_20260308_143025.csv
+```
+
+### Remediation Scripts
+
+For each device with FAIL findings, a ready-to-paste IOS-XE config snippet is generated. The script:
+
+- Groups commands into global configuration and per-interface blocks
+- Targets Port-channel interfaces for port-channel members (not individual member ports)
+- Deduplicates commands and ends with `write memory`
+
+```text
+! Remediation script for GB-SITE1-001ASW001 (10.1.1.1)
+! Generated: 2026-03-08 14:30 UTC
+! Findings to fix: 8
+!
+configure terminal
+!
+! --- Global Configuration ---
+service password-encryption
+no ip http server
+!
+interface Port-channel1
+ switchport nonegotiate
+ storm-control broadcast level 1.00 0.70
+!
+end
+write memory
+```
+
+### Dry-Run / Offline Mode
+
+Test the auditor against saved command outputs without live SSH access:
+
+```bash
+# Save outputs first (directory per device, one file per command)
+saved_outputs/
+  GB-SITE1-001ASW001/
+    show_running-config.txt
+    show_version.txt
+    show_interfaces.txt
+    show_etherchannel_summary.txt
+    ...
+
+# Run the audit offline
+python -m compliance_audit --dry-run ./saved_outputs
 ```
 
 ---
@@ -706,20 +842,24 @@ Cisco-Compliance-Audit/
 ├── compliance_audit/
 │   ├── __init__.py             # Package exports and version
 │   ├── __main__.py             # CLI entry point (python -m compliance_audit)
-│   ├── compliance_config.yaml  # ★ Default configuration — all checks here
-│   ├── config_loader.py        # YAML config loader
+│   ├── compliance_config.yaml  # ★ Compliance policy — all checks and settings
+│   ├── devices.yaml            # ★ Device inventory — hostnames and IPs
+│   ├── config_loader.py        # YAML config loader (supports separate inventory)
 │   ├── credentials.py          # Credential handler (keyring / env / prompt)
 │   ├── jump_manager.py         # SSH jump host via Paramiko
 │   ├── netmiko_utils.py        # Netmiko connection wrapper
 │   ├── hostname_parser.py      # Hostname naming convention parser
 │   ├── collector.py            # Data collection + Genie parsing (thread-safe)
-│   ├── port_classifier.py      # Interface role classification
+│   ├── port_classifier.py      # Interface role classification + EtherChannel detection
 │   ├── compliance_engine.py    # All compliance checks (~700 lines)
-│   ├── report.py               # Rich console + interactive HTML + JSON reports
+│   ├── report.py               # Rich console + interactive HTML + JSON + CSV reports
 │   └── auditor.py              # Orchestrator (concurrent via ThreadPoolExecutor)
 ├── configs/                    # (optional) Per-site config files
 │   ├── site_london.yaml
 │   └── site_manchester.yaml
+├── inventories/                # (optional) Per-site device inventories
+│   ├── london_devices.yaml
+│   └── manchester_devices.yaml
 ├── requirements.txt            # Python dependencies
 ├── README.md                   # This file
 └── LICENSE
@@ -782,13 +922,15 @@ Role codes are configured in the YAML — no code changes needed:
 | --------- | --------- |
 | `Genie not installed — structured parsing unavailable` | Run `pip install pyats[library]`. Without Genie, the tool still works but falls back to regex parsing. |
 | `Connection failed` | Check SSH reachability, credentials, and that `ip ssh version 2` is configured on the device. |
+| `No devices to audit` | Add devices to `devices.yaml` or use `--device` on the CLI. Check that `inventory_file` in the config points to the correct file. |
 | `Hostname did not match naming convention` | Role-specific checks are skipped. Use the `hostname:ip` format on the CLI to provide a parseable hostname. |
 | `TRUNK_UNKNOWN` ports in report | Uplink/downlink direction could not be determined. Check that CDP is enabled and the neighbor's hostname follows the naming convention. |
+| Port-channel members showing as individual findings | Ensure `show etherchannel summary` is collected (requires Genie). Fallback uses `channel-group` from running-config. |
 | `Config file not found` | The tool looks for `compliance_config.yaml` in the current directory, then in the `compliance_audit/` directory. Use `--config` for a custom path. |
 | Timeout on `show` commands | Increase `collect_timeout` in `audit_settings` or check device responsiveness. |
 | Large devices with many interfaces slow to audit | This is expected — every interface is checked individually. Consider using `--categories` to focus on specific check groups. |
 | Concurrent audits too slow / too fast | Adjust `max_workers` in `audit_settings`. Use `1` for sequential, or increase for more parallelism. |
-| Want different policies per site | Copy `compliance_config.yaml`, edit each copy, and run with `-c configs/site_name.yaml`. |
+| Want different policies per site | Copy `compliance_config.yaml`, edit each copy, and run with `-c configs/site_name.yaml`. Use `-i` for site-specific inventories. |
 
 ---
 
