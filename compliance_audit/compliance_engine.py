@@ -367,34 +367,46 @@ class ComplianceEngine:
         # SSH RSA minimum modulus size
         if _enabled(mp, "ssh_rsa_min_modulus"):
             min_bits = mp.get("ssh_rsa_min_modulus", {}).get("min_bits", 2048)
-            lines = cfg.find_lines(r"^crypto key generate rsa|^ip ssh rsa keypair-name")
-            # Check from show version / running-config for RSA key modulus
-            rsa_lines = cfg.find_lines(r"^ip ssh rsa keypair-name")
-            # Also check show crypto key output stored in raw_commands if available
             modulus_found = False
-            for gl in cfg.global_lines:
-                m = re.search(r"(\d+)\s*bit", gl)
-                if m and "rsa" in gl.lower():
-                    bits = int(m.group(1))
-                    modulus_found = True
-                    if bits >= min_bits:
-                        f.append(Finding("ssh_rsa_min_modulus", Status.PASS,
-                                 f"RSA key size {bits} >= {min_bits} bits"))
-                    else:
-                        f.append(Finding("ssh_rsa_min_modulus", Status.FAIL,
-                                 f"RSA key size {bits} < {min_bits} bits",
-                                 remediation=f"crypto key generate rsa modulus {min_bits}"))
-                    break
+
+            # First, try to get modulus size from "show ip ssh" command output
+            if data and data.raw_commands.get("show ip ssh"):
+                ssh_output = data.raw_commands["show ip ssh"]
+                # Look for "Modulus Size : 2048 bits" pattern
+                for line in ssh_output.splitlines():
+                    m = re.search(r"Modulus Size\s*:\s*(\d+)\s*bits?", line, re.IGNORECASE)
+                    if m:
+                        bits = int(m.group(1))
+                        modulus_found = True
+                        if bits >= min_bits:
+                            f.append(Finding("ssh_rsa_min_modulus", Status.PASS,
+                                     f"RSA key size {bits} >= {min_bits} bits"))
+                        else:
+                            f.append(Finding("ssh_rsa_min_modulus", Status.FAIL,
+                                     f"RSA key size {bits} < {min_bits} bits",
+                                     remediation=f"crypto key generate rsa modulus {min_bits}"))
+                        break
+
+            # Fallback: check running-config for RSA key modulus
             if not modulus_found:
-                # Try Genie version data for RSA key info
-                if data and data.version:
-                    f.append(Finding("ssh_rsa_min_modulus", Status.WARN,
-                             f"RSA modulus size not verifiable from config (expected >= {min_bits})",
-                             remediation=f"crypto key generate rsa modulus {min_bits}"))
-                else:
-                    f.append(Finding("ssh_rsa_min_modulus", Status.WARN,
-                             f"RSA modulus could not be determined (expected >= {min_bits})",
-                             remediation=f"crypto key generate rsa modulus {min_bits}"))
+                for gl in cfg.global_lines:
+                    m = re.search(r"(\d+)\s*bit", gl)
+                    if m and "rsa" in gl.lower():
+                        bits = int(m.group(1))
+                        modulus_found = True
+                        if bits >= min_bits:
+                            f.append(Finding("ssh_rsa_min_modulus", Status.PASS,
+                                     f"RSA key size {bits} >= {min_bits} bits"))
+                        else:
+                            f.append(Finding("ssh_rsa_min_modulus", Status.FAIL,
+                                     f"RSA key size {bits} < {min_bits} bits",
+                                     remediation=f"crypto key generate rsa modulus {min_bits}"))
+                        break
+
+            if not modulus_found:
+                f.append(Finding("ssh_rsa_min_modulus", Status.WARN,
+                         f"RSA modulus could not be determined (expected >= {min_bits})",
+                         remediation=f"crypto key generate rsa modulus {min_bits}"))
 
         return f
 

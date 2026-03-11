@@ -200,6 +200,7 @@ COMMANDS = [
     "show cdp neighbors detail",
     "show lldp neighbors detail",
     "show vtp status",
+    "show ip ssh",
 ]
 
 
