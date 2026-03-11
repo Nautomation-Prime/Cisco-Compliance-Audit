@@ -1396,7 +1396,8 @@ class ComplianceEngine:
 
         # IP Source Guard on access ports
         if _enabled(dp, "ip_source_guard"):
-            if pi_has(pi, r"ip verify source"):
+            # Match "ip verify source" but not "no ip verify source"
+            if pi_has(pi, r"^\s*ip verify source") and not pi_has(pi, r"^\s*no ip verify source"):
                 f.append(Finding("ip_source_guard", Status.PASS,
                          f"{intf}: IP source guard enabled", interface=intf))
             else:
