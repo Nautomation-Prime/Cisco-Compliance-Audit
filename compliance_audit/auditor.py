@@ -373,7 +373,7 @@ def run_audit(
 
     # ── CSV export ─────────────────────────────────────────
     out_dir = audit_settings.get("output_dir", "./reports")
-    if results and audit_settings.get("csv_report", False):
+    if results and audit_settings.get("csv_report", True):
         csv_path = save_csv(results, out_dir)
         console.print(f"  [bold cyan]CSV report:[/] {csv_path}")
 
