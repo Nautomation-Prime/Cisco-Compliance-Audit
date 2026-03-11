@@ -64,6 +64,11 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Exit with code 1 if any device scores below this percentage (e.g. 80).",
     )
     p.add_argument(
+        "-i", "--inventory",
+        default=None,
+        help="Path to the device inventory YAML (default: devices.yaml next to config).",
+    )
+    p.add_argument(
         "--dry-run",
         default=None,
         metavar="DIR",
@@ -105,6 +110,7 @@ def main() -> None:
         output_dir=args.output_dir,
         dry_run_dir=args.dry_run,
         csv_report=args.csv_report,
+        inventory_path=args.inventory,
     )
 
     # Exit code: threshold-based or any-fail

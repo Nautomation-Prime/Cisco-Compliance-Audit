@@ -61,23 +61,11 @@ connection:
 # ═══════════════════════════════════════════════════════════════════
 # §3  DEVICE  INVENTORY  (what to audit)
 # ═══════════════════════════════════════════════════════════════════
-# Each entry needs:
-#   hostname  – used to detect the device role (parsed against hostname_roles)
-#   ip        – management IP (or DNS name) the auditor connects to
-#
-# Add as many entries as you need — one per line, indented under "devices:".
-# To skip the inventory and audit a single device ad-hoc, use the CLI:
-#   python -m compliance_audit --device GB-SITE1-001ASW001:10.1.1.1
+# Device inventory has moved to its own file: devices.yaml
+# Override the inventory file path with:
+#   python -m compliance_audit --inventory my_devices.yaml
 
-devices:
-  - hostname: GB-SITE1-001ASW001
-    ip: 192.0.2.61
-  - hostname: GB-SITE1-001ASW002
-    ip: 192.0.2.62
-  # - hostname: placeholder
-  #   ip: 10.1.3.1
-  # - hostname: placeholder
-  #   ip: 10.1.4.1
+inventory_file: "devices.yaml"
 
 
 # ═══════════════════════════════════════════════════════════════════

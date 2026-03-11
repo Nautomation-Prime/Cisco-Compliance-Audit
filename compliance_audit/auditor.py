@@ -51,6 +51,44 @@ def load_compliance_config(path: str) -> dict:
         return yaml.safe_load(fh) or {}
 
 
+def _resolve_config_path(path: str) -> Path:
+    """Return the resolved path to the config file (used for sibling lookups)."""
+    p = Path(path)
+    if p.exists():
+        return p.parent
+    alt = Path(__file__).parent / path
+    if alt.exists():
+        return alt.parent
+    return Path(__file__).parent
+
+
+def load_device_inventory(inventory_path: str | None, config_path: str) -> list[dict]:
+    """Load the device inventory from a dedicated YAML file.
+
+    Resolution order for *inventory_path*:
+    1. Explicit CLI value (--inventory).
+    2. ``inventory_file`` key inside the main config YAML.
+    3. ``devices.yaml`` next to the config file.
+    """
+    cfg_dir = _resolve_config_path(config_path)
+
+    if inventory_path is None:
+        cfg = load_compliance_config(config_path)
+        inventory_path = cfg.get("inventory_file", "devices.yaml")
+
+    p = Path(inventory_path)
+    if not p.is_absolute():
+        p = cfg_dir / p
+    if not p.exists():
+        p = Path(__file__).parent / inventory_path
+    if not p.exists():
+        return []
+
+    with open(p, "r", encoding="utf-8") as fh:
+        data = yaml.safe_load(fh) or {}
+    return data.get("devices", []) or []
+
+
 @dataclass
 class _DeviceJob:
     """All parameters needed to audit a single device."""
@@ -176,6 +214,7 @@ def run_audit(
     output_dir: Optional[str] = None,
     dry_run_dir: Optional[str] = None,
     csv_report: Optional[bool] = None,
+    inventory_path: Optional[str] = None,
 ) -> list[AuditResult]:
     """
     Run the full compliance audit pipeline.
@@ -242,7 +281,7 @@ def run_audit(
             else:
                 devices.append({"hostname": entry, "ip": entry})
     else:
-        devices = cfg.get("devices", []) or []
+        devices = load_device_inventory(inventory_path, config_path)
 
     # ── Credentials ────────────────────────────────────────
     username, password, enable_secret = "", "", None
@@ -280,7 +319,7 @@ def run_audit(
 
     if not devices:
         console.print("[bold yellow]No devices to audit.[/] "
-                      "Add devices to compliance_config.yaml or use --device.")
+                      "Add devices to devices.yaml or use --device.")
         return []
 
     # ── Concurrency settings ───────────────────────────────

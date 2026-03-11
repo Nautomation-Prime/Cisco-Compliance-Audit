@@ -45,7 +45,15 @@ class Config:
 
     @property
     def devices(self) -> list:
-        return self._config.get("devices", [])
+        """Load devices from the separate inventory file."""
+        inv_file = self._config.get("inventory_file", "devices.yaml")
+        inv_path = self._config_file.parent / inv_file
+        if not inv_path.exists():
+            # Fallback: check for inline devices (backwards compat)
+            return self._config.get("devices", [])
+        with open(inv_path, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+        return data.get("devices", []) or []
 
     @property
     def audit_settings(self) -> dict:
