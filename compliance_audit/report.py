@@ -7,6 +7,7 @@ import html as html_mod
 import io
 import json
 import logging
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -21,6 +22,11 @@ from rich import box
 from .compliance_engine import AuditResult, Finding, Status
 
 log = logging.getLogger(__name__)
+
+
+def _safe_hostname(name: str) -> str:
+    """Sanitise a hostname for use in filenames (strip path separators etc.)."""
+    return re.sub(r'[^\w.\-]', '_', name) if name else 'unknown'
 
 STATUS_STYLE = {
     Status.PASS:  ("PASS",  "bold green"),
@@ -118,12 +124,13 @@ def print_report(result: AuditResult, console: Optional[Console] = None) -> None
     con.print()
 
 
-def save_json(result: AuditResult, output_dir: str) -> Path:
+def save_json(result: AuditResult, output_dir: str) -> Path | None:
     """Dump the audit result as JSON."""
     outdir = Path(output_dir)
     outdir.mkdir(parents=True, exist_ok=True)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = outdir / f"{result.hostname}_{ts}.json"
+    safe = _safe_hostname(result.hostname)
+    filename = outdir / f"{safe}_{ts}.json"
     payload = {
         "hostname": result.hostname,
         "ip": result.ip,
@@ -151,7 +158,11 @@ def save_json(result: AuditResult, output_dir: str) -> Path:
             if f.status != Status.SKIP
         ],
     }
-    filename.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    try:
+        filename.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    except OSError as exc:
+        log.error("Failed to write JSON report %s: %s", filename, exc)
+        return None
     log.info("JSON report saved to %s", filename)
     return filename
 
@@ -388,12 +399,13 @@ document.addEventListener('DOMContentLoaded',function(){
 #  Single-device HTML report
 # ═══════════════════════════════════════════════════════════════════
 
-def save_html(result: AuditResult, output_dir: str) -> Path:
+def save_html(result: AuditResult, output_dir: str) -> Path | None:
     """Save a standalone HTML report for a single device."""
     outdir = Path(output_dir)
     outdir.mkdir(parents=True, exist_ok=True)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = outdir / f"{result.hostname}_{ts}.html"
+    safe = _safe_hostname(result.hostname)
+    filename = outdir / f"{safe}_{ts}.html"
 
     ts_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     sc = _score_colour(result.score_pct)
@@ -452,7 +464,11 @@ def save_html(result: AuditResult, output_dir: str) -> Path:
 """
 
     page = _wrap_html(f"{result.hostname} — Compliance Audit", body)
-    filename.write_text(page, encoding="utf-8")
+    try:
+        filename.write_text(page, encoding="utf-8")
+    except OSError as exc:
+        log.error("Failed to write HTML report %s: %s", filename, exc)
+        return None
     log.info("HTML report saved to %s", filename)
     return filename
 
@@ -461,7 +477,7 @@ def save_html(result: AuditResult, output_dir: str) -> Path:
 #  Consolidated multi-device HTML report
 # ═══════════════════════════════════════════════════════════════════
 
-def save_consolidated_html(results: list[AuditResult], output_dir: str) -> Path:
+def save_consolidated_html(results: list[AuditResult], output_dir: str) -> Path | None:
     """Save a consolidated HTML report with dashboard, filtering, and collapsible devices."""
     if not results:
         raise ValueError("No results to generate consolidated report")
@@ -573,7 +589,11 @@ def save_consolidated_html(results: list[AuditResult], output_dir: str) -> Path:
 """
 
     page = _wrap_html("Consolidated Compliance Audit Report", body)
-    filename.write_text(page, encoding="utf-8")
+    try:
+        filename.write_text(page, encoding="utf-8")
+    except OSError as exc:
+        log.error("Failed to write consolidated HTML report %s: %s", filename, exc)
+        return None
     log.info("Consolidated HTML report saved to %s", filename)
     return filename
 
@@ -600,27 +620,31 @@ def _wrap_html(title: str, body: str) -> str:
 #  CSV export
 # ═══════════════════════════════════════════════════════════════════
 
-def save_csv(results: list[AuditResult], output_dir: str) -> Path:
+def save_csv(results: list[AuditResult], output_dir: str) -> Path | None:
     """Export all findings from one or more devices as a single CSV file."""
     outdir = Path(output_dir)
     outdir.mkdir(parents=True, exist_ok=True)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     filename = outdir / f"compliance_audit_{ts}.csv"
 
-    with open(filename, "w", newline="", encoding="utf-8") as fh:
-        writer = csv.writer(fh)
-        writer.writerow([
-            "hostname", "ip", "role", "category", "check",
-            "status", "interface", "detail", "remediation",
-        ])
-        for r in results:
-            for f in r.findings:
-                if f.status == Status.SKIP:
-                    continue
-                writer.writerow([
-                    r.hostname, r.ip, r.role, f.category, f.check_name,
-                    f.status.value, f.interface, f.detail, f.remediation,
-                ])
+    try:
+        with open(filename, "w", newline="", encoding="utf-8") as fh:
+            writer = csv.writer(fh)
+            writer.writerow([
+                "hostname", "ip", "role", "category", "check",
+                "status", "interface", "detail", "remediation",
+            ])
+            for r in results:
+                for f in r.findings:
+                    if f.status == Status.SKIP:
+                        continue
+                    writer.writerow([
+                        r.hostname, r.ip, r.role, f.category, f.check_name,
+                        f.status.value, f.interface, f.detail, f.remediation,
+                    ])
+    except OSError as exc:
+        log.error("Failed to write CSV report %s: %s", filename, exc)
+        return None
 
     log.info("CSV report saved to %s", filename)
     return filename
@@ -639,7 +663,8 @@ def save_remediation_script(result: AuditResult, output_dir: str) -> Path | None
     outdir = Path(output_dir)
     outdir.mkdir(parents=True, exist_ok=True)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = outdir / f"{result.hostname}_remediation_{ts}.txt"
+    safe = _safe_hostname(result.hostname)
+    filename = outdir / f"{safe}_remediation_{ts}.txt"
 
     # Collect all FAIL findings that have a remediation command
     fails = [f for f in result.findings
@@ -699,7 +724,11 @@ def save_remediation_script(result: AuditResult, output_dir: str) -> Path | None
     lines.append("write memory")
     lines.append("!")
 
-    filename.write_text("\n".join(lines), encoding="utf-8")
+    try:
+        filename.write_text("\n".join(lines), encoding="utf-8")
+    except OSError as exc:
+        log.error("Failed to write remediation script %s: %s", filename, exc)
+        return None
     log.info("Remediation script saved to %s", filename)
     return filename
 
@@ -726,8 +755,9 @@ def _find_latest_baseline(output_dir: str, hostname: str) -> Path | None:
     outdir = Path(output_dir)
     if not outdir.exists():
         return None
+    safe = _safe_hostname(hostname)
     candidates = sorted(
-        outdir.glob(f"{hostname}_*.json"),
+        outdir.glob(f"{safe}_*.json"),
         key=lambda p: p.stat().st_mtime,
         reverse=True,
     )

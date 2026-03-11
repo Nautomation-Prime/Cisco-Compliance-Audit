@@ -28,7 +28,7 @@ from .netmiko_utils import DeviceConnector
 from .hostname_parser import parse_hostname
 from .collector import DataCollector, OfflineCollector
 from .port_classifier import classify_ports
-from .compliance_engine import ComplianceEngine, AuditResult
+from .compliance_engine import ComplianceEngine, AuditResult, Finding, Status
 from .report import (
     print_report, save_json, save_html, save_consolidated_html,
     save_csv, save_remediation_script,
@@ -41,7 +41,7 @@ console = Console()
 
 
 def load_compliance_config(path: str) -> dict:
-    """Load the compliance YAML configuration file."""
+    """Load and validate the compliance YAML configuration file."""
     p = Path(path)
     if not p.exists():
         # Try relative to this module's directory
@@ -49,8 +49,29 @@ def load_compliance_config(path: str) -> dict:
     if not p.exists():
         console.print(f"[bold red]Config not found:[/] {path}")
         sys.exit(1)
-    with open(p, "r", encoding="utf-8") as fh:
-        return yaml.safe_load(fh) or {}
+    try:
+        with open(p, "r", encoding="utf-8") as fh:
+            cfg = yaml.safe_load(fh) or {}
+    except yaml.YAMLError as exc:
+        console.print(f"[bold red]Malformed YAML in config:[/] {exc}")
+        sys.exit(1)
+
+    # Validate required top-level keys exist and have correct types
+    _EXPECTED_KEYS = {
+        "connection": dict,
+        "compliance": dict,
+    }
+    for key, expected_type in _EXPECTED_KEYS.items():
+        val = cfg.get(key)
+        if val is None:
+            console.print(f"[bold yellow]Warning:[/] config missing required "
+                          f"section [cyan]'{key}'[/] — using defaults.")
+        elif not isinstance(val, expected_type):
+            console.print(f"[bold red]Config error:[/] '{key}' must be a "
+                          f"{expected_type.__name__}, got {type(val).__name__}")
+            sys.exit(1)
+
+    return cfg
 
 
 def _resolve_config_path(path: str) -> Path:
@@ -97,10 +118,10 @@ class _DeviceJob:
     hostname: str
     ip: str
     username: str
-    password: str
+    password: str = field(repr=False)
     device_type: str
     jump: Optional[JumpManager]
-    enable_secret: Optional[str]
+    enable_secret: Optional[str] = field(repr=False)
     timeout: int
     compliance_policy: dict
     role_config: Optional[list]
@@ -150,9 +171,17 @@ def _audit_single_device(job: _DeviceJob) -> Optional[AuditResult]:
             log.error("Connection to %s (%s) failed: %s", hostname, ip, exc)
             return None
 
-        collector = DataCollector(timeout=job.timeout)
-        data = collector.collect(conn, ip=ip)
-        data.hostname = hostname
+        try:
+            collector = DataCollector(timeout=job.timeout)
+            data = collector.collect(conn, ip=ip)
+            data.hostname = hostname
+        except Exception as exc:
+            log.error("Data collection from %s (%s) failed: %s", hostname, ip, exc)
+            try:
+                conn.disconnect()
+            except Exception:
+                pass
+            return None
 
     try:
         # Classify ports
@@ -165,7 +194,20 @@ def _audit_single_device(job: _DeviceJob) -> Optional[AuditResult]:
         # Audit
         engine = ComplianceEngine(job.compliance_policy)
         result = engine.audit(data, host_info, ports)
+    except Exception as exc:
+        log.exception("Compliance engine failed for %s (%s)", hostname, ip)
+        result = AuditResult(
+            hostname=hostname, ip=ip,
+            role=host_info.role, role_display=host_info.role_display,
+            findings=[Finding(
+                check_name="engine_error",
+                status=Status.ERROR,
+                detail=f"Compliance engine crashed: {exc}",
+                category="internal",
+            )],
+        )
 
+    try:
         # Populate metadata
         result.duration_secs = round(time.monotonic() - t_start, 1)
         result.audit_ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
@@ -273,6 +315,13 @@ def run_audit(
         filtered["_audit_settings"] = audit_settings
         compliance_policy = filtered
 
+    # Warn if no actual compliance checks are configured
+    check_cats = [k for k in compliance_policy if not k.startswith("_")]
+    if not check_cats:
+        console.print("[bold yellow]Warning:[/] No compliance check categories "
+                      "found in policy — audits will produce zero findings.")
+        log.warning("Compliance policy contains no check categories")
+
     # ── Build device list ──────────────────────────────────
     devices: list[dict] = []
     if device_overrides:
@@ -325,7 +374,7 @@ def run_audit(
         return []
 
     # ── Concurrency settings ───────────────────────────────
-    max_workers = max(1, audit_settings.get("max_workers", 5))
+    max_workers = max(1, min(audit_settings.get("max_workers", 5), 20))
     device_type = conn_cfg.get("device_type", "cisco_xe")
     timeout = audit_settings.get("collect_timeout", 30)
 

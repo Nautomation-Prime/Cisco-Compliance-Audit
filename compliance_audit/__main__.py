@@ -115,6 +115,8 @@ def main() -> None:
 
     # Exit code: threshold-based or any-fail
     if args.fail_threshold is not None:
+        if not (0 <= args.fail_threshold <= 100):
+            parser.error("--fail-threshold must be between 0 and 100")
         if any(r.score_pct < args.fail_threshold for r in results):
             sys.exit(1)
     elif any(r.fail_count > 0 for r in results):

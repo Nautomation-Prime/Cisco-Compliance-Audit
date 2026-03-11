@@ -1,4 +1,5 @@
 import logging
+import threading
 from typing import Optional, Tuple
 import paramiko
 
@@ -27,7 +28,13 @@ class JumpManager:
         self.look_for_keys = look_for_keys
         self.allow_agent = allow_agent
         self.host_key_policy = host_key_policy or paramiko.AutoAddPolicy()
+        if isinstance(self.host_key_policy, paramiko.AutoAddPolicy):
+            log.warning(
+                "JumpManager using AutoAddPolicy — SSH host keys are not "
+                "verified.  Set host_key_policy for production use."
+            )
         self.client: Optional[paramiko.SSHClient] = None
+        self._lock = threading.Lock()
 
     def connect(self) -> None:
         """Establish the persistent SSH connection to the jump host."""
@@ -55,23 +62,25 @@ class JumpManager:
         """
         Open a direct-tcpip channel from jump -> target_host:target_port.
         Returns a paramiko.Channel suitable for Netmiko's 'sock' kwarg.
+
+        Thread-safe: a lock serialises transport checks and reconnects.
         """
-        if not self.client:
-            self.connect()
-        transport = self.client.get_transport()
-        if transport is None or not transport.is_active():
-            # try reconnect
-            log.debug("Transport inactive, reconnecting to jump host")
-            self.connect()
+        with self._lock:
+            if not self.client:
+                self.connect()
             transport = self.client.get_transport()
-        try:
-            # remote_addr is (target_host, target_port), local_addr is a tuple for the origin
-            chan = transport.open_channel("direct-tcpip", (target_host, target_port), ("127.0.0.1", 0))
-            log.debug(f"Opened channel to {target_host}:{target_port} via jump host")
-            return chan
-        except Exception:
-            log.exception(f"Failed to open channel to {target_host}:{target_port} via jump host")
-            raise
+            if transport is None or not transport.is_active():
+                log.debug("Transport inactive, reconnecting to jump host")
+                self.client = None
+                self.connect()
+                transport = self.client.get_transport()
+            try:
+                chan = transport.open_channel("direct-tcpip", (target_host, target_port), ("127.0.0.1", 0))
+                log.debug(f"Opened channel to {target_host}:{target_port} via jump host")
+                return chan
+            except Exception:
+                log.exception(f"Failed to open channel to {target_host}:{target_port} via jump host")
+                raise
 
     def close(self) -> None:
         """Close the persistent jump connection."""
