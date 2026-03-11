@@ -296,17 +296,17 @@ class ComplianceEngine:
                          "clock timezone configured",
                          "clock timezone <tz> <offset>"))
 
-        # ip domain-name
+        # ip domain name
         if _enabled(mp, "ip_domain_name"):
             expected = mp.get("ip_domain_name", {}).get("expected", "")
             if expected:
-                pattern = rf"^ip domain-name\s+{re.escape(expected)}"
+                pattern = rf"^ip domain name\s+{re.escape(expected)}"
                 f.append(self._present(cfg, pattern, "ip_domain_name",
-                         f"ip domain-name {expected}", f"ip domain-name {expected}"))
+                         f"ip domain name {expected}", f"ip domain name {expected}"))
             else:
-                f.append(self._present(cfg, r"^ip domain-name\s+\S+",
-                         "ip_domain_name", "ip domain-name set",
-                         "ip domain-name <your-domain>"))
+                f.append(self._present(cfg, r"^ip domain name\s+\S+",
+                         "ip_domain_name", "ip domain name set",
+                         "ip domain name <your-domain>"))
 
         return f
 
