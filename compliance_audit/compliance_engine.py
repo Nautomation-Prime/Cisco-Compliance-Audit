@@ -1284,6 +1284,8 @@ class ComplianceEngine:
         for intf_name, pi in ports.items():
             role = pi.role
 
+            # Port-channel members are classified as OTHER and skipped;
+            # checks run against the Port-channel interface instead.
             if role == PortRole.ACCESS:
                 f.extend(self._check_access_port(cfg, dp, pi))
             elif role == PortRole.TRUNK_ENDPOINT:
@@ -1294,8 +1296,8 @@ class ComplianceEngine:
                 f.extend(self._check_unused_port(cfg, dp, pi))
             elif role in (PortRole.ROUTED, PortRole.SVI):
                 f.extend(self._check_routed_port(cfg, dp, pi))
-            # Loopback / MGMT are generally not subject to
-            # switchport-level data-plane checks.
+            # Loopback / MGMT / port-channel members (OTHER) are not
+            # subject to switchport-level data-plane checks.
 
         return f
 

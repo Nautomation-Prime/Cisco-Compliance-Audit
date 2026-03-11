@@ -184,6 +184,7 @@ class DeviceData:
     lldp: Optional[dict] = None              # Genie: show lldp neighbors detail
     version: Optional[dict] = None           # Genie: show version
     vtp: Optional[dict] = None               # Genie: show vtp status
+    etherchannel: Optional[dict] = None      # Genie: show etherchannel summary
     raw_commands: dict = field(default_factory=dict)
 
 
@@ -202,6 +203,7 @@ COMMANDS = [
     "show lldp neighbors detail",
     "show vtp status",
     "show ip ssh",
+    "show etherchannel summary",
 ]
 
 
@@ -278,6 +280,10 @@ class DataCollector:
                 "show vtp status",
                 data.raw_commands.get("show vtp status", ""),
             )
+            data.etherchannel = genie_parse(
+                "show etherchannel summary",
+                data.raw_commands.get("show etherchannel summary", ""),
+            )
 
         return data
 
@@ -333,5 +339,6 @@ class OfflineCollector:
             data.cdp = genie_parse("show cdp neighbors detail", data.raw_commands.get("show cdp neighbors detail", ""))
             data.lldp = genie_parse("show lldp neighbors detail", data.raw_commands.get("show lldp neighbors detail", ""))
             data.vtp = genie_parse("show vtp status", data.raw_commands.get("show vtp status", ""))
+            data.etherchannel = genie_parse("show etherchannel summary", data.raw_commands.get("show etherchannel summary", ""))
 
         return data

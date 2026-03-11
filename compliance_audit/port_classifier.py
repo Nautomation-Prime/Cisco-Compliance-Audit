@@ -73,6 +73,7 @@ class PortInfo:
     switchport_mode: str = ""        # access / trunk / dynamic / ""
     access_vlan: int = 0
     trunk_allowed_vlans: str = ""
+    port_channel_member_of: str = "" # e.g. "Port-channel1" if this is a member
     config_lines: list[str] = field(default_factory=list)
 
 
@@ -124,7 +125,10 @@ def classify_ports(
     _map_cdp_neighbors(ports, data.cdp, role_config, ep_patterns)
     _map_lldp_neighbors(ports, data.lldp, role_config, ep_patterns)
 
-    # 5) Assign roles
+    # 5) Map port-channel membership (Genie etherchannel data + config fallback)
+    _map_etherchannel_members(ports, data.etherchannel)
+
+    # 6) Assign roles
     for pi in ports.values():
         pi.role = _determine_role(pi, signal_map)
 
@@ -214,6 +218,54 @@ def _find_root_ports(stp_data: Optional[dict]) -> set[str]:
     if root_ports:
         log.info("STP root ports detected: %s", root_ports)
     return root_ports
+
+
+def _map_etherchannel_members(
+    ports: dict[str, PortInfo],
+    etherchannel_data: Optional[dict],
+) -> None:
+    """Mark physical ports that are members of a port-channel.
+
+    Uses Genie-parsed ``show etherchannel summary`` when available,
+    with a running-config ``channel-group`` fallback.
+
+    Genie structure::
+
+        { 'interfaces': {
+            'Port-channel1': {
+                'members': {
+                    'GigabitEthernet1/0/21': { 'flags': 'P', ... },
+                    'GigabitEthernet1/0/22': { 'flags': 'P', ... },
+                },
+                ...
+            }
+        }}
+    """
+    mapped = False
+
+    # ── Primary: Genie-parsed data ──────────────────────────────
+    if etherchannel_data:
+        po_interfaces = etherchannel_data.get("interfaces", {})
+        for po_name, po_data in po_interfaces.items():
+            po_norm = normalize_intf(po_name)
+            members = po_data.get("members", {})
+            for member_name in members:
+                member_norm = normalize_intf(member_name)
+                if member_norm in ports:
+                    ports[member_norm].port_channel_member_of = po_norm
+                    mapped = True
+            if members:
+                log.info("Port-channel %s members: %s",
+                         po_norm, [normalize_intf(m) for m in members])
+
+    # ── Fallback: parse 'channel-group' from running-config ─────
+    if not mapped:
+        for intf_name, pi in ports.items():
+            for line in pi.config_lines:
+                m = re.match(r"channel-group\s+(\d+)", line, re.IGNORECASE)
+                if m:
+                    po_num = m.group(1)
+                    pi.port_channel_member_of = f"Port-channel{po_num}"
 
 
 def _map_cdp_neighbors(
@@ -371,20 +423,24 @@ def _determine_role(
     """Assign a PortRole based on all collected signals."""
     name = pi.name
 
+    # Skip member ports — their port-channel will be checked instead
+    if pi.port_channel_member_of:
+        return PortRole.OTHER
+
     # Non-switchport interfaces
     if name.startswith("Loopback"):
         return PortRole.LOOPBACK
     if name.startswith("Vlan"):
         return PortRole.SVI
-    if name.startswith("Port-channel"):
-        return PortRole.PORT_CHANNEL
     if name.startswith("Tunnel"):
         return PortRole.OTHER
     if name.startswith("AppGigabitEthernet") or name.lower().startswith("mgmt"):
         return PortRole.MGMT
 
+    is_po = name.startswith("Port-channel")
+
     # Check if it's a routed (no switchport) interface
-    if _is_physical(name) and any(
+    if (is_po or _is_physical(name)) and any(
         l.startswith("no switchport") for l in pi.config_lines
     ):
         return PortRole.ROUTED
@@ -419,8 +475,8 @@ def _determine_role(
         # Could not determine
         return PortRole.TRUNK_UNKNOWN
 
-    # Physical port with no explicit switchport mode — treat as access by default
-    if _is_physical(name):
+    # Physical port or Port-channel with no explicit switchport mode
+    if _is_physical(name) or is_po:
         if pi.admin_down:
             return PortRole.UNUSED
         return PortRole.ACCESS
