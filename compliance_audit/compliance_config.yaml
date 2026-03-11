@@ -615,11 +615,6 @@ compliance:
       enabled: false
       # Just checks that 'service-policy' is applied under 'control-plane'
 
-    # ── IP SOURCE GUARD ─────────────────────────────────────────
-    ip_source_guard:
-      enabled: false
-      # Checked per-interface on access ports
-
 
   # ┌───────────────────────────────────────────────────────────────┐
   # │                       DATA  PLANE                             │
@@ -755,6 +750,11 @@ compliance:
     dhcp_snooping_limit_rate:
       enabled: false
       rate: 15                  # packets per second on access ports
+
+    # ── IP SOURCE GUARD ─────────────────────────────────────────
+    ip_source_guard:
+      enabled: false
+      # Checked per-interface on access ports
 
     # ── ARP INSPECTION TRUST ────────────────────────────────────
     arp_inspection_trust:
