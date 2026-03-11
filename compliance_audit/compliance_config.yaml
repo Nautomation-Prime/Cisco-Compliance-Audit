@@ -791,7 +791,18 @@ compliance:
     # ── NATIVE VLAN ON TRUNKS ───────────────────────────────────
     trunk_native_vlan:
       enabled: true
-      expected_vlan: 99         # Expected native VLAN on trunks (best practice: non-default)
+      # Control which trunk port types should be checked
+      on_uplinks: true           # Check native VLAN on trunk uplinks
+      on_downlinks: true         # Check native VLAN on trunk downlinks
+      on_endpoint_trunks: true   # Check native VLAN on endpoint trunks (APs, etc.)
+      # Expected native VLAN per port type (allows different VLANs per type)
+      expected_vlan: 99          # Default for uplinks and downlinks (best practice: non-default)
+      expected_vlan_endpoint: 99 # Expected native VLAN for endpoint trunks (can differ from regular trunks)
+      #
+      # Example use cases:
+      # - Set on_endpoint_trunks: false to skip native VLAN checks on AP ports
+      # - Set expected_vlan_endpoint: 10 if APs use a different native VLAN than switches
+      # - Set on_uplinks: false to only check downlinks and endpoints
 
 
   # ┌───────────────────────────────────────────────────────────────┐
