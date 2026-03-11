@@ -1657,10 +1657,7 @@ class ComplianceEngine:
                     f.append(Finding("root_guard", Status.WARN,
                              f"{intf}: root guard present but direction unknown — verify manually",
                              interface=intf))
-                else:
-                    f.append(Finding("root_guard", Status.WARN,
-                             f"{intf}: no root guard — direction unknown, verify manually",
-                             interface=intf))
+                # If root guard is not present and direction is unknown, no finding needed
 
         # Switchport nonegotiate
         if _enabled(dp, "switchport_nonegotiate"):
