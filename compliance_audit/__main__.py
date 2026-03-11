@@ -72,7 +72,15 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--csv",
         action="store_true",
-        help="Generate a CSV report alongside other outputs.",
+        default=None,
+        dest="csv_report",
+        help="Generate a CSV report (overrides config file).",
+    )
+    p.add_argument(
+        "--no-csv",
+        action="store_false",
+        dest="csv_report",
+        help="Disable CSV report generation (overrides config file).",
     )
     return p
 
@@ -96,7 +104,7 @@ def main() -> None:
         categories=args.categories,
         output_dir=args.output_dir,
         dry_run_dir=args.dry_run,
-        csv_report=args.csv,
+        csv_report=args.csv_report,
     )
 
     # Exit code: threshold-based or any-fail
