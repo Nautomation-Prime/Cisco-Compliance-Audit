@@ -406,10 +406,10 @@ The digit after the site code is the branch instance (e.g. `MKD1` = first branch
 
 | Hostname | Country | Site | Branch | Cabinet | Role | Device # |
 | ---------- | --------- | ------ | -------- | --------- | ------ | ---------- |
-| `GB-SITE1-001ASW001` | GB | MKD | 1 | 005 | Access Switch | 001 |
+| `GB-MKD1-001ASW001` | GB | MKD | 1 | 005 | Access Switch | 001 |
 | `GB-SEV1-001CSW001` | GB | SEV | 1 | 001 | Core Switch | 001 |
 | `GB-MNC2-003SDW001` | GB | MNC | 2 | 003 | SD-WAN Router | 001 |
-| `GB-SITE1-001ISW001` | GB | MKD | 1 | 005 | Industrial Switch | 001 |
+| `GB-MKD1-001ISW001` | GB | MKD | 1 | 005 | Industrial Switch | 001 |
 
 > **What if the hostname doesn't match?** The audit still runs — it just skips role-specific checks and logs a warning.
 
