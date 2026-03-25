@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cisco Compliance Audit Runbook</title>
+  <style>
+body {
+  font-family: Segoe UI, Arial, sans-serif;
+  background: #f6f8fb;
+  color: #16202a;
+  margin: 0;
+  padding: 0;
+}
+main {
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 32px 24px 48px;
+}
+h1, h2, h3 {
+  color: #0f3b57;
+}
+h1 {
+  border-bottom: 3px solid #0f3b57;
+  padding-bottom: 10px;
+}
+h2 {
+  margin-top: 32px;
+  border-bottom: 1px solid #cfd8e3;
+  padding-bottom: 8px;
+}
+p, li {
+  line-height: 1.6;
+}
+code {
+  background: #e8eef5;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-family: Consolas, monospace;
+}
+pre {
+  background: #12202b;
+  color: #eaf2f7;
+  padding: 14px 16px;
+  border-radius: 8px;
+  overflow-x: auto;
+}
+pre code {
+  background: transparent;
+  color: inherit;
+  padding: 0;
+}
+.runbook-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 16px 0 24px;
+  background: white;
+}
+.runbook-table th,
+.runbook-table td {
+  border: 1px solid #d7e0ea;
+  padding: 10px 12px;
+  text-align: left;
+  vertical-align: top;
+}
+.runbook-table th {
+  background: #edf3f8;
+}
+a {
+  color: #0b5fa5;
+}
+.banner {
+  background: #0f3b57;
+  color: white;
+  padding: 18px 24px;
+}
+.banner p {
+  margin: 6px 0 0;
+  color: #d5e3ee;
+}
+</style>
+</head>
+<body>
+  <div class="banner">
+    <h1 style="margin:0;border:0;padding:0;color:white;">Cisco Compliance Audit Runbook</h1>
+    <p>Rendered HTML copy of docs/RUNBOOK.md for operators who do not use Markdown-capable viewers.</p>
+  </div>
+  <main>
+<h1 id="cisco-compliance-audit-runbook">Cisco Compliance Audit Runbook</h1>
+<p>This runbook is for operators who need to run audits and remediation safely.</p>
+<p>For deep technical detail, see <a href="../README.md">README.md</a>.</p>
+<h2 id="scope">Scope</h2>
+<p>Use this guide to:</p>
+<ul>
+<li>Run compliance audits</li>
+<li>Review remediation packs</li>
+<li>Approve or reject packs</li>
+<li>Apply one approved pack</li>
+<li>Apply all approved packs</li>
+</ul>
+<p>This guide assumes you are running in Linux/WSL and have network reachability to devices.</p>
+<h2 id="pre-checks-start-here">Pre-Checks (Start Here)</h2>
+<ol>
+<li>Confirm config and inventory files are correct.</li>
+<li>Confirm credentials are available (keyring, env vars, or prompt).</li>
+<li>Confirm remediation execution policy in config if you plan to apply changes.</li>
+<li>If you track automation value, enable ROI settings in audit_settings.roi.</li>
+</ol>
+<p>Example config path:</p>
+<ul>
+<li>compliance_audit/compliance_config.yaml</li>
+</ul>
+<h2 id="optional-roi-setup">Optional ROI Setup</h2>
+<p>If you want reports to show estimated time saved/value saved, enable ROI in config:</p>
+<pre><code class="language-yaml">audit_settings:
+  roi:
+    enabled: true
+    manual_minutes_per_device: 20.0
+    manual_minutes_per_check: 0.25
+    automation_overhead_minutes_per_device: 2.0
+    hourly_rate: 85.0
+    currency: &quot;GBP&quot;</code></pre>
+<p>Interpretation:</p>
+<ul>
+<li>Minutes saved = estimated manual effort minus automated effort</li>
+<li>Value saved = hours saved multiplied by hourly_rate</li>
+</ul>
+<p>ROI appears in:</p>
+<ul>
+<li>Console summary (run-level estimate)</li>
+<li>Per-device JSON report under roi</li>
+<li>Per-device HTML stat cards</li>
+<li>Consolidated HTML stat cards and summary line</li>
+</ul>
+<h2 id="common-command-templates">Common Command Templates</h2>
+<pre><code class="language-bash"># Run full audit from default config
+python -m compliance_audit
+
+# Run audit with specific config
+python -m compliance_audit -c configs/site_london.yaml
+
+# Run audit for a single device
+python -m compliance_audit --device GB-SITE1-001ASW001:10.1.1.1
+
+# List remediation packs
+python -m compliance_audit --remediation-list
+
+# Approve one pack
+python -m compliance_audit --remediation-approve &lt;PACK_ID&gt; --approver &quot;john.doe&quot; --ticket-id &quot;CHG0012345&quot;
+
+# Reject one pack
+python -m compliance_audit --remediation-reject &lt;PACK_ID&gt; --approver &quot;john.doe&quot; --reason &quot;Reason text&quot;
+
+# Apply one approved pack
+python -m compliance_audit --remediation-apply &lt;PACK_ID&gt;
+
+# Apply all approved packs
+python -m compliance_audit --remediation-apply-all</code></pre>
+<h2 id="standard-operating-procedure">Standard Operating Procedure</h2>
+<h3 id="1-run-audit">1) Run Audit</h3>
+<pre><code class="language-bash">python -m compliance_audit -c compliance_audit/compliance_config.yaml</code></pre>
+<p>Expected outcome:</p>
+<ul>
+<li>Reports are generated in output_dir</li>
+<li>Remediation scripts and review packs are generated for failing findings</li>
+</ul>
+<h3 id="2-review-pack-queue">2) Review Pack Queue</h3>
+<pre><code class="language-bash">python -m compliance_audit --remediation-list pending</code></pre>
+<p>Decide per pack:</p>
+<ul>
+<li>Approve if safe and in scope</li>
+<li>Reject if risky, out of policy, or outside change window</li>
+</ul>
+<h3 id="3-approve-packs">3) Approve Packs</h3>
+<p>Approve one:</p>
+<pre><code class="language-bash">python -m compliance_audit --remediation-approve &lt;PACK_ID&gt; \
+  --approver &quot;john.doe&quot; \
+  --ticket-id &quot;CHG0012345&quot;</code></pre>
+<p>Approve all pending with confirmation:</p>
+<pre><code class="language-bash">python -m compliance_audit --remediation-approve-all \
+  --approver &quot;john.doe&quot; \
+  --ticket-id &quot;CHG0012345&quot;</code></pre>
+<p>Notes:</p>
+<p>audit_settings.remediation.approval.require_ticket_id</p>
+<ul>
+<li>Ticket ID is required by default and controlled by config:</li>
+<li>Use --expires-hours to override default expiry.</li>
+</ul>
+<h3 id="4-dry-run-before-apply-recommended">4) Dry-Run Before Apply (Recommended)</h3>
+<p>Single pack preflight:</p>
+<pre><code class="language-bash">python -m compliance_audit --remediation-apply &lt;PACK_ID&gt; --apply-dry-run</code></pre>
+<p>Apply-all preflight:</p>
+<pre><code class="language-bash">python -m compliance_audit --remediation-apply-all --apply-dry-run</code></pre>
+<h3 id="5-apply-changes">5) Apply Changes</h3>
+<p>Apply one approved pack:</p>
+<pre><code class="language-bash">python -m compliance_audit --remediation-apply &lt;PACK_ID&gt;</code></pre>
+<p>Apply all approved packs:</p>
+<pre><code class="language-bash">python -m compliance_audit --remediation-apply-all</code></pre>
+<p>If high-risk packs are blocked and change authority allows it:</p>
+<pre><code class="language-bash">python -m compliance_audit --remediation-apply &lt;PACK_ID&gt; --allow-high-risk
+python -m compliance_audit --remediation-apply-all --allow-high-risk</code></pre>
+<h3 id="6-post-apply-verification">6) Post-Apply Verification</h3>
+<pre><code class="language-bash">python -m compliance_audit --remediation-list applied
+python -m compliance_audit --remediation-list failed</code></pre>
+<p>Optional: rerun audit for confirmation.</p>
+<pre><code class="language-bash">python -m compliance_audit -c compliance_audit/compliance_config.yaml</code></pre>
+<h2 id="safety-rules">Safety Rules</h2>
+<ol>
+<li>Do not use remediation apply during unauthorized change windows.</li>
+<li>Always use --apply-dry-run before production apply.</li>
+<li>Do not approve packs without reviewing risk and ticket alignment.</li>
+<li>Treat --allow-high-risk as exception-only with explicit approval.</li>
+<li>Prefer --remediation-apply-all only after queue review.</li>
+</ol>
+<h2 id="troubleshooting-quick-table">Troubleshooting Quick Table</h2>
+<table class="runbook-table">
+<thead><tr><th>Symptom</th><th>Likely Cause</th><th>Action</th></tr></thead>
+<tbody>
+<tr><td>Remediation workflow disabled error</td><td>remediation.enabled false</td><td>Enable audit_settings.remediation.enabled</td></tr>
+<tr><td>Execution disabled error</td><td>execution.enabled false</td><td>Enable audit_settings.remediation.execution.enabled</td></tr>
+<tr><td>Approval expired</td><td>TTL passed</td><td>Re-run audit, generate new pack, approve again</td></tr>
+<tr><td>Checksum mismatch</td><td>Script changed after approval</td><td>Re-run audit and approve fresh pack</td></tr>
+<tr><td>High-risk blocked</td><td>Policy enforcement active</td><td>Use --allow-high-risk only with approval</td></tr>
+<tr><td>Hostname mismatch</td><td>Prompt does not match approved host</td><td>Verify target device identity and inventory</td></tr>
+</tbody></table>
+<h2 id="escalation-and-rollback">Escalation and Rollback</h2>
+<p>If apply fails or behavior is unexpected:</p>
+<ol>
+<li>Stop additional apply actions.</li>
+<li>Capture pack ID, device, and error output.</li>
+<li>Check remediation execution log in output_dir.</li>
+<li>Escalate to network engineering/change manager.</li>
+<li>Use your standard network rollback procedure for the affected device/site.</li>
+</ol>
+<h2 id="daily-checklist">Daily Checklist</h2>
+<ol>
+<li>Run audit.</li>
+<li>Review pending queue.</li>
+<li>Approve/reject with ticket mapping.</li>
+<li>Preflight dry-run.</li>
+<li>Apply (single or all).</li>
+<li>Verify applied/failed status.</li>
+<li>Rerun audit for closure evidence.</li>
+</ol>
+  </main>
+</body>
+</html>
