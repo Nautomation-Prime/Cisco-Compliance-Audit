@@ -30,8 +30,14 @@ audit_settings:
     enabled: false                # Show estimated time/value saved in reports
     # Top-level ROI keys are defaults for all contexts.
     # Values under profiles.audit / profiles.post_remediation override these defaults.
-    manual_minutes_per_device: 20.0    # Baseline manual effort per device audit
-    manual_minutes_per_check: 0.25     # Extra manual effort per evaluated check
+    #
+    # The manual-time model uses diminishing returns (logarithmic scaling):
+    #   manual = base_per_device + per_check × inflection × ln(1 + checks / inflection)
+    # This is approximately linear for small check counts, then flattens.
+    manual_minutes_per_device: 15.0    # Base effort: SSH login, navigate config, context-switch
+    manual_minutes_per_check: 0.5      # Per-check effort (scales logarithmically past inflection)
+    check_scaling_inflection: 20.0     # Check count where diminishing returns kick in
+    max_manual_minutes_per_device: 120.0  # Hard cap on manual estimate (0 = no cap)
     automation_overhead_minutes_per_device: 2.0  # Human overhead to run/review automation
     validation_minutes_per_device: 0.0 # Extra human validation effort to include in automated estimate
     min_runtime_seconds: 0.0      # Optional runtime floor to avoid near-zero timing distortion
@@ -39,15 +45,19 @@ audit_settings:
     currency: "GBP"             # Currency label for value estimates
     profiles:                    # Optional context-specific overrides (falls back to top-level values)
       audit:
-        manual_minutes_per_device: 20.0
-        manual_minutes_per_check: 0.25
+        manual_minutes_per_device: 15.0
+        manual_minutes_per_check: 0.5
         automation_overhead_minutes_per_device: 2.0
         validation_minutes_per_device: 0.0
       post_remediation:
-        manual_minutes_per_device: 8.0
-        manual_minutes_per_check: 0.10
-        automation_overhead_minutes_per_device: 0.25
-        validation_minutes_per_device: 0.10
+        # Post-remediation validation involves verifying changes took effect.
+        # Typically performed on a subset of checks, but each check needs
+        # careful before/after comparison — so per-check effort is higher,
+        # while the base overhead is lower since you already have context.
+        manual_minutes_per_device: 10.0
+        manual_minutes_per_check: 0.35
+        automation_overhead_minutes_per_device: 1.0
+        validation_minutes_per_device: 0.5
 
   remediation:
     enabled: false                 # Master switch for remediation workflow (generate/list/approve/apply)

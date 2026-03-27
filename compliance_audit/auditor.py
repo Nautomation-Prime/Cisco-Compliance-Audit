@@ -8,6 +8,7 @@ in the compliance YAML config (default: 5, set to 1 for sequential).
 """
 
 import logging
+import math
 import sys
 import time
 import concurrent.futures
@@ -69,10 +70,10 @@ def _get_roi_settings(audit_settings: dict) -> dict:
             return default
 
     base_manual_per_device = _as_non_negative_float(
-        roi.get("manual_minutes_per_device", 20.0), 20.0
+        roi.get("manual_minutes_per_device", 15.0), 15.0
     )
     base_manual_per_check = _as_non_negative_float(
-        roi.get("manual_minutes_per_check", 0.25), 0.25
+        roi.get("manual_minutes_per_check", 0.5), 0.5
     )
     base_overhead = _as_non_negative_float(
         roi.get("automation_overhead_minutes_per_device", 2.0), 2.0
@@ -83,71 +84,45 @@ def _get_roi_settings(audit_settings: dict) -> dict:
     min_runtime_seconds = _as_non_negative_float(
         roi.get("min_runtime_seconds", 0.0), 0.0
     )
+    # Diminishing-returns inflection point: once check count exceeds this
+    # value the per-check effort starts to plateau logarithmically.
+    check_scaling_inflection = _as_non_negative_float(
+        roi.get("check_scaling_inflection", 20.0), 20.0
+    )
+    # Maximum per-device value sanity cap (minutes).  0 = no cap.
+    max_manual_minutes_per_device = _as_non_negative_float(
+        roi.get("max_manual_minutes_per_device", 120.0), 120.0
+    )
 
     profiles = roi.get("profiles", {})
     if not isinstance(profiles, dict):
         profiles = {}
 
-    audit_profile = profiles.get("audit", {})
-    if not isinstance(audit_profile, dict):
-        audit_profile = {}
-    post_profile = profiles.get("post_remediation", {})
-    if not isinstance(post_profile, dict):
-        post_profile = {}
+    def _build_profile(raw: dict) -> dict:
+        if not isinstance(raw, dict):
+            raw = {}
+        return {
+            "manual_minutes_per_device": _as_non_negative_float(
+                raw.get("manual_minutes_per_device", base_manual_per_device),
+                base_manual_per_device,
+            ),
+            "manual_minutes_per_check": _as_non_negative_float(
+                raw.get("manual_minutes_per_check", base_manual_per_check),
+                base_manual_per_check,
+            ),
+            "automation_overhead_minutes_per_device": _as_non_negative_float(
+                raw.get("automation_overhead_minutes_per_device", base_overhead),
+                base_overhead,
+            ),
+            "validation_minutes_per_device": _as_non_negative_float(
+                raw.get("validation_minutes_per_device", base_validation),
+                base_validation,
+            ),
+        }
 
     roi_profiles = {
-        "audit": {
-            "manual_minutes_per_device": _as_non_negative_float(
-                audit_profile.get(
-                    "manual_minutes_per_device", base_manual_per_device
-                ),
-                base_manual_per_device,
-            ),
-            "manual_minutes_per_check": _as_non_negative_float(
-                audit_profile.get(
-                    "manual_minutes_per_check", base_manual_per_check
-                ),
-                base_manual_per_check,
-            ),
-            "automation_overhead_minutes_per_device": _as_non_negative_float(
-                audit_profile.get(
-                    "automation_overhead_minutes_per_device", base_overhead
-                ),
-                base_overhead,
-            ),
-            "validation_minutes_per_device": _as_non_negative_float(
-                audit_profile.get(
-                    "validation_minutes_per_device", base_validation
-                ),
-                base_validation,
-            ),
-        },
-        "post_remediation": {
-            "manual_minutes_per_device": _as_non_negative_float(
-                post_profile.get(
-                    "manual_minutes_per_device", base_manual_per_device
-                ),
-                base_manual_per_device,
-            ),
-            "manual_minutes_per_check": _as_non_negative_float(
-                post_profile.get(
-                    "manual_minutes_per_check", base_manual_per_check
-                ),
-                base_manual_per_check,
-            ),
-            "automation_overhead_minutes_per_device": _as_non_negative_float(
-                post_profile.get(
-                    "automation_overhead_minutes_per_device", base_overhead
-                ),
-                base_overhead,
-            ),
-            "validation_minutes_per_device": _as_non_negative_float(
-                post_profile.get(
-                    "validation_minutes_per_device", base_validation
-                ),
-                base_validation,
-            ),
-        },
+        "audit": _build_profile(profiles.get("audit", {})),
+        "post_remediation": _build_profile(profiles.get("post_remediation", {})),
     }
 
     return {
@@ -157,6 +132,8 @@ def _get_roi_settings(audit_settings: dict) -> dict:
         "automation_overhead_minutes_per_device": base_overhead,
         "validation_minutes_per_device": base_validation,
         "min_runtime_seconds": min_runtime_seconds,
+        "check_scaling_inflection": check_scaling_inflection,
+        "max_manual_minutes_per_device": max_manual_minutes_per_device,
         "hourly_rate": _as_non_negative_float(
             roi.get("hourly_rate", 0.0), 0.0
         ),
@@ -165,12 +142,47 @@ def _get_roi_settings(audit_settings: dict) -> dict:
     }
 
 
+def _estimate_manual_minutes(
+    total_checks: int,
+    manual_minutes_per_device: float,
+    manual_minutes_per_check: float,
+    check_scaling_inflection: float,
+    max_manual_minutes: float,
+) -> float:
+    """Estimate manual audit effort with diminishing-returns scaling.
+
+    Model:
+        manual = base_per_device
+               + per_check × inflection × ln(1 + checks / inflection)
+
+    For small check counts this is approximately linear (≈ per_check × checks).
+    As check count grows past the inflection point the curve flattens
+    logarithmically — reflecting that an engineer reviewing config gets
+    faster once context is established.
+
+    An optional hard cap (max_manual_minutes) prevents runaway estimates
+    on devices with hundreds of evaluated checks.
+    """
+    if total_checks <= 0:
+        return manual_minutes_per_device
+
+    inflection = max(check_scaling_inflection, 1.0)
+    scaled = manual_minutes_per_check * inflection * math.log(
+        1.0 + total_checks / inflection
+    )
+    manual = manual_minutes_per_device + scaled
+
+    if max_manual_minutes > 0:
+        manual = min(manual, max_manual_minutes)
+    return manual
+
+
 def _estimate_roi_for_result(
     result: AuditResult,
     roi_settings: dict,
     context: str = "audit",
 ) -> dict:
-    """Estimate per-device automation value using a simple, configurable model."""
+    """Estimate per-device automation value with diminishing-returns model."""
     profiles = roi_settings.get("profiles", {})
     if not isinstance(profiles, dict):
         profiles = {}
@@ -181,13 +193,13 @@ def _estimate_roi_for_result(
     manual_minutes_per_device = float(
         profile.get(
             "manual_minutes_per_device",
-            roi_settings.get("manual_minutes_per_device", 20.0),
+            roi_settings.get("manual_minutes_per_device", 15.0),
         )
     )
     manual_minutes_per_check = float(
         profile.get(
             "manual_minutes_per_check",
-            roi_settings.get("manual_minutes_per_check", 0.25),
+            roi_settings.get("manual_minutes_per_check", 0.5),
         )
     )
     overhead_minutes = float(
@@ -202,37 +214,95 @@ def _estimate_roi_for_result(
             roi_settings.get("validation_minutes_per_device", 0.0),
         )
     )
-    min_runtime_seconds = float(roi_settings.get("min_runtime_seconds", 0.0))
-    effective_runtime_seconds = max(
-        float(result.duration_secs), min_runtime_seconds
+    check_scaling_inflection = float(
+        roi_settings.get("check_scaling_inflection", 20.0)
+    )
+    max_manual_minutes = float(
+        roi_settings.get("max_manual_minutes_per_device", 120.0)
     )
 
-    manual_minutes = manual_minutes_per_device + (
-        manual_minutes_per_check * result.total
+    min_runtime_seconds = float(roi_settings.get("min_runtime_seconds", 0.0))
+    actual_runtime = float(result.duration_secs)
+    runtime_floor_applied = actual_runtime < min_runtime_seconds
+    effective_runtime_seconds = max(actual_runtime, min_runtime_seconds)
+
+    if runtime_floor_applied:
+        log.debug(
+            "ROI runtime floor applied for %s: actual %.1fs → floor %.1fs",
+            result.hostname,
+            actual_runtime,
+            min_runtime_seconds,
+        )
+
+    # ── Manual estimate (diminishing-returns model) ────────
+    manual_minutes = _estimate_manual_minutes(
+        total_checks=result.total,
+        manual_minutes_per_device=manual_minutes_per_device,
+        manual_minutes_per_check=manual_minutes_per_check,
+        check_scaling_inflection=check_scaling_inflection,
+        max_manual_minutes=max_manual_minutes,
     )
+
+    # ── Automated estimate ─────────────────────────────────
     automated_minutes = (
         (effective_runtime_seconds / 60.0)
         + overhead_minutes
         + validation_minutes
     )
+
+    # ── Derived metrics ────────────────────────────────────
     minutes_saved = max(0.0, manual_minutes - automated_minutes)
     hours_saved = minutes_saved / 60.0
-    value_saved = hours_saved * roi_settings["hourly_rate"]
+    hourly_rate = float(roi_settings.get("hourly_rate", 0.0))
+    value_saved = hours_saved * hourly_rate if hourly_rate > 0 else None
+
+    # Efficiency ratio: < 1.0 means automation is faster than manual
+    efficiency_ratio = (
+        round(automated_minutes / manual_minutes, 3)
+        if manual_minutes > 0
+        else None
+    )
+
+    # ── Sanity warnings ────────────────────────────────────
+    warnings: list[str] = []
+    if minutes_saved == 0.0 and manual_minutes > 0:
+        warnings.append(
+            "Automated time exceeds manual estimate — check overhead settings"
+        )
+    if runtime_floor_applied:
+        warnings.append(
+            f"Runtime floor applied (actual {actual_runtime:.1f}s "
+            f"→ floor {min_runtime_seconds:.1f}s)"
+        )
+    if value_saved is not None and value_saved > 500:
+        warnings.append(
+            f"High per-device value estimate "
+            f"({roi_settings['currency']} {value_saved:.2f}) — "
+            f"verify hourly_rate and assumptions"
+        )
 
     return {
         "context": context,
+        "total_checks_evaluated": result.total,
         "duration_secs": round(effective_runtime_seconds, 1),
+        "actual_duration_secs": round(actual_runtime, 1),
+        "runtime_floor_applied": runtime_floor_applied,
         "manual_minutes_estimate": round(manual_minutes, 1),
         "automated_minutes": round(automated_minutes, 1),
         "minutes_saved": round(minutes_saved, 1),
         "hours_saved": round(hours_saved, 2),
-        "hourly_rate": round(roi_settings["hourly_rate"], 2),
+        "efficiency_ratio": efficiency_ratio,
+        "hourly_rate": round(hourly_rate, 2),
         "currency": roi_settings["currency"],
-        "value_saved": round(value_saved, 2),
+        "value_saved": round(value_saved, 2) if value_saved is not None else None,
+        "warnings": warnings if warnings else None,
         "assumptions": {
             "context": context,
+            "model": "diminishing_returns_log",
             "manual_minutes_per_device": manual_minutes_per_device,
             "manual_minutes_per_check": manual_minutes_per_check,
+            "check_scaling_inflection": check_scaling_inflection,
+            "max_manual_minutes_per_device": max_manual_minutes,
             "automation_overhead_minutes_per_device": overhead_minutes,
             "validation_minutes_per_device": validation_minutes,
             "min_runtime_seconds": min_runtime_seconds,
@@ -246,7 +316,9 @@ def _summarize_roi(results: list[AuditResult], roi_settings: dict) -> dict:
     automated = 0.0
     saved = 0.0
     value = 0.0
+    total_checks = 0
     device_count = 0
+    all_warnings: list[str] = []
 
     for r in results:
         roi = getattr(r, "_roi", None)
@@ -256,39 +328,63 @@ def _summarize_roi(results: list[AuditResult], roi_settings: dict) -> dict:
         manual += float(roi.get("manual_minutes_estimate", 0.0))
         automated += float(roi.get("automated_minutes", 0.0))
         saved += float(roi.get("minutes_saved", 0.0))
-        value += float(roi.get("value_saved", 0.0))
+        total_checks += int(roi.get("total_checks_evaluated", 0))
+        v = roi.get("value_saved")
+        if v is not None:
+            value += float(v)
+        w = roi.get("warnings")
+        if w:
+            for msg in w:
+                prefixed = f"{r.hostname}: {msg}"
+                if prefixed not in all_warnings:
+                    all_warnings.append(prefixed)
+
+    hourly_rate = float(roi_settings.get("hourly_rate", 0.0))
+    efficiency_ratio = (
+        round(automated / manual, 3) if manual > 0 else None
+    )
+
+    # Pull assumptions from the active profile for the summary context
+    active_profile = (
+        roi_settings.get("profiles", {})
+        .get("audit", {})
+    )
 
     return {
         "enabled": bool(roi_settings.get("enabled", False)),
         "device_count": device_count,
+        "total_checks_evaluated": total_checks,
         "manual_minutes_estimate": round(manual, 1),
         "automated_minutes": round(automated, 1),
         "minutes_saved": round(saved, 1),
         "hours_saved": round(saved / 60.0, 2),
-        "hourly_rate": round(float(roi_settings.get("hourly_rate", 0.0)), 2),
+        "efficiency_ratio": efficiency_ratio,
+        "hourly_rate": round(hourly_rate, 2),
         "currency": str(roi_settings.get("currency", "GBP")),
-        "value_saved": round(value, 2),
+        "value_saved": round(value, 2) if hourly_rate > 0 else None,
+        "warnings": all_warnings if all_warnings else None,
         "assumptions": {
+            "model": "diminishing_returns_log",
             "manual_minutes_per_device": float(
-                roi_settings.get("profiles", {})
-                .get("audit", {})
-                .get(
+                active_profile.get(
                     "manual_minutes_per_device",
                     roi_settings.get("manual_minutes_per_device", 0.0),
                 )
             ),
             "manual_minutes_per_check": float(
-                roi_settings.get("profiles", {})
-                .get("audit", {})
-                .get(
+                active_profile.get(
                     "manual_minutes_per_check",
                     roi_settings.get("manual_minutes_per_check", 0.0),
                 )
             ),
+            "check_scaling_inflection": float(
+                roi_settings.get("check_scaling_inflection", 20.0)
+            ),
+            "max_manual_minutes_per_device": float(
+                roi_settings.get("max_manual_minutes_per_device", 120.0)
+            ),
             "automation_overhead_minutes_per_device": float(
-                roi_settings.get("profiles", {})
-                .get("audit", {})
-                .get(
+                active_profile.get(
                     "automation_overhead_minutes_per_device",
                     roi_settings.get(
                         "automation_overhead_minutes_per_device", 0.0
@@ -296,9 +392,7 @@ def _summarize_roi(results: list[AuditResult], roi_settings: dict) -> dict:
                 )
             ),
             "validation_minutes_per_device": float(
-                roi_settings.get("profiles", {})
-                .get("audit", {})
-                .get(
+                active_profile.get(
                     "validation_minutes_per_device",
                     roi_settings.get("validation_minutes_per_device", 0.0),
                 )
@@ -828,16 +922,23 @@ def run_audit(
 
         if roi_settings.get("enabled", False):
             roi_summary = _summarize_roi(results, roi_settings)
+            eff = roi_summary.get("efficiency_ratio")
+            eff_str = f"  (efficiency ratio: {eff})" if eff is not None else ""
             console.print(
                 f"[bold cyan]ROI Estimate:[/] "
                 f"{roi_summary['hours_saved']}h saved "
-                f"({roi_summary['minutes_saved']} min)"
+                f"({roi_summary['minutes_saved']} min){eff_str}"
             )
-            if roi_summary["hourly_rate"] > 0:
+            val = roi_summary.get("value_saved")
+            if val is not None and roi_summary["hourly_rate"] > 0:
                 console.print(
                     f"[bold cyan]Estimated Value:[/] "
-                    f"{roi_summary['currency']} {roi_summary['value_saved']:.2f}"
+                    f"{roi_summary['currency']} {val:.2f}"
                 )
+            roi_warnings = roi_summary.get("warnings")
+            if roi_warnings:
+                for w in roi_warnings:
+                    console.print(f"  [bold yellow]ROI Warning:[/] {w}")
 
     # ── CSV export ─────────────────────────────────────────
     if results and audit_settings.get("csv_report", True):

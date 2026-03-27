@@ -500,6 +500,13 @@ def _generate_post_remediation_report(
         # Import lazily to avoid circular import at module load time.
         from .auditor import _estimate_roi_for_result, _get_roi_settings
 
+        # Populate metadata (must come before ROI so duration_secs is available)
+        result.duration_secs = round(time.monotonic() - start_time, 1)
+        result.audit_ts = datetime.now(timezone.utc).strftime(
+            "%Y-%m-%d %H:%M UTC"
+        )
+        result.tool_version = __version__
+
         # Attach ROI data so reports can show savings information
         roi_settings = _get_roi_settings(audit_settings)
         if roi_settings["enabled"]:
@@ -510,13 +517,6 @@ def _generate_post_remediation_report(
             )
             result._roi = roi
             result.roi = roi
-
-        # Populate metadata
-        result.duration_secs = round(time.monotonic() - start_time, 1)
-        result.audit_ts = datetime.now(timezone.utc).strftime(
-            "%Y-%m-%d %H:%M UTC"
-        )
-        result.tool_version = __version__
 
         # Extract IOS-XE version from Genie data
         if data.version:

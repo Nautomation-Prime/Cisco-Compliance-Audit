@@ -158,6 +158,9 @@ def save_json(result: AuditResult, output_dir: str) -> Path | None:
             if f.status != Status.SKIP
         ],
     }
+    roi = _get_result_roi(result)
+    if roi:
+        payload["roi"] = roi
     try:
         filename.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     except OSError as exc:
@@ -199,14 +202,31 @@ def _get_result_roi(result: AuditResult) -> dict | None:
 
 
 def _build_roi_html(roi: dict, title: str = "ROI Estimate") -> str:
-    """Render ROI metrics as compact stat cards."""
+    """Render ROI metrics as compact stat cards with efficiency ratio and warnings."""
     rate = float(roi.get("hourly_rate", 0.0) or 0.0)
     currency = _esc(str(roi.get("currency", "GBP")))
+    val = roi.get("value_saved")
     value_html = (
-        f'{currency} {float(roi.get("value_saved", 0.0) or 0.0):.2f}'
-        if rate > 0
+        f'{currency} {float(val):.2f}'
+        if val is not None and rate > 0
         else "-"
     )
+
+    eff = roi.get("efficiency_ratio")
+    eff_html = f"{eff:.1%}" if eff is not None else "-"
+
+    warnings = roi.get("warnings")
+    warning_html = ""
+    if warnings:
+        items = "".join(
+            f'<li>{_esc(w)}</li>' for w in warnings
+        )
+        warning_html = (
+            '<div class="roi-warnings">'
+            f'<ul>{items}</ul>'
+            '</div>'
+        )
+
     return (
         '<div class="roi-wrap">'
         f'<div class="roi-title">{_esc(title)}</div>'
@@ -215,7 +235,9 @@ def _build_roi_html(roi: dict, title: str = "ROI Estimate") -> str:
         f'<div class="roi-card"><div class="roi-value">{float(roi.get("automated_minutes", 0.0) or 0.0):.1f}m</div><div class="roi-label">Automated Runtime</div></div>'
         f'<div class="roi-card"><div class="roi-value" style="color:var(--pass);">{float(roi.get("hours_saved", 0.0) or 0.0):.2f}h</div><div class="roi-label">Time Saved</div></div>'
         f'<div class="roi-card"><div class="roi-value">{value_html}</div><div class="roi-label">Estimated Value</div></div>'
+        f'<div class="roi-card"><div class="roi-value">{eff_html}</div><div class="roi-label">Efficiency Ratio</div></div>'
         '</div>'
+        f'{warning_html}'
         '</div>'
     )
 
@@ -282,6 +304,10 @@ letter-spacing:.05em;margin-bottom:10px;}
 .roi-card{background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:10px 12px;}
 .roi-card .roi-value{font-size:1.2rem;font-weight:700;}
 .roi-card .roi-label{font-size:.78rem;color:var(--text-dim);margin-top:2px;}
+.roi-warnings{margin-top:10px;padding:8px 12px;background:#422006;border:1px solid #92400e;
+border-radius:6px;font-size:.82rem;color:#fbbf24;}
+.roi-warnings ul{margin:0;padding-left:18px;}
+.roi-warnings li{margin-bottom:2px;}
 
 /* ── Filters ────────────────────────────────────────────── */
 .filters{padding:0 24px 12px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;}
@@ -543,9 +569,13 @@ def save_consolidated_html(results: list[AuditResult], output_dir: str) -> Path 
         "hours_saved": 0.0,
         "hourly_rate": 0.0,
         "currency": "GBP",
-        "value_saved": 0.0,
+        "value_saved": None,
+        "efficiency_ratio": None,
+        "warnings": [],
     }
     roi_count = 0
+    has_value = False
+    value_total = 0.0
     for r in results:
         roi = _get_result_roi(r)
         if not roi:
@@ -554,9 +584,26 @@ def save_consolidated_html(results: list[AuditResult], output_dir: str) -> Path 
         aggregate_roi["manual_minutes_estimate"] += float(roi.get("manual_minutes_estimate", 0.0) or 0.0)
         aggregate_roi["automated_minutes"] += float(roi.get("automated_minutes", 0.0) or 0.0)
         aggregate_roi["hours_saved"] += float(roi.get("hours_saved", 0.0) or 0.0)
-        aggregate_roi["value_saved"] += float(roi.get("value_saved", 0.0) or 0.0)
+        v = roi.get("value_saved")
+        if v is not None:
+            has_value = True
+            value_total += float(v)
         aggregate_roi["hourly_rate"] = float(roi.get("hourly_rate", aggregate_roi["hourly_rate"]) or 0.0)
         aggregate_roi["currency"] = str(roi.get("currency", aggregate_roi["currency"]))
+        w = roi.get("warnings")
+        if w:
+            for msg in w:
+                if msg not in aggregate_roi["warnings"]:
+                    aggregate_roi["warnings"].append(msg)
+
+    if has_value:
+        aggregate_roi["value_saved"] = round(value_total, 2)
+    agg_manual = aggregate_roi["manual_minutes_estimate"]
+    agg_auto = aggregate_roi["automated_minutes"]
+    if agg_manual > 0:
+        aggregate_roi["efficiency_ratio"] = round(agg_auto / agg_manual, 3)
+    if not aggregate_roi["warnings"]:
+        aggregate_roi["warnings"] = None
 
     roi_html = ""
     if roi_count:
