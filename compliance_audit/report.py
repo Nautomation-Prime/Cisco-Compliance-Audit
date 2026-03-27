@@ -4,7 +4,6 @@ Rich-based console + file report generation for compliance audit results.
 
 import csv
 import html as html_mod
-import io
 import json
 import logging
 import re
@@ -13,11 +12,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from rich.console import Console
-from rich.table import Table
-from rich.panel import Panel
-from rich.text import Text
 from rich import box
+from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
+from rich.text import Text
 
 from .compliance_engine import AuditResult, Finding, Status
 
@@ -26,27 +25,30 @@ log = logging.getLogger(__name__)
 
 def _safe_hostname(name: str) -> str:
     """Sanitise a hostname for use in filenames (strip path separators etc.)."""
-    return re.sub(r'[^\w.\-]', '_', name) if name else 'unknown'
+    return re.sub(r"[^\w.\-]", "_", name) if name else "unknown"
+
 
 STATUS_STYLE = {
-    Status.PASS:  ("PASS",  "bold green"),
-    Status.FAIL:  ("FAIL",  "bold red"),
-    Status.WARN:  ("WARN",  "bold yellow"),
-    Status.SKIP:  ("SKIP",  "dim"),
+    Status.PASS: ("PASS", "bold green"),
+    Status.FAIL: ("FAIL", "bold red"),
+    Status.WARN: ("WARN", "bold yellow"),
+    Status.SKIP: ("SKIP", "dim"),
     Status.ERROR: ("ERROR", "bold magenta"),
 }
 
 # ─── HTML colour constants ─────────────────────────────────────────
 _STATUS_CSS = {
-    "PASS":  ("#22c55e", "#052e16"),
-    "FAIL":  ("#ef4444", "#450a0a"),
-    "WARN":  ("#eab308", "#422006"),
+    "PASS": ("#22c55e", "#052e16"),
+    "FAIL": ("#ef4444", "#450a0a"),
+    "WARN": ("#eab308", "#422006"),
     "ERROR": ("#c026d3", "#4a044e"),
-    "SKIP":  ("#64748b", "#1e293b"),
+    "SKIP": ("#64748b", "#1e293b"),
 }
 
 
-def print_report(result: AuditResult, console: Optional[Console] = None) -> None:
+def print_report(
+    result: AuditResult, console: Optional[Console] = None
+) -> None:
     """Print a nicely formatted audit report to the console."""
     con = console or Console()
 
@@ -67,8 +69,14 @@ def print_report(result: AuditResult, console: Optional[Console] = None) -> None
         f"({result.pass_count} pass / {result.fail_count} fail / "
         f"{result.warn_count} warn / {result.error_count} error)"
     )
-    con.print(Panel(header, title="COMPLIANCE AUDIT REPORT",
-                    border_style="cyan", expand=False))
+    con.print(
+        Panel(
+            header,
+            title="COMPLIANCE AUDIT REPORT",
+            border_style="cyan",
+            expand=False,
+        )
+    )
     con.print()
 
     # Group findings by category
@@ -119,8 +127,14 @@ def print_report(result: AuditResult, console: Optional[Console] = None) -> None
     if result.error_count:
         bar_parts.append(f"[bold magenta]{result.error_count} ERROR[/]")
     bar_parts.append(f"[bold green]{result.pass_count} PASS[/]")
-    con.print(Panel(" | ".join(bar_parts), title="Summary", border_style="cyan",
-                    expand=False))
+    con.print(
+        Panel(
+            " | ".join(bar_parts),
+            title="Summary",
+            border_style="cyan",
+            expand=False,
+        )
+    )
     con.print()
 
 
@@ -158,6 +172,9 @@ def save_json(result: AuditResult, output_dir: str) -> Path | None:
             if f.status != Status.SKIP
         ],
     }
+    roi = getattr(result, "_roi", None)
+    if roi:
+        payload["roi"] = roi
     try:
         filename.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     except OSError as exc:
@@ -170,6 +187,7 @@ def save_json(result: AuditResult, output_dir: str) -> Path | None:
 # ═══════════════════════════════════════════════════════════════════
 #  HTML helpers
 # ═══════════════════════════════════════════════════════════════════
+
 
 def _esc(text: str) -> str:
     """HTML-escape helper."""
@@ -192,6 +210,142 @@ def _score_colour(pct: float) -> str:
     return "#ef4444"
 
 
+def _as_float(value: object, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _fmt_minutes(value: object) -> str:
+    return f"{_as_float(value):,.1f} min"
+
+
+def _fmt_currency(currency: str, value: object) -> str:
+    return f"{_esc(currency)} {_as_float(value):,.2f}"
+
+
+def _build_roi_panel(
+    roi: dict,
+    *,
+    title: str,
+    include_assumptions: bool = True,
+    per_device_rows: Optional[list[dict]] = None,
+) -> str:
+    manual = max(0.0, _as_float(roi.get("manual_minutes_estimate", 0.0)))
+    automated = max(0.0, _as_float(roi.get("automated_minutes", 0.0)))
+    saved = max(0.0, _as_float(roi.get("minutes_saved", 0.0)))
+    hours_saved = max(0.0, _as_float(roi.get("hours_saved", saved / 60.0)))
+    hourly_rate = max(0.0, _as_float(roi.get("hourly_rate", 0.0)))
+    currency = str(roi.get("currency", "GBP"))
+    value_saved = max(0.0, _as_float(roi.get("value_saved", 0.0)))
+
+    bar_total = max(manual, automated, 1.0)
+    manual_pct = (
+        max(8.0, min(100.0, (manual / bar_total) * 100.0))
+        if manual > 0
+        else 0.0
+    )
+    automated_pct = (
+        max(8.0, min(100.0, (automated / bar_total) * 100.0))
+        if automated > 0
+        else 0.0
+    )
+
+    value_card = ""
+    if hourly_rate > 0:
+        value_card = (
+            '<div class="roi-metric">'
+            '<div class="roi-metric-label">Estimated Value</div>'
+            '<div class="roi-metric-value">'
+            f"{_fmt_currency(currency, value_saved)}"
+            "</div>"
+            "</div>"
+        )
+
+    assumptions_html = ""
+    assumptions = roi.get("assumptions", {}) if include_assumptions else {}
+    if assumptions:
+        auto_overhead = _as_float(
+            assumptions.get("automation_overhead_minutes_per_device", 0.0)
+        )
+        assumptions_html = (
+            '<div class="roi-assumptions">'
+            "<strong>Assumptions:</strong> "
+            "manual/device "
+            f"{_as_float(assumptions.get('manual_minutes_per_device', 0.0)):.1f}"
+            " min, "
+            "manual/check "
+            f"{_as_float(assumptions.get('manual_minutes_per_check', 0.0)):.2f}"
+            " min, "
+            "automation overhead/device "
+            f"{auto_overhead:.1f}"
+            " min."
+            "</div>"
+        )
+
+    breakdown_html = ""
+    if per_device_rows:
+        rows = []
+        for row in per_device_rows:
+            rows.append(
+                "<tr>"
+                f"<td>{_esc(row.get('hostname', ''))}</td>"
+                f"<td>{_fmt_minutes(row.get('manual_minutes_estimate', 0.0))}</td>"
+                f"<td>{_fmt_minutes(row.get('automated_minutes', 0.0))}</td>"
+                f"<td>{_fmt_minutes(row.get('minutes_saved', 0.0))}</td>"
+                f"<td>{_fmt_currency(currency, row.get('value_saved', 0.0))}</td>"
+                "</tr>"
+            )
+        breakdown_html = (
+            '<details class="roi-breakdown">'
+            "<summary>Per-device ROI breakdown</summary>"
+            '<table class="roi-device-table">'
+            "<thead><tr><th>Device</th><th>Manual</th><th>Automated</th><th>Saved</th><th>Value</th></tr></thead>"
+            f"<tbody>{''.join(rows)}</tbody></table>"
+            "</details>"
+        )
+
+    return (
+        '<section class="roi-panel">'
+        f'<div class="roi-title">{_esc(title)}</div>'
+        '<div class="roi-grid">'
+        '<div class="roi-metric">'
+        '<div class="roi-metric-label">Manual Baseline</div>'
+        f'<div class="roi-metric-value">{_fmt_minutes(manual)}</div>'
+        "</div>"
+        '<div class="roi-metric">'
+        '<div class="roi-metric-label">Automated Runtime</div>'
+        f'<div class="roi-metric-value">{_fmt_minutes(automated)}</div>'
+        "</div>"
+        '<div class="roi-metric">'
+        '<div class="roi-metric-label">Net Time Saved</div>'
+        '<div class="roi-metric-value">'
+        f"{_fmt_minutes(saved)} ({hours_saved:.2f} h)"
+        "</div>"
+        "</div>"
+        f"{value_card}"
+        "</div>"
+        '<div class="roi-bar-wrap">'
+        '<div class="roi-bar-track">'
+        f'<div class="roi-bar-segment manual" style="width:{manual_pct:.1f}%"></div>'
+        '<div class="roi-bar-segment automated" '
+        f'style="width:{automated_pct:.1f}%"></div>'
+        "</div>"
+        '<div class="roi-bar-labels">'
+        f"<span>Manual: {_fmt_minutes(manual)}</span>"
+        f"<span>Automated: {_fmt_minutes(automated)}</span>"
+        "</div>"
+        "</div>"
+        '<div class="roi-note">Model confidence: medium. '
+        "Estimates reflect configured assumptions and runtime telemetry."
+        "</div>"
+        f"{assumptions_html}"
+        f"{breakdown_html}"
+        "</section>"
+    )
+
+
 def _build_findings_table(findings: list[Finding], table_id: str = "") -> str:
     """Return an HTML <table> for a list of findings."""
     rows: list[str] = []
@@ -203,17 +357,17 @@ def _build_findings_table(findings: list[Finding], table_id: str = "") -> str:
             f'<tr class="finding-row" data-status="{f.status.value}">'
             f'<td class="check-name">{_esc(f.check_name)}</td>'
             f'<td class="status-cell">{_status_badge(f.status.value)}</td>'
-            f'<td>{intf}{_esc(f.detail)}</td>'
+            f"<td>{intf}{_esc(f.detail)}</td>"
             f'<td class="remediation">{_esc(f.remediation or "")}</td>'
-            f'</tr>'
+            f"</tr>"
         )
     id_attr = f' id="{table_id}"' if table_id else ""
     return (
         f'<table class="findings-table"{id_attr}>'
-        '<thead><tr>'
-        '<th>Check</th><th>Status</th><th>Detail</th><th>Remediation</th>'
-        '</tr></thead>'
-        f'<tbody>{"".join(rows)}</tbody></table>'
+        "<thead><tr>"
+        "<th>Check</th><th>Status</th><th>Detail</th><th>Remediation</th>"
+        "</tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody></table>"
     )
 
 
@@ -243,7 +397,8 @@ display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap
 .stat-card{background:var(--surface);border:1px solid var(--border);
 border-radius:8px;padding:16px 20px;min-width:130px;flex:1;text-align:center;}
 .stat-card .value{font-size:1.8rem;font-weight:700;}
-.stat-card .label{font-size:.8rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:.05em;}
+.stat-card .label{font-size:.8rem;color:var(--text-dim);
+text-transform:uppercase;letter-spacing:.05em;}
 
 /* ── Filters ────────────────────────────────────────────── */
 .filters{padding:0 24px 12px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;}
@@ -263,20 +418,23 @@ padding:14px 18px;cursor:pointer;transition:border-color .15s,transform .1s;}
 .device-card:hover{border-color:var(--accent);transform:translateY(-1px);}
 .device-card .hostname{font-weight:600;color:var(--accent);font-size:.95rem;}
 .device-card .ip{font-size:.8rem;color:var(--text-dim);}
-.device-card .score-bar{height:6px;border-radius:3px;background:var(--surface2);margin:8px 0 4px;overflow:hidden;}
+.device-card .score-bar{height:6px;border-radius:3px;
+background:var(--surface2);margin:8px 0 4px;overflow:hidden;}
 .device-card .score-fill{height:100%;border-radius:3px;transition:width .3s;}
 .device-card .card-stats{display:flex;gap:10px;font-size:.78rem;color:var(--text-dim);}
 .device-card .card-stats span{display:flex;align-items:center;gap:3px;}
 .dot{width:8px;height:8px;border-radius:50%;display:inline-block;}
 
 /* ── Collapsible device sections ────────────────────────── */
-.device-section{margin:0 24px 16px;border:1px solid var(--border);border-radius:8px;overflow:hidden;}
+.device-section{margin:0 24px 16px;border:1px solid var(--border);
+border-radius:8px;overflow:hidden;}
 .device-header{background:var(--surface);padding:14px 18px;cursor:pointer;
 display:flex;align-items:center;justify-content:space-between;user-select:none;
 transition:background .15s;}
 .device-header:hover{background:var(--surface2);}
 .device-header .left{display:flex;align-items:center;gap:12px;}
-.device-header .chevron{transition:transform .2s;font-size:1.1rem;color:var(--text-dim);}
+.device-header .chevron{transition:transform .2s;font-size:1.1rem;
+color:var(--text-dim);}
 .device-header.open .chevron{transform:rotate(90deg);}
 .device-header .dev-hostname{font-weight:600;color:var(--accent);}
 .device-header .dev-ip{font-size:.85rem;color:var(--text-dim);}
@@ -293,21 +451,51 @@ align-items:center;gap:8px;}
 
 /* ── Findings tables ────────────────────────────────────── */
 .findings-table{width:100%;border-collapse:collapse;font-size:.84rem;margin-bottom:4px;}
-.findings-table th{text-align:left;padding:6px 10px;color:var(--text-dim);font-weight:600;
-border-bottom:1px solid var(--border);font-size:.78rem;text-transform:uppercase;letter-spacing:.04em;}
-.findings-table td{padding:6px 10px;border-bottom:1px solid var(--surface2);vertical-align:top;}
+.findings-table th{text-align:left;padding:6px 10px;
+color:var(--text-dim);font-weight:600;
+border-bottom:1px solid var(--border);font-size:.78rem;
+text-transform:uppercase;letter-spacing:.04em;}
+.findings-table td{padding:6px 10px;
+border-bottom:1px solid var(--surface2);vertical-align:top;}
 .findings-table tr:last-child td{border-bottom:none;}
 .findings-table .check-name{color:var(--accent);white-space:nowrap;font-weight:500;}
 .findings-table .remediation{color:var(--text-dim);font-size:.8rem;}
 .findings-table .status-cell{white-space:nowrap;}
 
 /* ── Badges ─────────────────────────────────────────────── */
-.badge{padding:2px 8px;border-radius:3px;font-size:.75rem;font-weight:700;letter-spacing:.04em;}
+.badge{padding:2px 8px;border-radius:3px;
+font-size:.75rem;font-weight:700;letter-spacing:.04em;}
+
+/* -- ROI panel -- */
+.roi-panel{margin:0 24px 16px;padding:16px 18px;
+border:1px solid var(--border);border-radius:8px;background:var(--surface);}
+.roi-title{font-size:.95rem;font-weight:700;color:var(--accent);margin-bottom:10px;}
+.roi-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-bottom:12px;}
+.roi-metric{border:1px solid var(--border);background:var(--bg);
+border-radius:8px;padding:10px;min-height:72px;}
+.roi-metric-label{font-size:.75rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:.04em;margin-bottom:5px;}
+.roi-metric-value{font-size:clamp(.9rem,1.8vw,1.15rem);font-weight:700;line-height:1.25;word-break:break-word;overflow-wrap:anywhere;}
+.roi-bar-wrap{margin-top:6px;}
+.roi-bar-track{display:flex;gap:6px;align-items:center;min-height:14px;}
+.roi-bar-segment{height:14px;border-radius:999px;}
+.roi-bar-segment.manual{background:linear-gradient(90deg,#0ea5e9,#22d3ee);}
+.roi-bar-segment.automated{background:linear-gradient(90deg,#f97316,#fb923c);}
+.roi-bar-labels{display:flex;justify-content:space-between;gap:10px;font-size:.78rem;color:var(--text-dim);margin-top:6px;flex-wrap:wrap;}
+.roi-note{margin-top:10px;font-size:.8rem;color:var(--text-dim);}
+.roi-assumptions{margin-top:8px;font-size:.8rem;color:var(--text-dim);}
+.roi-breakdown{margin-top:10px;}
+.roi-breakdown summary{cursor:pointer;color:var(--accent);font-size:.82rem;}
+.roi-device-table{width:100%;border-collapse:collapse;font-size:.8rem;margin-top:8px;}
+.roi-device-table th{padding:6px 8px;text-align:left;
+color:var(--text-dim);border-bottom:1px solid var(--border);
+font-size:.75rem;text-transform:uppercase;letter-spacing:.04em;}
+.roi-device-table td{padding:6px 8px;border-bottom:1px solid var(--surface2);}
 
 /* ── Back to top ────────────────────────────────────────── */
 .back-top{position:fixed;bottom:24px;right:24px;background:var(--accent);color:var(--bg);
 border:none;border-radius:50%;width:40px;height:40px;font-size:1.2rem;cursor:pointer;
-opacity:0;pointer-events:none;transition:opacity .2s;display:flex;align-items:center;justify-content:center;}
+opacity:0;pointer-events:none;transition:opacity .2s;
+display:flex;align-items:center;justify-content:center;}
 .back-top.visible{opacity:1;pointer-events:auto;}
 
 /* ── Responsive ─────────────────────────────────────────── */
@@ -333,7 +521,10 @@ document.addEventListener('DOMContentLoaded',function(){
       if(!sec)return;
       var hdr=sec.querySelector('.device-header');
       var body=sec.querySelector('.device-body');
-      if(hdr && !hdr.classList.contains('open')){hdr.classList.add('open');body.classList.add('open');}
+            if(hdr && !hdr.classList.contains('open')){
+                hdr.classList.add('open');
+                body.classList.add('open');
+            }
       sec.scrollIntoView({behavior:'smooth',block:'start'});
     });
   });
@@ -399,6 +590,7 @@ document.addEventListener('DOMContentLoaded',function(){
 #  Single-device HTML report
 # ═══════════════════════════════════════════════════════════════════
 
+
 def save_html(result: AuditResult, output_dir: str) -> Path | None:
     """Save a standalone HTML report for a single device."""
     outdir = Path(output_dir)
@@ -409,6 +601,10 @@ def save_html(result: AuditResult, output_dir: str) -> Path | None:
 
     ts_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     sc = _score_colour(result.score_pct)
+    roi = getattr(result, "_roi", None)
+    roi_panel_html = ""
+    if roi:
+        roi_panel_html = _build_roi_panel(roi, title="ROI Estimate")
 
     # Build category sections
     categories: dict[str, list[Finding]] = {}
@@ -428,7 +624,7 @@ def save_html(result: AuditResult, output_dir: str) -> Path | None:
             f'<div class="category">'
             f'<div class="category-title">{_esc(title)} '
             f'<span class="category-pct">({cat_pct}%)</span></div>'
-            f'{tbl}</div>'
+            f"{tbl}</div>"
         )
 
     body = f"""\
@@ -437,17 +633,40 @@ def save_html(result: AuditResult, output_dir: str) -> Path | None:
   <span class="meta">{_esc(ts_str)}</span>
 </div>
 <div class="stats">
-  <div class="stat-card"><div class="value" style="color:{sc}">{result.score_pct}%</div><div class="label">Score</div></div>
-  <div class="stat-card"><div class="value" style="color:var(--pass)">{result.pass_count}</div><div class="label">Pass</div></div>
-  <div class="stat-card"><div class="value" style="color:var(--fail)">{result.fail_count}</div><div class="label">Fail</div></div>
-  <div class="stat-card"><div class="value" style="color:var(--warn)">{result.warn_count}</div><div class="label">Warn</div></div>
-  <div class="stat-card"><div class="value" style="color:var(--error)">{result.error_count}</div><div class="label">Error</div></div>
+    <div class="stat-card"><div class="value" style="color:{sc};">
+        {result.score_pct}%</div>
+    <div class="label">Score</div></div>
+    <div class="stat-card"><div class="value" style="color:var(--pass);">
+        {result.pass_count}</div>
+    <div class="label">Pass</div></div>
+    <div class="stat-card"><div class="value" style="color:var(--fail);">
+        {result.fail_count}</div>
+    <div class="label">Fail</div></div>
+    <div class="stat-card"><div class="value" style="color:var(--warn);">
+        {result.warn_count}</div>
+    <div class="label">Warn</div></div>
+    <div class="stat-card"><div class="value" style="color:var(--error);">
+        {result.error_count}</div>
+    <div class="label">Error</div></div>
 </div>
+{roi_panel_html}
 <div style="padding:0 24px 12px;">
-  <div style="font-size:.95rem;"><strong style="color:var(--accent);">{_esc(result.hostname)}</strong>
-  <span style="color:var(--text-dim);"> ({_esc(result.ip)}) &mdash; {_esc(result.role_display)}</span></div>
+    <div style="font-size:.95rem;">
+        <strong style="color:var(--accent);">{_esc(result.hostname)}</strong>
+    <span style="color:var(--text-dim);"> ({_esc(result.ip)}) &mdash;
+    {_esc(result.role_display)}</span></div>
   <div style="font-size:.85rem;color:var(--text-dim);margin-top:4px;">
-    {f'IOS-XE: {_esc(result.ios_version)} &nbsp;|&nbsp; ' if result.ios_version else ''}Tool v{_esc(result.tool_version)}{f' &nbsp;|&nbsp; Duration: {result.duration_secs}s' if result.duration_secs else ''}
+        {
+            f"IOS-XE: {_esc(result.ios_version)} &nbsp;|&nbsp; "
+            if result.ios_version
+            else ""
+        }
+        Tool v{_esc(result.tool_version)}
+        {
+            f" &nbsp;|&nbsp; Duration: {result.duration_secs}s"
+            if result.duration_secs
+            else ""
+        }
   </div>
 </div>
 <div class="filters">
@@ -477,8 +696,13 @@ def save_html(result: AuditResult, output_dir: str) -> Path | None:
 #  Consolidated multi-device HTML report
 # ═══════════════════════════════════════════════════════════════════
 
-def save_consolidated_html(results: list[AuditResult], output_dir: str) -> Path | None:
-    """Save a consolidated HTML report with dashboard, filtering, and collapsible devices."""
+
+def save_consolidated_html(
+    results: list[AuditResult], output_dir: str
+) -> Path | None:
+    """Save a consolidated HTML report with dashboard, filtering,
+    and collapsible devices.
+    """
     if not results:
         raise ValueError("No results to generate consolidated report")
 
@@ -493,8 +717,44 @@ def save_consolidated_html(results: list[AuditResult], output_dir: str) -> Path 
     total_warn = sum(r.warn_count for r in results)
     total_error = sum(r.error_count for r in results)
     total_checks = total_pass + total_fail + total_warn + total_error
-    overall_score = round(total_pass / total_checks * 100, 1) if total_checks else 100
+    overall_score = (
+        round(total_pass / total_checks * 100, 1) if total_checks else 100
+    )
     sc = _score_colour(overall_score)
+
+    roi_manual = 0.0
+    roi_automated = 0.0
+    roi_saved = 0.0
+    roi_value = 0.0
+    roi_hourly_rate = 0.0
+    roi_currency = "GBP"
+    roi_enabled = False
+    roi_assumptions: dict = {}
+    roi_device_rows: list[dict] = []
+    for r in results:
+        roi = getattr(r, "_roi", None)
+        if not roi:
+            continue
+        roi_enabled = True
+        roi_manual += float(roi.get("manual_minutes_estimate", 0.0))
+        roi_automated += float(roi.get("automated_minutes", 0.0))
+        roi_saved += float(roi.get("minutes_saved", 0.0))
+        roi_value += float(roi.get("value_saved", 0.0))
+        roi_hourly_rate = float(roi.get("hourly_rate", roi_hourly_rate))
+        roi_currency = str(roi.get("currency", roi_currency))
+        if not roi_assumptions:
+            roi_assumptions = roi.get("assumptions", {})
+        roi_device_rows.append(
+            {
+                "hostname": r.hostname,
+                "manual_minutes_estimate": float(
+                    roi.get("manual_minutes_estimate", 0.0)
+                ),
+                "automated_minutes": float(roi.get("automated_minutes", 0.0)),
+                "minutes_saved": float(roi.get("minutes_saved", 0.0)),
+                "value_saved": float(roi.get("value_saved", 0.0)),
+            }
+        )
 
     # ── Device cards for the dashboard ─────────────────────
     cards: list[str] = []
@@ -504,13 +764,17 @@ def save_consolidated_html(results: list[AuditResult], output_dir: str) -> Path 
             f'<div class="device-card" data-target="dev-{i}">'
             f'<div class="hostname">{_esc(r.hostname)}</div>'
             f'<div class="ip">{_esc(r.ip)} &mdash; {_esc(r.role_display)}</div>'
-            f'<div class="score-bar"><div class="score-fill" style="width:{r.score_pct}%;background:{c};"></div></div>'
+            f'<div class="score-bar"><div class="score-fill" '
+            f'style="width:{r.score_pct}%;background:{c};"></div></div>'
             f'<div class="card-stats">'
             f'<span style="color:{c};font-weight:700;">{r.score_pct}%</span>'
-            f'<span><span class="dot" style="background:var(--pass);"></span>{r.pass_count}P</span>'
-            f'<span><span class="dot" style="background:var(--fail);"></span>{r.fail_count}F</span>'
-            f'<span><span class="dot" style="background:var(--warn);"></span>{r.warn_count}W</span>'
-            f'</div></div>'
+            f'<span><span class="dot" style="background:var(--pass);"></span>'
+            f"{r.pass_count}P</span>"
+            f'<span><span class="dot" style="background:var(--fail);"></span>'
+            f"{r.fail_count}F</span>"
+            f'<span><span class="dot" style="background:var(--warn);"></span>'
+            f"{r.warn_count}W</span>"
+            f"</div></div>"
         )
 
     # ── Collapsible per-device sections ────────────────────
@@ -529,22 +793,30 @@ def save_consolidated_html(results: list[AuditResult], output_dir: str) -> Path 
         for cat, findings in categories.items():
             cat_pass = sum(1 for f in findings if f.status == Status.PASS)
             cat_total = len(findings)
-            cat_pct = round(cat_pass / cat_total * 100, 1) if cat_total else 100
+            cat_pct = (
+                round(cat_pass / cat_total * 100, 1) if cat_total else 100
+            )
             title = cat.replace("_", " ").title()
             tbl = _build_findings_table(findings)
             cat_html.append(
                 f'<div class="category">'
                 f'<div class="category-title">{_esc(title)} '
                 f'<span class="category-pct">({cat_pct}%)</span></div>'
-                f'{tbl}</div>'
+                f"{tbl}</div>"
             )
 
         meta_parts = []
         if r.ios_version:
-            meta_parts.append(f'IOS-XE: {_esc(r.ios_version)}')
+            meta_parts.append(f"IOS-XE: {_esc(r.ios_version)}")
         if r.duration_secs:
-            meta_parts.append(f'{r.duration_secs}s')
-        meta_str = f' <span class="dev-meta" style="color:var(--text-dim);font-size:.8rem;margin-left:8px;">({" | ".join(meta_parts)})</span>' if meta_parts else ''
+            meta_parts.append(f"{r.duration_secs}s")
+        meta_str = (
+            ' <span class="dev-meta" '
+            'style="color:var(--text-dim);font-size:.8rem;margin-left:8px;">'
+            f'({" | ".join(meta_parts)})</span>'
+            if meta_parts
+            else ""
+        )
 
         sections.append(
             f'<div class="device-section" id="dev-{i}">'
@@ -552,12 +824,31 @@ def save_consolidated_html(results: list[AuditResult], output_dir: str) -> Path 
             f'<div class="left">'
             f'<span class="chevron">&#9654;</span>'
             f'<span class="dev-hostname">{_esc(r.hostname)}</span>'
-            f'<span class="dev-ip">{_esc(r.ip)} &mdash; {_esc(r.role_display)}{meta_str}</span>'
-            f'</div>'
+            f'<span class="dev-ip">{_esc(r.ip)} &mdash; '
+            f"{_esc(r.role_display)}{meta_str}</span>"
+            f"</div>"
             f'<span class="dev-score" style="color:{c};">{r.score_pct}%</span>'
-            f'</div>'
+            f"</div>"
             f'<div class="device-body">{"".join(cat_html)}</div>'
-            f'</div>'
+            f"</div>"
+        )
+
+    roi_panel_html = ""
+    if roi_enabled:
+        roi_summary = {
+            "manual_minutes_estimate": round(roi_manual, 1),
+            "automated_minutes": round(roi_automated, 1),
+            "minutes_saved": round(roi_saved, 1),
+            "hours_saved": round(roi_saved / 60.0, 2),
+            "hourly_rate": roi_hourly_rate,
+            "currency": roi_currency,
+            "value_saved": round(roi_value, 2),
+            "assumptions": roi_assumptions,
+        }
+        roi_panel_html = _build_roi_panel(
+            roi_summary,
+            title="ROI Estimate (All Devices)",
+            per_device_rows=roi_device_rows,
         )
 
     body = f"""\
@@ -566,13 +857,24 @@ def save_consolidated_html(results: list[AuditResult], output_dir: str) -> Path 
   <span class="meta">{_esc(ts_str)} &mdash; {len(results)} device(s)</span>
 </div>
 <div class="stats">
-  <div class="stat-card"><div class="value" style="color:{sc}">{overall_score}%</div><div class="label">Overall Score</div></div>
-  <div class="stat-card"><div class="value">{len(results)}</div><div class="label">Devices</div></div>
-  <div class="stat-card"><div class="value" style="color:var(--pass)">{total_pass}</div><div class="label">Pass</div></div>
-  <div class="stat-card"><div class="value" style="color:var(--fail)">{total_fail}</div><div class="label">Fail</div></div>
-  <div class="stat-card"><div class="value" style="color:var(--warn)">{total_warn}</div><div class="label">Warn</div></div>
-  <div class="stat-card"><div class="value" style="color:var(--error)">{total_error}</div><div class="label">Error</div></div>
+    <div class="stat-card"><div class="value" style="color:{sc}">{overall_score}%</div>
+    <div class="label">Overall Score</div></div>
+    <div class="stat-card"><div class="value">{len(results)}</div>
+    <div class="label">Devices</div></div>
+    <div class="stat-card"><div class="value" style="color:var(--pass);">
+    {total_pass}</div>
+    <div class="label">Pass</div></div>
+    <div class="stat-card"><div class="value" style="color:var(--fail);">
+    {total_fail}</div>
+    <div class="label">Fail</div></div>
+    <div class="stat-card"><div class="value" style="color:var(--warn);">
+    {total_warn}</div>
+    <div class="label">Warn</div></div>
+    <div class="stat-card"><div class="value" style="color:var(--error);">
+    {total_error}</div>
+    <div class="label">Error</div></div>
 </div>
+{roi_panel_html}
 <div class="device-grid">{"".join(cards)}</div>
 <div class="filters">
   <label>Filter:</label>
@@ -592,7 +894,9 @@ def save_consolidated_html(results: list[AuditResult], output_dir: str) -> Path 
     try:
         filename.write_text(page, encoding="utf-8")
     except OSError as exc:
-        log.error("Failed to write consolidated HTML report %s: %s", filename, exc)
+        log.error(
+            "Failed to write consolidated HTML report %s: %s", filename, exc
+        )
         return None
     log.info("Consolidated HTML report saved to %s", filename)
     return filename
@@ -602,23 +906,25 @@ def save_consolidated_html(results: list[AuditResult], output_dir: str) -> Path 
 #  HTML wrapper
 # ═══════════════════════════════════════════════════════════════════
 
+
 def _wrap_html(title: str, body: str) -> str:
     """Wrap body content in a complete HTML document."""
     return (
         '<!DOCTYPE html>\n<html lang="en">\n<head>\n'
         '<meta charset="utf-8">\n'
         '<meta name="viewport" content="width=device-width,initial-scale=1">\n'
-        f'<title>{_esc(title)}</title>\n'
-        f'<style>{_CSS}</style>\n'
-        f'</head>\n<body>\n{body}\n'
-        f'<script>{_JS}</script>\n'
-        '</body>\n</html>'
+        f"<title>{_esc(title)}</title>\n"
+        f"<style>{_CSS}</style>\n"
+        f"</head>\n<body>\n{body}\n"
+        f"<script>{_JS}</script>\n"
+        "</body>\n</html>"
     )
 
 
 # ═══════════════════════════════════════════════════════════════════
 #  CSV export
 # ═══════════════════════════════════════════════════════════════════
+
 
 def save_csv(results: list[AuditResult], output_dir: str) -> Path | None:
     """Export all findings from one or more devices as a single CSV file."""
@@ -630,18 +936,36 @@ def save_csv(results: list[AuditResult], output_dir: str) -> Path | None:
     try:
         with open(filename, "w", newline="", encoding="utf-8") as fh:
             writer = csv.writer(fh)
-            writer.writerow([
-                "hostname", "ip", "role", "category", "check",
-                "status", "interface", "detail", "remediation",
-            ])
+            writer.writerow(
+                [
+                    "hostname",
+                    "ip",
+                    "role",
+                    "category",
+                    "check",
+                    "status",
+                    "interface",
+                    "detail",
+                    "remediation",
+                ]
+            )
             for r in results:
                 for f in r.findings:
                     if f.status == Status.SKIP:
                         continue
-                    writer.writerow([
-                        r.hostname, r.ip, r.role, f.category, f.check_name,
-                        f.status.value, f.interface, f.detail, f.remediation,
-                    ])
+                    writer.writerow(
+                        [
+                            r.hostname,
+                            r.ip,
+                            r.role,
+                            f.category,
+                            f.check_name,
+                            f.status.value,
+                            f.interface,
+                            f.detail,
+                            f.remediation,
+                        ]
+                    )
     except OSError as exc:
         log.error("Failed to write CSV report %s: %s", filename, exc)
         return None
@@ -654,7 +978,10 @@ def save_csv(results: list[AuditResult], output_dir: str) -> Path | None:
 #  Remediation script generator
 # ═══════════════════════════════════════════════════════════════════
 
-def save_remediation_script(result: AuditResult, output_dir: str) -> Path | None:
+
+def save_remediation_script(
+    result: AuditResult, output_dir: str
+) -> Path | None:
     """
     Generate a per-device IOS-XE config snippet that remediates all FAILs.
 
@@ -667,8 +994,9 @@ def save_remediation_script(result: AuditResult, output_dir: str) -> Path | None
     filename = outdir / f"{safe}_remediation_{ts}.txt"
 
     # Collect all FAIL findings that have a remediation command
-    fails = [f for f in result.findings
-             if f.status == Status.FAIL and f.remediation]
+    fails = [
+        f for f in result.findings if f.status == Status.FAIL and f.remediation
+    ]
     if not fails:
         return None
 
@@ -690,7 +1018,9 @@ def save_remediation_script(result: AuditResult, output_dir: str) -> Path | None
 
     lines: list[str] = []
     lines.append(f"! Remediation script for {result.hostname} ({result.ip})")
-    lines.append(f"! Generated: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}")
+    lines.append(
+        f"! Generated: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}"
+    )
     lines.append(f"! Findings to fix: {len(fails)}")
     lines.append("!")
     lines.append("configure terminal")
@@ -737,6 +1067,7 @@ def save_remediation_script(result: AuditResult, output_dir: str) -> Path | None
 #  Delta / baseline comparison report
 # ═══════════════════════════════════════════════════════════════════
 
+
 def load_baseline(baseline_path: str) -> dict | None:
     """Load a previous JSON audit result as a baseline for comparison."""
     p = Path(baseline_path)
@@ -768,6 +1099,7 @@ def _find_latest_baseline(output_dir: str, hostname: str) -> Path | None:
 @dataclass
 class DeltaEntry:
     """One finding that changed between baseline and current."""
+
     check_name: str
     category: str
     interface: str
@@ -808,38 +1140,56 @@ def compute_delta(
 
         if f.status in (Status.FAIL, Status.WARN):
             if base_finding and base_finding.get("status") in ("FAIL", "WARN"):
-                unchanged_fails.append({
-                    "check": f.check_name, "category": f.category,
-                    "interface": f.interface, "status": f.status.value,
-                    "detail": f.detail, "remediation": f.remediation,
-                })
+                unchanged_fails.append(
+                    {
+                        "check": f.check_name,
+                        "category": f.category,
+                        "interface": f.interface,
+                        "status": f.status.value,
+                        "detail": f.detail,
+                        "remediation": f.remediation,
+                    }
+                )
             else:
-                new_failures.append({
-                    "check": f.check_name, "category": f.category,
-                    "interface": f.interface,
-                    "old_status": base_finding.get("status", "N/A") if base_finding else "NEW",
-                    "new_status": f.status.value,
-                    "detail": f.detail, "remediation": f.remediation,
-                })
+                new_failures.append(
+                    {
+                        "check": f.check_name,
+                        "category": f.category,
+                        "interface": f.interface,
+                        "old_status": base_finding.get("status", "N/A")
+                        if base_finding
+                        else "NEW",
+                        "new_status": f.status.value,
+                        "detail": f.detail,
+                        "remediation": f.remediation,
+                    }
+                )
         elif f.status == Status.PASS and base_finding:
             if base_finding.get("status") in ("FAIL", "WARN"):
-                resolved.append({
-                    "check": f.check_name, "category": f.category,
-                    "interface": f.interface,
-                    "old_status": base_finding["status"],
-                    "new_status": "PASS",
-                    "detail": f.detail,
-                })
+                resolved.append(
+                    {
+                        "check": f.check_name,
+                        "category": f.category,
+                        "interface": f.interface,
+                        "old_status": base_finding["status"],
+                        "new_status": "PASS",
+                        "detail": f.detail,
+                    }
+                )
 
     # Any remaining in base_map that were FAIL/WARN but absent now = resolved
     for key, bf in base_map.items():
         if bf.get("status") in ("FAIL", "WARN"):
-            resolved.append({
-                "check": bf.get("check", key[0]), "category": bf.get("category", ""),
-                "interface": bf.get("interface", key[1]),
-                "old_status": bf["status"], "new_status": "REMOVED",
-                "detail": "Check no longer present in audit",
-            })
+            resolved.append(
+                {
+                    "check": bf.get("check", key[0]),
+                    "category": bf.get("category", ""),
+                    "interface": bf.get("interface", key[1]),
+                    "old_status": bf["status"],
+                    "new_status": "REMOVED",
+                    "detail": "Check no longer present in audit",
+                }
+            )
 
     base_score = baseline.get("score_pct", 0)
     return {
@@ -870,25 +1220,28 @@ def save_delta_report(
     return filename
 
 
-def print_delta_summary(delta: dict, hostname: str,
-                        console: Optional[Console] = None) -> None:
+def print_delta_summary(
+    delta: dict, hostname: str, console: Optional[Console] = None
+) -> None:
     """Print a coloured delta summary to the console."""
     con = console or Console()
     sc = delta["score_change"]
     sc_style = "green" if sc > 0 else "red" if sc < 0 else "yellow"
     arrow = "▲" if sc > 0 else "▼" if sc < 0 else "─"
 
-    con.print(Panel(
-        f"[bold]Baseline:[/] {delta['baseline_score']}% → "
-        f"[bold]Current:[/] {delta['current_score']}%  "
-        f"[{sc_style}]{arrow} {sc:+.1f}%[/]\n"
-        f"[green]Resolved: {delta['resolved_count']}[/]  "
-        f"[red]New failures: {delta['new_failure_count']}[/]  "
-        f"[yellow]Unchanged fails: {delta['unchanged_fail_count']}[/]",
-        title=f"DELTA — {hostname}",
-        border_style="cyan",
-        expand=False,
-    ))
+    con.print(
+        Panel(
+            f"[bold]Baseline:[/] {delta['baseline_score']}% → "
+            f"[bold]Current:[/] {delta['current_score']}%  "
+            f"[{sc_style}]{arrow} {sc:+.1f}%[/]\n"
+            f"[green]Resolved: {delta['resolved_count']}[/]  "
+            f"[red]New failures: {delta['new_failure_count']}[/]  "
+            f"[yellow]Unchanged fails: {delta['unchanged_fail_count']}[/]",
+            title=f"DELTA — {hostname}",
+            border_style="cyan",
+            expand=False,
+        )
+    )
 
     if delta["new_failures"]:
         table = Table(title="New Failures", box=box.ROUNDED, expand=False)
@@ -897,8 +1250,12 @@ def print_delta_summary(delta: dict, hostname: str,
         table.add_column("Status", style="bold red")
         table.add_column("Detail")
         for nf in delta["new_failures"]:
-            table.add_row(nf["check"], nf.get("interface", ""),
-                         nf["new_status"], nf["detail"])
+            table.add_row(
+                nf["check"],
+                nf.get("interface", ""),
+                nf["new_status"],
+                nf["detail"],
+            )
         con.print(table)
 
     if delta["resolved"]:
@@ -908,6 +1265,10 @@ def print_delta_summary(delta: dict, hostname: str,
         table.add_column("Was", style="yellow")
         table.add_column("Now", style="green")
         for r in delta["resolved"]:
-            table.add_row(r["check"], r.get("interface", ""),
-                         r["old_status"], r["new_status"])
+            table.add_row(
+                r["check"],
+                r.get("interface", ""),
+                r["old_status"],
+                r["new_status"],
+            )
         con.print(table)

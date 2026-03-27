@@ -13,6 +13,7 @@ Built on **PyATS/Genie** for structured parsing, **Netmiko** for transport, and 
 - [Prerequisites](#prerequisites)
 - [Installation](#installation)
 - [Quick Start](#quick-start)
+- [Operator Runbook](#operator-runbook)
 - [Usage](#usage)
   - [Basic Examples](#basic-examples)
   - [CLI Reference](#cli-reference)
@@ -65,7 +66,10 @@ Built on **PyATS/Genie** for structured parsing, **Netmiko** for transport, and 
 | **Interactive HTML reports** | Dashboard with device grid, collapsible sections, status filtering, and search |
 | **CSV reports** | Exportable CSV summary of all findings across devices |
 | **JSON reports** | Structured JSON output per device for downstream tooling and automation |
+| **ROI estimation** | Optional estimated minutes saved and value saved in console/JSON/HTML reports |
 | **Remediation scripts** | Auto-generated per-device IOS-XE config snippets to fix FAILs — port-channel aware |
+| **Bulk approved-pack apply** | Apply all approved remediation packs in one run with `--remediation-apply-all` |
+| **Remediation lifecycle workflow** | Enterprise-grade workflow with approval tracking, change tickets, expiry times, and risk controls |
 | **Dry-run / offline mode** | Audit saved command outputs without live SSH — useful for testing and CI |
 | **Credential flexibility** | OS keyring (optional) → environment variables → interactive prompt |
 | **Category filtering** | Audit only management plane, or only data plane, etc. |
@@ -178,6 +182,18 @@ The tool will prompt for credentials if they are not found in environment variab
 
 ---
 
+## Operator Runbook
+
+If you just need day-to-day execution steps, use the operator runbook:
+
+- [docs/RUNBOOK.md](docs/RUNBOOK.md)
+- [docs/RUNBOOK.html](docs/RUNBOOK.html)
+- [docs/RUNBOOK.txt](docs/RUNBOOK.txt)
+
+The runbook is command-first and covers audit, approval, apply, apply-all, and troubleshooting flows.
+
+---
+
 ## Usage
 
 ### Basic Examples
@@ -228,6 +244,13 @@ python -m compliance_audit -v
 
 # Debug output (DEBUG level)
 python -m compliance_audit -vv
+
+# Remediation lifecycle workflow (with approval tracking)
+python -m compliance_audit --remediation-list
+python -m compliance_audit --remediation-approve PACK_ID --approver "john.doe" --ticket-id "CHG0012345"
+python -m compliance_audit --remediation-approve-all --approver "john.doe" --ticket-id "CHG0012345"
+python -m compliance_audit --remediation-apply PACK_ID
+python -m compliance_audit --remediation-apply-all
 ```
 
 ### CLI Reference
@@ -237,19 +260,45 @@ python -m compliance_audit [-h] [-c CONFIG] [-d DEVICES] [-i INVENTORY]
                            [--no-jump] [--categories CAT [CAT ...]]
                            [-o OUTPUT_DIR] [--fail-threshold PCT]
                            [--dry-run DIR] [--csv] [--no-csv] [-v]
+                           [--remediation-list [STATUS]]
+                           [--remediation-approve PACK_ID]
+                           [--remediation-approve-all]
+                           [--remediation-reject PACK_ID]
+                           [--remediation-apply PACK_ID]
+                           [--remediation-apply-all]
+                           [--approver NAME] [--ticket-id ID] [--reason TEXT]
+                           [--expires-hours HOURS] [--apply-dry-run]
+                           [--allow-high-risk]
 
 Options:
-  -h, --help              Show help and exit
-  -c, --config CONFIG     Path to YAML config (default: compliance_config.yaml)
-  -d, --device DEVICES    Device to audit — IP or hostname:IP (repeatable)
-  -i, --inventory FILE    Path to device inventory YAML (default: devices.yaml)
-  --no-jump               Connect directly without jump host
-  --categories CAT ...    Only run checks in named categories
-  -o, --output-dir DIR    Override the report output directory from config
-  --fail-threshold PCT    Exit code 1 if any device scores below this %
-  --dry-run DIR           Offline mode — read saved command outputs from DIR
-  --csv / --no-csv        Force-enable or disable CSV report generation
-  -v, --verbose           Increase verbosity (-v = INFO, -vv = DEBUG)
+  -h, --help                    Show help and exit
+  -c, --config CONFIG           Path to YAML config (default: compliance_config.yaml)
+  -d, --device DEVICES          Device to audit — IP or hostname:IP (repeatable)
+  -i, --inventory FILE          Path to device inventory YAML (default: devices.yaml)
+  --no-jump                     Connect directly without jump host
+  --categories CAT ...          Only run checks in named categories
+  -o, --output-dir DIR          Override the report output directory from config
+  --fail-threshold PCT          Exit code 1 if any device scores below this %
+  --dry-run DIR                 Offline mode — read saved command outputs from DIR
+  --csv / --no-csv              Force-enable or disable CSV report generation
+  -v, --verbose                 Increase verbosity (-v = INFO, -vv = DEBUG)
+
+Remediation Lifecycle Operations:
+  --remediation-list [STATUS]   List remediation review packs (optionally filtered by status:
+                                all, pending, approved, rejected, applied, failed, expired)
+  --remediation-approve PACK_ID Approve a remediation review pack
+  --remediation-approve-all     Approve all pending remediation review packs (requires
+                                --approver and, by default, --ticket-id). Shows confirmation prompt.
+  --remediation-reject PACK_ID  Reject a remediation review pack
+  --remediation-apply PACK_ID   Apply an approved remediation review pack
+  --remediation-apply-all       Apply all approved remediation review packs in sequence
+  --approver NAME               Approver/operator name for approve/reject operations
+  --ticket-id ID                Change ticket ID used when approving (required by default;
+                                can be disabled in config)
+  --reason TEXT                 Reason required when rejecting
+  --expires-hours HOURS         Approval expiry in hours (default: from config, fallback 24)
+  --apply-dry-run               Run preflight for remediation apply operations without sending config
+  --allow-high-risk             Allow applying approved packs containing high-risk commands
 ```
 
 **Exit codes:** `0` = all devices passed, `1` = at least one failure (or below `--fail-threshold`).
@@ -306,9 +355,24 @@ audit_settings:
   json_report: false          # Also dump raw JSON per device
   parking_vlan: 99            # VLAN for unused ports
   native_vlan: 99             # Expected native VLAN on trunks
+
+  roi:
+    enabled: false            # Add estimated minutes/value saved to reports
+    manual_minutes_per_device: 20.0
+    manual_minutes_per_check: 0.25
+    automation_overhead_minutes_per_device: 2.0
+    hourly_rate: 0.0          # Set > 0 to show value estimate
+    currency: "GBP"
 ```
 
 The `max_workers` setting controls how many devices are audited simultaneously. Set to `1` for sequential execution, or increase for faster runs across large inventories. Each worker runs in its own thread with an independent SSH connection.
+
+The ROI model is intentionally simple and configurable so teams can align assumptions with their own framework:
+
+- Manual estimate = `manual_minutes_per_device + (manual_minutes_per_check * checks_evaluated)`
+- Automated estimate = `actual_runtime_minutes + automation_overhead_minutes_per_device`
+- Time saved = `max(0, manual - automated)`
+- Value saved = `(time_saved_hours * hourly_rate)`
 
 ### Connection Settings (§2)
 
@@ -343,7 +407,25 @@ devices:
     ip: 10.1.1.2
   - hostname: GB-SEV1-001ISW001
     ip: 10.2.3.4
+  - hostname: non-standard-hostname
+    ip: 10.1.2.3
+    role: core_switch  # Optional: explicitly override device role detection
 ```
+
+**Optional Role Override:**
+
+If a device hostname doesn't follow the standard naming convention, you can explicitly specify its role using the optional `role` field:
+
+```yaml
+devices:
+  - hostname: legacy-switch-01
+    ip: 192.168.1.10
+    role: access_switch  # Bypasses hostname-based role detection
+```
+
+Valid role values: `access_switch`, `core_switch`, `sdwan_router`, `industrial_switch`
+
+When `role` is not specified, the device role is automatically detected from the hostname as usual.
 
 You can also:
 
@@ -411,7 +493,7 @@ The digit after the site code is the branch instance (e.g. `MKD1` = first branch
 | `GB-MNC2-003SDW001` | GB | MNC | 2 | 003 | SD-WAN Router | 001 |
 | `GB-MKD1-001ISW001` | GB | MKD | 1 | 005 | Industrial Switch | 001 |
 
-> **What if the hostname doesn't match?** The audit still runs — it just skips role-specific checks and logs a warning.
+> **What if the hostname doesn't match?** The audit still runs — it just skips role-specific checks and logs a warning. To enable role-specific checks for non-standard hostnames, you can explicitly specify the device role in `devices.yaml` using the optional `role` field (see [Device Inventory](#device-inventory-3)).
 
 ---
 
@@ -571,6 +653,8 @@ Root guard on unknown trunk    → WARN ⚠ (manual review needed)
 
 ### Management Plane
 
+> **Note on SSH Version Check:** The SSH version check now parses the output of `show ip ssh` for the "SSH Enabled - version X.X" pattern, as SSH version information doesn't always appear in the running-config on Cisco devices. This provides more reliable detection and accepts both version "2.0" and "1.99" as valid SSHv2. If `show ip ssh` output is unavailable, the check falls back to searching for `ip ssh version 2` in the running-config for backward compatibility.
+
 | Check | Key | What It Verifies |
 | ------- | ----- | ----------------- |
 | Password encryption | `service_password_encryption` | `service password-encryption` is present |
@@ -588,7 +672,7 @@ Root guard on unknown trunk    → WARN ⚠ (manual review needed)
 | No domain lookup | `no_ip_domain_lookup` | Prevents DNS lookup on typos |
 | Domain name set | `ip_domain_name` | Corporate domain name is configured |
 | No gratuitous ARPs | `no_ip_gratuitous_arps` | Gratuitous ARP is disabled |
-| SSH version 2 | `ssh_version` | Only SSHv2 is allowed |
+| SSH version 2 | `ssh_version` | Only SSHv2 is allowed (parsed from `show ip ssh` output, fallback to running-config) |
 | SSH timeout | `ssh_timeout` | SSH session timeout ≤ configured max |
 | SSH auth retries | `ssh_authentication_retries` | Limits brute-force attempts |
 | SSH source interface | `ssh_source_interface` | SSH originates from specific interface |
@@ -697,6 +781,8 @@ A compact summary table is printed to the terminal showing device scores at a gl
 ╰────────────────────────┴─────────────┴──────────────┴───────┴──────┴──────┴──────┴───────╯
 ```
 
+When ROI is enabled, the console also shows an ROI estimate line (hours/minutes saved) and optional value saved.
+
 ### CSV Report
 
 Tabular summary of all findings across all devices, suitable for spreadsheet analysis or integration with other tools. Enable with `csv_report: true` in the config or `--csv` on the CLI.
@@ -710,6 +796,12 @@ Tabular summary of all findings across all devices, suitable for spreadsheet ana
   "score_pct": 87.3,
   "pass": 55,
   "fail": 8,
+  "roi": {
+    "minutes_saved": 34.6,
+    "hours_saved": 0.58,
+    "value_saved": 0.0,
+    "currency": "GBP"
+  },
   "findings": [
     {
       "check": "bpdu_guard",
@@ -727,9 +819,12 @@ Self-contained HTML reports with a dark-themed dashboard. Two types are generate
 
 **Per-device report** — Stat cards showing score/pass/fail/warn/error, findings grouped by category, status filter buttons (All / Fail / Warn / Pass), and a search box to find specific checks.
 
+When ROI is enabled, additional stat cards show estimated minutes saved and value saved.
+
 **Consolidated report** (when auditing multiple devices) — An interactive dashboard with:
 
 - Overall score cards and summary statistics
+- Optional ROI summary cards (minutes/value saved)
 - Clickable device grid with score bars — click a device to jump to its section
 - Collapsible per-device sections (expand/collapse all)
 - Global status filter buttons (show only failures, warnings, etc.)
@@ -744,7 +839,7 @@ reports/GB-SITE1-001ASW001_20260308_143025.html
 reports/GB-SITE1-001ASW001_remediation_20260308_143025.txt
 reports/GB-SITE1-001ASW002_20260308_143025.html
 reports/consolidated_report_20260308_143025.html
-reports/audit_summary_20260308_143025.csv
+reports/compliance_audit_20260308_143025.csv
 ```
 
 ### Remediation Scripts
@@ -772,6 +867,237 @@ interface Port-channel1
 !
 end
 write memory
+```
+
+### Remediation Workflow
+
+Enterprise-grade remediation workflow with approval tracking, change tickets, expiry times, and risk controls. This workflow is designed for production environments where change management and audit trails are required.
+
+##### 1. List Review Packs
+
+After running an audit, remediation review packs are automatically generated for devices with failures. List these packs to see what's available:
+
+```bash
+# List all remediation review packs
+python -m compliance_audit --remediation-list
+
+# List only pending packs (awaiting approval)
+python -m compliance_audit --remediation-list pending
+
+# List by status: pending, approved, rejected, applied, failed, expired
+python -m compliance_audit --remediation-list approved
+```
+
+**Example output:**
+
+```text
+baea5533a7f61a24 | pending  | GB-SITE1-001ASW001       | 10.1.1.1        | risk=medium | findings=8   | created=2026-03-23T14:30:25Z
+220f8b3b0ce7a91e | approved | GB-SITE1-001CSW001       | 10.1.1.2        | risk=low    | findings=4   | created=2026-03-23T14:30:28Z
+```
+
+##### 2. Approve a Review Pack
+
+Before applying remediation, a pack must be approved by an authorized operator. Approvals require:
+
+- Approver name (`--approver`)
+- Change ticket ID (`--ticket-id`) when `audit_settings.remediation.approval.require_ticket_id: true`
+- Optional expiry time (`--expires-hours`, default: 24 hours)
+
+```bash
+# Approve a remediation pack
+python -m compliance_audit --remediation-approve baea5533a7f61a24 \
+  --approver "john.doe" \
+  --ticket-id "CHG0012345"
+
+# Approve with custom expiry (72 hours instead of default 24)
+python -m compliance_audit --remediation-approve baea5533a7f61a24 \
+  --approver "john.doe" \
+  --ticket-id "CHG0012345" \
+  --expires-hours 72
+```
+
+**Approval Metadata:**
+The approval is recorded with:
+
+- Approver name
+- Change ticket ID
+- Approval timestamp
+- Expiry timestamp (based on `--expires-hours`)
+- Risk level of the pack
+
+If `audit_settings.remediation.approval.require_ticket_id` is set to `false`, `--ticket-id` becomes optional.
+
+Rejected and expired packs are not re-approvable; run a fresh audit to generate a new review pack before approval.
+
+##### 2a. Bulk Approve All Pending Packs
+
+For production environments with many devices, you can approve all pending remediation packs at once:
+
+```bash
+# Approve all pending packs (with confirmation prompt)
+python -m compliance_audit --remediation-approve-all \
+  --approver "john.doe" \
+  --ticket-id "CHG0012345"
+
+# Approve all pending packs with custom expiry
+python -m compliance_audit --remediation-approve-all \
+  --approver "john.doe" \
+  --ticket-id "CHG0012345" \
+  --expires-hours 72
+```
+
+**Bulk Approval Features:**
+
+- Lists all pending packs with hostname, IP, risk level, and findings count
+- Shows interactive confirmation prompt before approving
+- Approves each pack individually with progress indicators (✓ or ✗)
+- Displays summary of successful vs failed approvals
+- Safely handles partial failures (continues even if some approvals fail)
+
+**Example interaction:**
+
+```text
+Found 15 pending remediation pack(s):
+  baea5533... | GB-MKD1-022ASW001        | 10.112.224.99   | risk=medium | findings= 72
+  220f8b3b... | GB-MKD1-023ASW001        | 10.112.224.97   | risk=medium | findings= 32
+  ...
+
+Approve all 15 pack(s)? [y/n]: y
+
+✓ Approved: baea5533... (GB-MKD1-022ASW001)
+✓ Approved: 220f8b3b... (GB-MKD1-023ASW001)
+...
+
+Bulk approval complete: 15 approved, 0 failed
+```
+
+##### 3. Reject a Review Pack
+
+If a remediation pack should not be applied, reject it with a reason:
+
+```bash
+# Reject a remediation pack
+python -m compliance_audit --remediation-reject baea5533a7f61a24 \
+  --approver "john.doe" \
+  --reason "Commands conflict with planned maintenance window"
+```
+
+**Rejection Metadata:**
+The rejection is recorded with:
+
+- Approver/operator name
+- Rejection reason
+- Rejection timestamp
+
+##### 4. Apply Approved Packs
+
+Once packs are approved and within validity, apply either one pack or all approved packs:
+
+```bash
+# Apply an approved remediation pack
+python -m compliance_audit --remediation-apply baea5533a7f61a24
+
+# Apply all approved packs in sequence
+python -m compliance_audit --remediation-apply-all
+
+# Dry-run mode: preflight checks only, no configuration sent
+python -m compliance_audit --remediation-apply baea5533a7f61a24 --apply-dry-run
+python -m compliance_audit --remediation-apply-all --apply-dry-run
+
+# Allow high-risk commands (normally blocked by default)
+python -m compliance_audit --remediation-apply baea5533a7f61a24 --allow-high-risk
+python -m compliance_audit --remediation-apply-all --allow-high-risk
+```
+
+**Safety Controls:**
+
+- **Approval required**: Pack must be in `approved` status
+- **Expiry check**: Approval must not be expired
+- **Risk assessment**: High-risk commands are blocked by default (override with `--allow-high-risk`)
+- **Checksum enforcement**: Script hash must match the approved review pack
+- **Preflight drift check**: Only findings still failing are applied
+- **Device identity validation**: Device prompt must match approved hostname when enabled
+- **Preflight validation**: Dry-run mode validates connectivity and prerequisites without sending configuration
+
+**Application Output:**
+The tool provides real-time progress indicators and detailed output including:
+
+- **Live progress bars** for each phase:
+  - Connecting to device (with spinner)
+  - Running preflight drift check
+  - Applying commands
+  - Saving configuration
+  - Running post-check verification
+- Connection status
+- Commands applied
+- Device responses
+- Success/failure status
+- Execution time
+
+**Example output:**
+
+```json
+{
+  "pack_id": "baea5533a7f61a24",
+  "hostname": "GB-SITE1-001ASW001",
+  "ip": "10.1.1.1",
+  "status": "success",
+  "preflight_still_failing": 8,
+  "resolved": 8,
+  "commands_applied": 8,
+  "device_output_preview": "..."
+}
+```
+
+##### Configuration
+
+Control remediation workflow behavior in `compliance_config.yaml`:
+
+```yaml
+audit_settings:
+  remediation:
+    enabled: true                           # Enable/disable remediation workflow (generate/list/approve/apply)
+    generate_script: true                   # Generate per-device remediation script files
+    generate_review_pack: true              # Generate review-pack JSON + SQLite entry
+
+    approval:
+      default_expires_hours: 24             # Default approval validity (hours)
+      require_ticket_id: true               # Require change ticket for approval
+
+    execution:
+      enabled: true                         # Enable/disable remediation execution
+      linux_only: true                      # Enforce Linux runtime for apply lifecycle commands
+      block_high_risk_by_default: true      # Require --allow-high-risk for high-risk packs
+      enforce_checksum: true                # Block apply if script changed since approval
+      preflight_drift_check: true           # Confirm approved findings still failing before apply
+      require_hostname_match: true          # Ensure device prompt matches expected hostname
+      save_config: true                     # Save config after successful apply
+      command_verify: false                 # Netmiko command verification during send_config_set
+```
+
+##### Workflow Summary
+
+```text
+┌─────────────┐
+│ Run Audit   │  → Generates remediation review packs for devices with failures
+└─────────────┘
+      │
+      ▼
+┌─────────────┐
+│ List Packs  │  → Review available packs: --remediation-list
+└─────────────┘
+      │
+      ▼
+┌─────────────┐
+│ Approve     │  → Approve with ticket ID: --remediation-approve PACK_ID
+│  or Reject  │     Or reject with reason: --remediation-reject PACK_ID
+└─────────────┘
+      │
+      ▼
+┌─────────────┐
+│ Apply       │  → Apply one: --remediation-apply PACK_ID
+│             │    Apply all: --remediation-apply-all
+└─────────────┘
 ```
 
 ### Dry-Run / Offline Mode

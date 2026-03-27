@@ -1,7 +1,17 @@
+# Core network connectivity
 netmiko>=4.2.0
 paramiko>=3.4.0
+
+# Structured parsing
 pyats[library]>=24.0
 genie>=24.0
+
+# Reporting and configuration
 rich>=13.7.0
 PyYAML>=6.0
+
+# Credential management
 keyring>=25.0.0
+
+# Note: SQLite support for remediation workflow is provided by Python stdlib
+# (sqlite3), so no additional database package is required.

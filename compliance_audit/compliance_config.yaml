@@ -1,7 +1,7 @@
 # ╔═══════════════════════════════════════════════════════════════════╗
 # ║         CISCO IOS-XE  COMPLIANCE  AUDIT  CONFIGURATION            ║
 # ║                                                                   ║
-# ║  Every check can be toggled with  enabled: true / false           ║
+# ║  Every check can be toggled with  enabled: false / false          ║
 # ║  Parameters under each check set the expected (compliant) value   ║
 # ║                                                                   ║
 # ║  Tip: Copy this file per site and run with:                       ║
@@ -22,9 +22,54 @@ audit_settings:
   html_report: true               # Generate an HTML report alongside console output
   json_report: false              # Also dump raw JSON findings
   csv_report: false               # Generate a CSV summary of all findings
-  remediation_script: true        # Generate per-device IOS-XE remediation config snippets
+  remediation_script: true        # Legacy toggle (kept for backward compatibility)
   parking_vlan: 99                # VLAN for unused ports
   native_vlan: 99                 # Expected native VLAN on trunks (for checking)
+
+  roi:
+    enabled: false                # Show estimated time/value saved in reports
+    # Top-level ROI keys are defaults for all contexts.
+    # Values under profiles.audit / profiles.post_remediation override these defaults.
+    manual_minutes_per_device: 20.0    # Baseline manual effort per device audit
+    manual_minutes_per_check: 0.25     # Extra manual effort per evaluated check
+    automation_overhead_minutes_per_device: 2.0  # Human overhead to run/review automation
+    validation_minutes_per_device: 0.0 # Extra human validation effort to include in automated estimate
+    min_runtime_seconds: 0.0      # Optional runtime floor to avoid near-zero timing distortion
+    hourly_rate: 0.0             # Optional labour rate for value estimate (0 disables value card)
+    currency: "GBP"             # Currency label for value estimates
+    profiles:                    # Optional context-specific overrides (falls back to top-level values)
+      audit:
+        manual_minutes_per_device: 20.0
+        manual_minutes_per_check: 0.25
+        automation_overhead_minutes_per_device: 2.0
+        validation_minutes_per_device: 0.0
+      post_remediation:
+        manual_minutes_per_device: 8.0
+        manual_minutes_per_check: 0.10
+        automation_overhead_minutes_per_device: 0.25
+        validation_minutes_per_device: 0.10
+
+  remediation:
+    enabled: false                 # Master switch for remediation workflow (generate/list/approve/apply)
+    generate_script: true         # Generate per-device remediation script files
+    generate_review_pack: true    # Generate review-pack JSON + SQLite tracking entry
+
+    approval:
+      default_expires_hours: 24   # Default approval TTL used by --remediation-approve
+      require_ticket_id: true     # Enforce change ticket ID for approvals
+
+    execution:
+      enabled: false               # Allow --remediation-apply operations
+      linux_only: true            # Enforce Linux runtime for apply lifecycle commands
+      block_high_risk_by_default: true   # Require explicit --allow-high-risk for high-risk packs
+      enforce_checksum: true      # Block apply if remediation script changed since approval
+      preflight_drift_check: true # Confirm approved findings are still failing before apply
+      require_hostname_match: true # Ensure connected device prompt matches expected hostname
+      save_config: true           # Persist config after successful apply (write memory)
+      command_verify: false       # Netmiko command verification during send_config_set
+      generate_post_report: false # Generate compliance audit report after applying remediation
+      generate_consolidated_post_report: true # For apply-all, also generate a consolidated post-remediation report
+      post_report_formats: ["json", "html"]  # Formats for post-remediation report (json, html, csv, txt)
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -119,6 +164,11 @@ hostname_roles:
     role: distribution_switch
     display: "Distribution Switch"
     trunk_signal: none
+    
+  - code: SSW
+    role: server_switch
+    display: "Server Switch"
+    trunk_signal: downlink
 
 
 # ─── 4b  ENDPOINT NEIGHBORS (APs, etc.) ──────────────────────────
@@ -135,7 +185,7 @@ hostname_roles:
 # All regexes are case-insensitive.
 
 endpoint_neighbors:
-  enabled: true
+  enabled: false
   hostname_patterns:
     - "^AP[\\d_-]"        # AP1_Office, AP-Floor2, AP01 (AP + digit/separator)
     - "^AP[0-9A-F]{4}"   # APxxxx (Cisco default lightweight AP names)
@@ -152,7 +202,7 @@ endpoint_neighbors:
 # ═══════════════════════════════════════════════════════════════════
 # §5  COMPLIANCE  CHECKS  (what to audit)
 # ═══════════════════════════════════════════════════════════════════
-# Every check has  enabled: true/false  plus check-specific params.
+# Every check has  enabled: false/false  plus check-specific params.
 # Checks are grouped into four categories that can also be selected
 # on the command line with  --categories management_plane data_plane
 
@@ -165,15 +215,15 @@ compliance:
 
     # ── SERVICES ────────────────────────────────────────────────
     service_password_encryption:
-      enabled: true
+      enabled: false
       # Expect: service password-encryption
 
     service_timestamps_debug:
-      enabled: true
+      enabled: false
       expected: "service timestamps debug datetime msec localtime show-timezone"
 
     service_timestamps_log:
-      enabled: true
+      enabled: false
       expected: "service timestamps log datetime msec localtime show-timezone"
 
     service_tcp_keepalives_in:
@@ -203,7 +253,7 @@ compliance:
 
     # ── IP SETTINGS ─────────────────────────────────────────────
     no_ip_source_route:
-      enabled: true
+      enabled: false
       # Expect: no ip source-route
 
     no_ip_finger:
@@ -213,7 +263,7 @@ compliance:
       # Expect: no ip bootp server
 
     no_ip_http_server:
-      enabled: true
+      enabled: false
       # Expect: no ip http server  (disable plain HTTP)
 
     ip_http_secure_server:
@@ -221,7 +271,7 @@ compliance:
       # Expect: ip http secure-server
 
     no_ip_http_secure_server:
-      enabled: true         # Set true if you want HTTPS OFF
+      enabled: false         # Set true if you want HTTPS OFF
       # Expect: no ip http secure-server
 
     ip_http_authentication:
@@ -245,17 +295,17 @@ compliance:
       # Expect: no ip domain lookup
 
     ip_domain_name:
-      enabled: true
+      enabled: false
       expected: "test.domain.com"          # Set your corporate domain, e.g. "corp.example.com"
 
     # ── SSH ─────────────────────────────────────────────────────
     ssh_version:
       enabled: true
       version: 2
-      # Expect: ip ssh version 2
+      # Checked via "show ip ssh" output (fallback to running-config)
 
     ssh_timeout:
-      enabled: true
+      enabled: false
       max_seconds: 60
       # Expect: ip ssh time-out <n>  where n <= max_seconds
 
@@ -269,20 +319,20 @@ compliance:
       interface: ""         # e.g. "Loopback0" or "Vlan100"
 
     ssh_rsa_min_modulus:
-      enabled: true
+      enabled: false
       min_bits: 2048
 
     # ── AAA ─────────────────────────────────────────────────────
     aaa_new_model:
-      enabled: true
+      enabled: false
       # Expect: aaa new-model
 
     aaa_authentication_login:
-      enabled: true
+      enabled: false
       expected: "aaa authentication login default group AAA_NOC local"
 
     aaa_authentication_enable:
-      enabled: true
+      enabled: false
       expected: "aaa authentication enable default group AAA_NOC enable"
 
     aaa_authorization_console:
@@ -290,11 +340,11 @@ compliance:
       # Expect: aaa authorization console
 
     aaa_authorization_exec:
-      enabled: true
+      enabled: false
       expected: "aaa authorization exec default group AAA_NOC local"
 
     aaa_authorization_commands:
-      enabled: true
+      enabled: false
       levels: [1, 15]
       expected_prefix: "aaa authorization commands 15 default group AAA_NOC local"
 
@@ -330,7 +380,7 @@ compliance:
 
     # ── NTP ─────────────────────────────────────────────────────
     ntp_servers:
-      enabled: true
+      enabled: false
       expected_servers: ["192.0.2.70", "192.0.2.71"]    # e.g. ["10.10.10.1", "10.10.10.2"]
       min_servers: 1
 
@@ -349,12 +399,12 @@ compliance:
 
     # ── LOGGING ─────────────────────────────────────────────────
     logging_buffered:
-      enabled: true
+      enabled: false
       min_size: 64000
       level: "informational"   # emergencies|alerts|critical|errors|warnings|notifications|informational|debugging
 
     logging_console:
-      enabled: true
+      enabled: false
       # Some orgs want 'logging console critical', others 'no logging console'
       level: "critical"
 
@@ -367,7 +417,7 @@ compliance:
       level: "informational"
 
     logging_host:
-      enabled: true
+      enabled: false
       expected_hosts: ["192.0.2.70", "192.0.2.71"]       # e.g. ["10.20.30.1", "10.20.30.2"]
       min_hosts: 1
 
@@ -388,11 +438,11 @@ compliance:
       # Checks: snmp-server group ... v3 priv
 
     snmp_no_community_public:
-      enabled: true
+      enabled: false
       # Checks that 'snmp-server community public' does NOT exist
 
     snmp_no_community_private:
-      enabled: true
+      enabled: false
       # Checks that 'snmp-server community private' does NOT exist
 
     snmp_community_acl:
@@ -426,25 +476,25 @@ compliance:
       required_text: ""
 
     banner_exec:
-      enabled: true
+      enabled: false
       required_text: ""
 
     # ── LOCAL USERS ─────────────────────────────────────────────
     enable_secret:
-      enabled: true
+      enabled: false
       # Checks: 'enable secret' is present (not 'enable password')
 
     no_enable_password:
-      enabled: true
+      enabled: false
       # Checks: 'enable password' does NOT exist
 
     username_secret:
-      enabled: true
+      enabled: false
       # Checks: all 'username' definitions use 'secret' not 'password'
 
     # ── VTY LINES ───────────────────────────────────────────────
     vty_transport_input_ssh:
-      enabled: true
+      enabled: false
       # Expect: transport input ssh (no telnet)
 
     vty_exec_timeout:
@@ -490,9 +540,9 @@ compliance:
       # Expect: login block-for 120 attempts 3 within 60
 
     login_on_failure_log:
-      enabled: true
+      enabled: false
     login_on_success_log:
-      enabled: true
+      enabled: false
 
     login_delay:
       enabled: false
@@ -517,7 +567,7 @@ compliance:
 
     # ── SPANNING TREE ───────────────────────────────────────────
     stp_mode:
-      enabled: true
+      enabled: false
       mode: "rapid-pvst"       # rapid-pvst | mst
 
     stp_extend_system_id:
@@ -534,7 +584,7 @@ compliance:
       # Expect: spanning-tree loopguard default
 
     stp_priority:
-      enabled: true
+      enabled: false
       # Role-dependent expected values
       core_priority: 4096      # CSW should be root or near-root
       access_priority: 36863   # ASW default (32768) + max VLAN ID (4095)
@@ -560,11 +610,11 @@ compliance:
 
     # ── DHCP SNOOPING ──────────────────────────────────────────
     dhcp_snooping_global:
-      enabled: true
+      enabled: false
       # Expect: ip dhcp snooping
 
     dhcp_snooping_vlans:
-      enabled: true
+      enabled: false
       vlans: ""                 # e.g. "10,20,30-50"  — leave blank to just check it exists for any VLAN
 
     no_dhcp_snooping_information_option:
@@ -614,7 +664,7 @@ compliance:
     # Thresholds vary by port speed. Keys are speed in Mbps.
     # Each threshold has a rising value (upper limit) and falling value (lower limit)
     storm_control:
-      enabled: true             # Master toggle for all storm control checks
+      enabled: false             # Master toggle for all storm control checks
       check_thresholds: true    # Enable/disable threshold validation independently
       check_action: false        # Enable/disable action validation independently
       action: "shutdown"        # shutdown | trap
@@ -668,7 +718,7 @@ compliance:
     # Applied on ACCESS ports and TRUNK_ENDPOINT ports (APs etc.).
     # Never on trunk uplinks/downlinks to other switches.
     bpdu_guard:
-      enabled: true
+      enabled: false
       on_endpoint_trunks: false   # Also require BPDU guard on AP trunk ports
       # Expect: spanning-tree bpduguard enable  (per-interface)
 
@@ -678,18 +728,18 @@ compliance:
     # The auditor auto-detects uplinks using STP root port +
     # CDP/LLDP neighbor roles.
     root_guard:
-      enabled: true
+      enabled: false
       # Expect: spanning-tree guard root  (per-interface)
 
     # ── PORTFAST ────────────────────────────────────────────────
     portfast:
-      enabled: true
+      enabled: false
       # Applied on access ports only
       # Expect: spanning-tree portfast
 
     # ── SWITCHPORT NONEGOTIATE ──────────────────────────────────
     switchport_nonegotiate:
-      enabled: true
+      enabled: false
       # All switchports should have DTP disabled
       # Expect: switchport nonegotiate
 
@@ -710,7 +760,7 @@ compliance:
 
     # ── SWITCHPORT MODE EXPLICIT ────────────────────────────────
     switchport_mode_explicit:
-      enabled: true
+      enabled: false
       # Every switchport should have an explicit 'switchport mode access'
       # or 'switchport mode trunk'. Dynamic desirable/auto = non-compliant.
 
@@ -722,17 +772,15 @@ compliance:
 
     # ── INTERFACE DESCRIPTION ───────────────────────────────────
     interface_description:
-      enabled: true
+      enabled: false
       # All active (non-shutdown) ports should have a description
 
     # ── DHCP SNOOPING TRUST ─────────────────────────────────────
     dhcp_snooping_trust:
-      enabled: true
+      enabled: false
       # Expect on trunk uplinks and (optionally) downlinks.
-      # Endpoint trunks (APs) typically do NOT need trust.
       on_uplinks: true
-      on_downlinks: true
-      on_endpoint_trunks: false
+      on_downlinks: false
 
     # ── DHCP SNOOPING RATE LIMIT ────────────────────────────────
     dhcp_snooping_limit_rate:
@@ -755,7 +803,7 @@ compliance:
 
     # ── UNUSED PORT HARDENING ───────────────────────────────────
     unused_ports:
-      enabled: true
+      enabled: false
       must_be_shutdown: true
       must_be_access_mode: false
       must_be_in_parking_vlan: false   # Uses audit_settings.parking_vlan
@@ -778,7 +826,7 @@ compliance:
 
     # ── NATIVE VLAN ON TRUNKS ───────────────────────────────────
     trunk_native_vlan:
-      enabled: true
+      enabled: false
       # Control which trunk port types should be checked
       on_uplinks: true           # Check native VLAN on trunk uplinks
       on_downlinks: true         # Check native VLAN on trunk downlinks
@@ -801,7 +849,7 @@ compliance:
     core_switch:
       # CSW should be STP root (or root for a set of VLANs)
       stp_root_check:
-        enabled: true
+        enabled: false
         # If this CSW should be root for all VLANs, enable this.
         # Verifies operational STP role is "root" for VLAN 1
 
@@ -816,7 +864,7 @@ compliance:
     access_switch:
       # ASW should NOT be STP root
       stp_not_root:
-        enabled: true
+        enabled: false
         # Verify this ASW is NOT the STP root for any VLAN
 
       uplink_redundancy:

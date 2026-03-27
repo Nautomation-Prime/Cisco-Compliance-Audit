@@ -17,27 +17,297 @@ from pathlib import Path
 from typing import Optional
 
 import yaml
-from rich.console import Console
-from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, MofNCompleteColumn
-from rich.table import Table
 from rich import box
+from rich.console import Console
+from rich.progress import (
+    BarColumn,
+    MofNCompleteColumn,
+    Progress,
+    SpinnerColumn,
+    TextColumn,
+)
+from rich.table import Table
 
+from .collector import DataCollector, OfflineCollector
+from .compliance_engine import AuditResult, ComplianceEngine, Finding, Status
 from .credentials import CredentialHandler
+from .hostname_parser import parse_hostname
 from .jump_manager import JumpManager
 from .netmiko_utils import DeviceConnector
-from .hostname_parser import parse_hostname
-from .collector import DataCollector, OfflineCollector
 from .port_classifier import classify_ports
-from .compliance_engine import ComplianceEngine, AuditResult, Finding, Status
+from .remediation_workflow import (
+    generate_review_pack,
+    get_remediation_settings,
+)
 from .report import (
-    print_report, save_json, save_html, save_consolidated_html,
-    save_csv, save_remediation_script,
-    _find_latest_baseline, load_baseline, compute_delta,
-    save_delta_report, print_delta_summary,
+    _find_latest_baseline,
+    compute_delta,
+    load_baseline,
+    print_delta_summary,
+    save_consolidated_html,
+    save_csv,
+    save_delta_report,
+    save_html,
+    save_json,
+    save_remediation_script,
 )
 
 log = logging.getLogger(__name__)
 console = Console()
+
+
+def _get_roi_settings(audit_settings: dict) -> dict:
+    """Return ROI settings with safe defaults."""
+    roi = audit_settings.get("roi", {})
+    if not isinstance(roi, dict):
+        roi = {}
+
+    def _as_non_negative_float(value, default: float) -> float:
+        try:
+            return max(0.0, float(value))
+        except (TypeError, ValueError):
+            return default
+
+    base_manual_per_device = _as_non_negative_float(
+        roi.get("manual_minutes_per_device", 20.0), 20.0
+    )
+    base_manual_per_check = _as_non_negative_float(
+        roi.get("manual_minutes_per_check", 0.25), 0.25
+    )
+    base_overhead = _as_non_negative_float(
+        roi.get("automation_overhead_minutes_per_device", 2.0), 2.0
+    )
+    base_validation = _as_non_negative_float(
+        roi.get("validation_minutes_per_device", 0.0), 0.0
+    )
+    min_runtime_seconds = _as_non_negative_float(
+        roi.get("min_runtime_seconds", 0.0), 0.0
+    )
+
+    profiles = roi.get("profiles", {})
+    if not isinstance(profiles, dict):
+        profiles = {}
+
+    audit_profile = profiles.get("audit", {})
+    if not isinstance(audit_profile, dict):
+        audit_profile = {}
+    post_profile = profiles.get("post_remediation", {})
+    if not isinstance(post_profile, dict):
+        post_profile = {}
+
+    roi_profiles = {
+        "audit": {
+            "manual_minutes_per_device": _as_non_negative_float(
+                audit_profile.get(
+                    "manual_minutes_per_device", base_manual_per_device
+                ),
+                base_manual_per_device,
+            ),
+            "manual_minutes_per_check": _as_non_negative_float(
+                audit_profile.get(
+                    "manual_minutes_per_check", base_manual_per_check
+                ),
+                base_manual_per_check,
+            ),
+            "automation_overhead_minutes_per_device": _as_non_negative_float(
+                audit_profile.get(
+                    "automation_overhead_minutes_per_device", base_overhead
+                ),
+                base_overhead,
+            ),
+            "validation_minutes_per_device": _as_non_negative_float(
+                audit_profile.get(
+                    "validation_minutes_per_device", base_validation
+                ),
+                base_validation,
+            ),
+        },
+        "post_remediation": {
+            "manual_minutes_per_device": _as_non_negative_float(
+                post_profile.get(
+                    "manual_minutes_per_device", base_manual_per_device
+                ),
+                base_manual_per_device,
+            ),
+            "manual_minutes_per_check": _as_non_negative_float(
+                post_profile.get(
+                    "manual_minutes_per_check", base_manual_per_check
+                ),
+                base_manual_per_check,
+            ),
+            "automation_overhead_minutes_per_device": _as_non_negative_float(
+                post_profile.get(
+                    "automation_overhead_minutes_per_device", base_overhead
+                ),
+                base_overhead,
+            ),
+            "validation_minutes_per_device": _as_non_negative_float(
+                post_profile.get(
+                    "validation_minutes_per_device", base_validation
+                ),
+                base_validation,
+            ),
+        },
+    }
+
+    return {
+        "enabled": bool(roi.get("enabled", False)),
+        "manual_minutes_per_device": base_manual_per_device,
+        "manual_minutes_per_check": base_manual_per_check,
+        "automation_overhead_minutes_per_device": base_overhead,
+        "validation_minutes_per_device": base_validation,
+        "min_runtime_seconds": min_runtime_seconds,
+        "hourly_rate": _as_non_negative_float(
+            roi.get("hourly_rate", 0.0), 0.0
+        ),
+        "currency": str(roi.get("currency", "GBP")),
+        "profiles": roi_profiles,
+    }
+
+
+def _estimate_roi_for_result(
+    result: AuditResult,
+    roi_settings: dict,
+    context: str = "audit",
+) -> dict:
+    """Estimate per-device automation value using a simple, configurable model."""
+    profiles = roi_settings.get("profiles", {})
+    if not isinstance(profiles, dict):
+        profiles = {}
+    profile = profiles.get(context, profiles.get("audit", {}))
+    if not isinstance(profile, dict):
+        profile = {}
+
+    manual_minutes_per_device = float(
+        profile.get(
+            "manual_minutes_per_device",
+            roi_settings.get("manual_minutes_per_device", 20.0),
+        )
+    )
+    manual_minutes_per_check = float(
+        profile.get(
+            "manual_minutes_per_check",
+            roi_settings.get("manual_minutes_per_check", 0.25),
+        )
+    )
+    overhead_minutes = float(
+        profile.get(
+            "automation_overhead_minutes_per_device",
+            roi_settings.get("automation_overhead_minutes_per_device", 2.0),
+        )
+    )
+    validation_minutes = float(
+        profile.get(
+            "validation_minutes_per_device",
+            roi_settings.get("validation_minutes_per_device", 0.0),
+        )
+    )
+    min_runtime_seconds = float(roi_settings.get("min_runtime_seconds", 0.0))
+    effective_runtime_seconds = max(
+        float(result.duration_secs), min_runtime_seconds
+    )
+
+    manual_minutes = manual_minutes_per_device + (
+        manual_minutes_per_check * result.total
+    )
+    automated_minutes = (
+        (effective_runtime_seconds / 60.0)
+        + overhead_minutes
+        + validation_minutes
+    )
+    minutes_saved = max(0.0, manual_minutes - automated_minutes)
+    hours_saved = minutes_saved / 60.0
+    value_saved = hours_saved * roi_settings["hourly_rate"]
+
+    return {
+        "context": context,
+        "duration_secs": round(effective_runtime_seconds, 1),
+        "manual_minutes_estimate": round(manual_minutes, 1),
+        "automated_minutes": round(automated_minutes, 1),
+        "minutes_saved": round(minutes_saved, 1),
+        "hours_saved": round(hours_saved, 2),
+        "hourly_rate": round(roi_settings["hourly_rate"], 2),
+        "currency": roi_settings["currency"],
+        "value_saved": round(value_saved, 2),
+        "assumptions": {
+            "context": context,
+            "manual_minutes_per_device": manual_minutes_per_device,
+            "manual_minutes_per_check": manual_minutes_per_check,
+            "automation_overhead_minutes_per_device": overhead_minutes,
+            "validation_minutes_per_device": validation_minutes,
+            "min_runtime_seconds": min_runtime_seconds,
+        },
+    }
+
+
+def _summarize_roi(results: list[AuditResult], roi_settings: dict) -> dict:
+    """Aggregate ROI metrics across all audited devices."""
+    manual = 0.0
+    automated = 0.0
+    saved = 0.0
+    value = 0.0
+    device_count = 0
+
+    for r in results:
+        roi = getattr(r, "_roi", None)
+        if not roi:
+            continue
+        device_count += 1
+        manual += float(roi.get("manual_minutes_estimate", 0.0))
+        automated += float(roi.get("automated_minutes", 0.0))
+        saved += float(roi.get("minutes_saved", 0.0))
+        value += float(roi.get("value_saved", 0.0))
+
+    return {
+        "enabled": bool(roi_settings.get("enabled", False)),
+        "device_count": device_count,
+        "manual_minutes_estimate": round(manual, 1),
+        "automated_minutes": round(automated, 1),
+        "minutes_saved": round(saved, 1),
+        "hours_saved": round(saved / 60.0, 2),
+        "hourly_rate": round(float(roi_settings.get("hourly_rate", 0.0)), 2),
+        "currency": str(roi_settings.get("currency", "GBP")),
+        "value_saved": round(value, 2),
+        "assumptions": {
+            "manual_minutes_per_device": float(
+                roi_settings.get("profiles", {})
+                .get("audit", {})
+                .get(
+                    "manual_minutes_per_device",
+                    roi_settings.get("manual_minutes_per_device", 0.0),
+                )
+            ),
+            "manual_minutes_per_check": float(
+                roi_settings.get("profiles", {})
+                .get("audit", {})
+                .get(
+                    "manual_minutes_per_check",
+                    roi_settings.get("manual_minutes_per_check", 0.0),
+                )
+            ),
+            "automation_overhead_minutes_per_device": float(
+                roi_settings.get("profiles", {})
+                .get("audit", {})
+                .get(
+                    "automation_overhead_minutes_per_device",
+                    roi_settings.get(
+                        "automation_overhead_minutes_per_device", 0.0
+                    ),
+                )
+            ),
+            "validation_minutes_per_device": float(
+                roi_settings.get("profiles", {})
+                .get("audit", {})
+                .get(
+                    "validation_minutes_per_device",
+                    roi_settings.get("validation_minutes_per_device", 0.0),
+                )
+            ),
+            "min_runtime_seconds": float(
+                roi_settings.get("min_runtime_seconds", 0.0)
+            ),
+        },
+    }
 
 
 def load_compliance_config(path: str) -> dict:
@@ -64,11 +334,15 @@ def load_compliance_config(path: str) -> dict:
     for key, expected_type in _EXPECTED_KEYS.items():
         val = cfg.get(key)
         if val is None:
-            console.print(f"[bold yellow]Warning:[/] config missing required "
-                          f"section [cyan]'{key}'[/] — using defaults.")
+            console.print(
+                f"[bold yellow]Warning:[/] config missing required "
+                f"section [cyan]'{key}'[/] — using defaults."
+            )
         elif not isinstance(val, expected_type):
-            console.print(f"[bold red]Config error:[/] '{key}' must be a "
-                          f"{expected_type.__name__}, got {type(val).__name__}")
+            console.print(
+                f"[bold red]Config error:[/] '{key}' must be a "
+                f"{expected_type.__name__}, got {type(val).__name__}"
+            )
             sys.exit(1)
 
     return cfg
@@ -85,7 +359,9 @@ def _resolve_config_path(path: str) -> Path:
     return Path(__file__).parent
 
 
-def load_device_inventory(inventory_path: str | None, config_path: str) -> list[dict]:
+def load_device_inventory(
+    inventory_path: str | None, config_path: str
+) -> list[dict]:
     """Load the device inventory from a dedicated YAML file.
 
     Resolution order for *inventory_path*:
@@ -115,6 +391,7 @@ def load_device_inventory(inventory_path: str | None, config_path: str) -> list[
 @dataclass
 class _DeviceJob:
     """All parameters needed to audit a single device."""
+
     hostname: str
     ip: str
     username: str
@@ -127,6 +404,7 @@ class _DeviceJob:
     role_config: Optional[list]
     endpoint_config: Optional[dict]
     audit_settings: dict
+    explicit_role: Optional[str] = None  # NEW: explicit role from devices.yaml
 
 
 def _audit_single_device(job: _DeviceJob) -> Optional[AuditResult]:
@@ -140,8 +418,10 @@ def _audit_single_device(job: _DeviceJob) -> Optional[AuditResult]:
     log.info("Starting audit of %s (%s)", hostname, ip)
     t_start = time.monotonic()
 
-    # Parse hostname for role
-    host_info = parse_hostname(hostname, role_config=job.role_config)
+    # Parse hostname for role (with optional explicit role override from devices.yaml)
+    host_info = parse_hostname(
+        hostname, role_config=job.role_config, explicit_role=job.explicit_role
+    )
 
     dry_run_dir = job.audit_settings.get("_dry_run_dir")
 
@@ -161,8 +441,10 @@ def _audit_single_device(job: _DeviceJob) -> Optional[AuditResult]:
             password=job.password,
             device_type=job.device_type,
             jump=job.jump,
-            retries=job.audit_settings.get("retries",
-                     job.audit_settings.get("_connection", {}).get("retries", 3)),
+            retries=job.audit_settings.get(
+                "retries",
+                job.audit_settings.get("_connection", {}).get("retries", 3),
+            ),
             **({"secret": job.enable_secret} if job.enable_secret else {}),
         )
         try:
@@ -176,7 +458,9 @@ def _audit_single_device(job: _DeviceJob) -> Optional[AuditResult]:
             data = collector.collect(conn, ip=ip)
             data.hostname = hostname
         except Exception as exc:
-            log.error("Data collection from %s (%s) failed: %s", hostname, ip, exc)
+            log.error(
+                "Data collection from %s (%s) failed: %s", hostname, ip, exc
+            )
             try:
                 conn.disconnect()
             except Exception:
@@ -197,36 +481,48 @@ def _audit_single_device(job: _DeviceJob) -> Optional[AuditResult]:
     except Exception as exc:
         log.exception("Compliance engine failed for %s (%s)", hostname, ip)
         result = AuditResult(
-            hostname=hostname, ip=ip,
-            role=host_info.role, role_display=host_info.role_display,
-            findings=[Finding(
-                check_name="engine_error",
-                status=Status.ERROR,
-                detail=f"Compliance engine crashed: {exc}",
-                category="internal",
-            )],
+            hostname=hostname,
+            ip=ip,
+            role=host_info.role,
+            role_display=host_info.role_display,
+            findings=[
+                Finding(
+                    check_name="engine_error",
+                    status=Status.ERROR,
+                    detail=f"Compliance engine crashed: {exc}",
+                    category="internal",
+                )
+            ],
         )
 
     try:
         # Populate metadata
         result.duration_secs = round(time.monotonic() - t_start, 1)
-        result.audit_ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+        result.audit_ts = datetime.now(timezone.utc).strftime(
+            "%Y-%m-%d %H:%M UTC"
+        )
         from . import __version__
+
         result.tool_version = __version__
 
         # Extract IOS-XE version from Genie data
         if data.version:
             ver = data.version.get("version", {})
-            result.ios_version = ver.get("version", "") or ver.get("xe_version", "")
+            result.ios_version = ver.get("version", "") or ver.get(
+                "xe_version", ""
+            )
 
         # Save per-device reports
         out_dir = job.audit_settings.get("output_dir", "./reports")
+        rem = get_remediation_settings(job.audit_settings)
         if job.audit_settings.get("json_report", True):
             save_json(result, out_dir)
         if job.audit_settings.get("html_report", True):
             save_html(result, out_dir)
-        if job.audit_settings.get("remediation_script", True):
-            save_remediation_script(result, out_dir)
+        if rem.get("enabled") and rem.get("generate_script"):
+            script_path = save_remediation_script(result, out_dir)
+            if script_path and rem.get("generate_review_pack"):
+                generate_review_pack(result, script_path, out_dir)
 
         # Delta reporting (compare against previous baseline)
         if job.audit_settings.get("json_report", True):
@@ -238,8 +534,12 @@ def _audit_single_device(job: _DeviceJob) -> Optional[AuditResult]:
                     save_delta_report(delta, hostname, out_dir)
                     result._delta = delta  # stash for console output
 
-        log.info("Completed audit of %s — score %s%% (%.1fs)",
-                 hostname, result.score_pct, result.duration_secs)
+        log.info(
+            "Completed audit of %s — score %s%% (%.1fs)",
+            hostname,
+            result.score_pct,
+            result.duration_secs,
+        )
         return result
 
     finally:
@@ -318,8 +618,10 @@ def run_audit(
     # Warn if no actual compliance checks are configured
     check_cats = [k for k in compliance_policy if not k.startswith("_")]
     if not check_cats:
-        console.print("[bold yellow]Warning:[/] No compliance check categories "
-                      "found in policy — audits will produce zero findings.")
+        console.print(
+            "[bold yellow]Warning:[/] No compliance check categories "
+            "found in policy — audits will produce zero findings."
+        )
         log.warning("Compliance policy contains no check categories")
 
     # ── Build device list ──────────────────────────────────
@@ -356,27 +658,36 @@ def run_audit(
             jump = JumpManager(jump_host, username, password)
             jump.connect()
     else:
-        console.print("[bold yellow]DRY-RUN MODE[/] — loading saved outputs "
-                      f"from [cyan]{dry_run_dir}[/]")
+        console.print(
+            "[bold yellow]DRY-RUN MODE[/] — loading saved outputs "
+            f"from [cyan]{dry_run_dir}[/]"
+        )
         # In dry-run mode, also auto-discover device folders if no devices given
         if not devices:
             dr_path = Path(dry_run_dir)
             if dr_path.is_dir():
                 for child in sorted(dr_path.iterdir()):
                     if child.is_dir():
-                        devices.append({"hostname": child.name, "ip": child.name})
+                        devices.append(
+                            {"hostname": child.name, "ip": child.name}
+                        )
                 if devices:
-                    console.print(f"  Discovered {len(devices)} device(s) from dry-run directory")
+                    console.print(
+                        f"  Discovered {len(devices)} device(s) from dry-run directory"
+                    )
 
     if not devices:
-        console.print("[bold yellow]No devices to audit.[/] "
-                      "Add devices to devices.yaml or use --device.")
+        console.print(
+            "[bold yellow]No devices to audit.[/] "
+            "Add devices to devices.yaml or use --device."
+        )
         return []
 
     # ── Concurrency settings ───────────────────────────────
     max_workers = max(1, min(audit_settings.get("max_workers", 5), 20))
     device_type = conn_cfg.get("device_type", "cisco_xe")
     timeout = audit_settings.get("collect_timeout", 30)
+    roi_settings = _get_roi_settings(audit_settings)
 
     mode_label = "offline" if dry_run_dir else "live"
     console.print(
@@ -390,20 +701,26 @@ def run_audit(
     for dev_entry in devices:
         ip = dev_entry.get("ip", "")
         hostname = dev_entry.get("hostname", ip)
-        jobs.append(_DeviceJob(
-            hostname=hostname,
-            ip=ip,
-            username=username,
-            password=password,
-            device_type=device_type,
-            jump=jump,
-            enable_secret=enable_secret,
-            timeout=timeout,
-            compliance_policy=compliance_policy,
-            role_config=role_config,
-            endpoint_config=endpoint_config,
-            audit_settings=audit_settings,
-        ))
+        explicit_role = dev_entry.get(
+            "role"
+        )  # NEW: get explicit role from devices.yaml
+        jobs.append(
+            _DeviceJob(
+                hostname=hostname,
+                ip=ip,
+                username=username,
+                password=password,
+                device_type=device_type,
+                jump=jump,
+                enable_secret=enable_secret,
+                timeout=timeout,
+                compliance_policy=compliance_policy,
+                role_config=role_config,
+                endpoint_config=endpoint_config,
+                audit_settings=audit_settings,
+                explicit_role=explicit_role,  # NEW: pass explicit role to job
+            )
+        )
 
     # ── Execute audits concurrently ────────────────────────
     results: list[AuditResult] = []
@@ -441,8 +758,7 @@ def run_audit(
                     except Exception as exc:
                         log.exception("Audit of %s failed", job.hostname)
                         progress.console.print(
-                            f"  [red]✗[/] {job.hostname} ({job.ip}) — "
-                            f"Error: {exc}"
+                            f"  [red]✗[/] {job.hostname} ({job.ip}) — Error: {exc}"
                         )
                     progress.advance(task_id)
 
@@ -453,11 +769,20 @@ def run_audit(
     # ── Summary table ────────────────────────────────────────
     out_dir = audit_settings.get("output_dir", "./reports")
     if results:
+        if roi_settings.get("enabled", False):
+            for r in results:
+                r._roi = _estimate_roi_for_result(
+                    r, roi_settings, context="audit"
+                )
+
         console.print()
         console.rule("[bold cyan]AUDIT SUMMARY[/]")
         summary_table = Table(
-            box=box.ROUNDED, expand=False, show_lines=False,
-            title_style="bold", min_width=90,
+            box=box.ROUNDED,
+            expand=False,
+            show_lines=False,
+            title_style="bold",
+            min_width=90,
         )
         summary_table.add_column("Device", style="cyan", min_width=30)
         summary_table.add_column("IP", min_width=15)
@@ -489,6 +814,19 @@ def run_audit(
             delta = getattr(r, "_delta", None)
             if delta:
                 print_delta_summary(delta, r.hostname, console=console)
+
+        if roi_settings.get("enabled", False):
+            roi_summary = _summarize_roi(results, roi_settings)
+            console.print(
+                f"[bold cyan]ROI Estimate:[/] "
+                f"{roi_summary['hours_saved']}h saved "
+                f"({roi_summary['minutes_saved']} min)"
+            )
+            if roi_summary["hourly_rate"] > 0:
+                console.print(
+                    f"[bold cyan]Estimated Value:[/] "
+                    f"{roi_summary['currency']} {roi_summary['value_saved']:.2f}"
+                )
 
     # ── CSV export ─────────────────────────────────────────
     if results and audit_settings.get("csv_report", True):

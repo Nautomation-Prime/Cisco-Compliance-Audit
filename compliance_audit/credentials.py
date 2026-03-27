@@ -1,6 +1,8 @@
+"""Credential retrieval and optional keyring persistence utilities."""
+
 import getpass
-import os
 import logging
+import os
 
 log = logging.getLogger(__name__)
 
@@ -15,6 +17,7 @@ def _get_keyring():
     if _keyring is None:
         try:
             import keyring
+
             _keyring = keyring
         except ImportError:
             raise RuntimeError(
@@ -47,6 +50,7 @@ class CredentialHandler:
         credential_store: str = "none",
         keyring_service: str = "cisco-compliance-audit",
     ) -> None:
+        """Configure credential lookup backend and keyring service name."""
         self._store = credential_store.lower().strip()
         self._service = keyring_service
 
@@ -60,7 +64,9 @@ class CredentialHandler:
         if self._store == "keyring":
             creds = self._from_keyring()
             if creds:
-                log.info("Credentials loaded from OS keyring (%s)", self._service)
+                log.info(
+                    "Credentials loaded from OS keyring (%s)", self._service
+                )
                 return creds
 
         # 2) Environment overrides
@@ -89,7 +95,10 @@ class CredentialHandler:
         Retrieve enable secret if USE_ENABLE is set in environment.
         """
         use_enable = os.environ.get("USE_ENABLE", "false").lower() in {
-            "1", "true", "yes", "y",
+            "1",
+            "true",
+            "yes",
+            "y",
         }
         if not use_enable:
             return None

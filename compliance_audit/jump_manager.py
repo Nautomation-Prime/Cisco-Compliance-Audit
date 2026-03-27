@@ -1,9 +1,13 @@
+"""SSH jump-host connection and channel management for device access."""
+
 import logging
 import threading
-from typing import Optional, Tuple
+from typing import Optional
+
 import paramiko
 
 log = logging.getLogger(__name__)
+
 
 class JumpManager:
     """
@@ -11,6 +15,7 @@ class JumpManager:
     'direct-tcpip' channels for Netmiko via the 'sock' parameter.
     Use as context manager to ensure the jump connection is closed.
     """
+
     def __init__(
         self,
         jump_host: str,
@@ -21,6 +26,7 @@ class JumpManager:
         allow_agent: bool = False,
         host_key_policy: Optional[paramiko.MissingHostKeyPolicy] = None,
     ):
+        """Store jump-host connection settings for later SSH channel use."""
         self.jump_host = jump_host
         self.username = username
         self.password = password
@@ -53,12 +59,20 @@ class JumpManager:
                 timeout=20,
             )
             self.client = cli
-            log.debug(f"Connected to jump host {self.jump_host}:{self.port}")
+            log.debug(
+                "Connected to jump host %s:%d", self.jump_host, self.port
+            )
         except Exception:
-            log.exception(f"Failed to connect to jump host {self.jump_host}:{self.port}")
+            log.exception(
+                "Failed to connect to jump host %s:%d",
+                self.jump_host,
+                self.port,
+            )
             raise
 
-    def open_channel(self, target_host: str, target_port: int = 22) -> paramiko.Channel:
+    def open_channel(
+        self, target_host: str, target_port: int = 22
+    ) -> paramiko.Channel:
         """
         Open a direct-tcpip channel from jump -> target_host:target_port.
         Returns a paramiko.Channel suitable for Netmiko's 'sock' kwarg.
@@ -75,11 +89,23 @@ class JumpManager:
                 self.connect()
                 transport = self.client.get_transport()
             try:
-                chan = transport.open_channel("direct-tcpip", (target_host, target_port), ("127.0.0.1", 0))
-                log.debug(f"Opened channel to {target_host}:{target_port} via jump host")
+                chan = transport.open_channel(
+                    "direct-tcpip",
+                    (target_host, target_port),
+                    ("127.0.0.1", 0),
+                )
+                log.debug(
+                    "Opened channel to %s:%d via jump host",
+                    target_host,
+                    target_port,
+                )
                 return chan
             except Exception:
-                log.exception(f"Failed to open channel to {target_host}:{target_port} via jump host")
+                log.exception(
+                    "Failed to open channel to %s:%d via jump host",
+                    target_host,
+                    target_port,
+                )
                 raise
 
     def close(self) -> None:
@@ -87,7 +113,7 @@ class JumpManager:
         if self.client:
             try:
                 self.client.close()
-                log.debug(f"Closed jump host connection {self.jump_host}")
+                log.debug("Closed jump host connection %s", self.jump_host)
             finally:
                 self.client = None
 

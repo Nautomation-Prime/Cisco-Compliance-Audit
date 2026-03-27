@@ -29,14 +29,14 @@ Detection strategy for uplink vs downlink vs endpoint
 4. Combination: endpoint is checked first, then STP, then CDP hostname.
 """
 
-import re
 import logging
-from enum import Enum
+import re
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Optional
 
 from .collector import DeviceData, normalize_intf
-from .hostname_parser import parse_hostname, get_trunk_signal_map
+from .hostname_parser import get_trunk_signal_map, parse_hostname
 
 log = logging.getLogger(__name__)
 
@@ -65,21 +65,27 @@ class PortInfo:
     oper_down: bool = False
     description: str = ""
     is_stp_root_port: bool = False
+    is_stp_alternate_port: bool = (
+        False  # True if port has STP alternate role (backup uplink)
+    )
     cdp_neighbor: str = ""
-    cdp_neighbor_role: str = ""      # ASW / CSW / SDW / ISW / ""
+    cdp_neighbor_role: str = ""  # ASW / CSW / SDW / ISW / ""
     cdp_neighbor_platform: str = ""  # CDP platform string
     cdp_neighbor_capabilities: str = ""  # CDP capabilities string
-    is_endpoint_neighbor: bool = False    # True if CDP/LLDP says AP/endpoint
-    switchport_mode: str = ""        # access / trunk / dynamic / ""
+    is_endpoint_neighbor: bool = False  # True if CDP/LLDP says AP/endpoint
+    switchport_mode: str = ""  # access / trunk / dynamic / ""
     access_vlan: int = 0
     trunk_allowed_vlans: str = ""
-    port_channel_member_of: str = "" # e.g. "Port-channel1" if this is a member
+    port_channel_member_of: str = (
+        ""  # e.g. "Port-channel1" if this is a member
+    )
     config_lines: list[str] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
 
 def classify_ports(
     data: DeviceData,
@@ -105,7 +111,7 @@ def classify_ports(
         norm = normalize_intf(intf_name)
         pi = PortInfo(name=norm, config_lines=cfg_lines)
         pi.description = _extract_description(cfg_lines)
-        pi.admin_down = any(l == "shutdown" for l in cfg_lines)
+        pi.admin_down = any(line == "shutdown" for line in cfg_lines)
         pi.switchport_mode = _extract_switchport_mode(cfg_lines)
         pi.access_vlan = _extract_access_vlan(cfg_lines)
         pi.trunk_allowed_vlans = _extract_trunk_allowed_vlans(cfg_lines)
@@ -114,12 +120,18 @@ def classify_ports(
     # 2) Enrich with Genie-parsed interface data (speed, oper status)
     _enrich_interface_data(ports, data.interfaces)
 
-    # 3) Locate STP root ports
+    # 3) Locate STP root ports and alternate ports
     root_ports = _find_root_ports(data.stp)
     for rp in root_ports:
         norm = normalize_intf(rp)
         if norm in ports:
             ports[norm].is_stp_root_port = True
+
+    alternate_ports = _find_alternate_ports(data.stp)
+    for ap in alternate_ports:
+        norm = normalize_intf(ap)
+        if norm in ports:
+            ports[norm].is_stp_alternate_port = True
 
     # 4) Map CDP neighbors to local interfaces (including endpoint detection)
     _map_cdp_neighbors(ports, data.cdp, role_config, ep_patterns)
@@ -138,6 +150,7 @@ def classify_ports(
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
 
 def _extract_description(cfg: list[str]) -> str:
     for line in cfg:
@@ -164,7 +177,9 @@ def _extract_access_vlan(cfg: list[str]) -> int:
 
 def _extract_trunk_allowed_vlans(cfg: list[str]) -> str:
     for line in cfg:
-        m = re.match(r"switchport trunk allowed vlan (.+)", line, re.IGNORECASE)
+        m = re.match(
+            r"switchport trunk allowed vlan (.+)", line, re.IGNORECASE
+        )
         if m:
             return m.group(1).strip()
     return ""
@@ -203,7 +218,8 @@ def _find_root_ports(stp_data: Optional[dict]) -> set[str]:
         return root_ports
 
     # Genie 'show spanning-tree' structure:
-    #   { <stp-mode>: { 'vlans': { <vlan-id>: { 'interfaces': { <intf>: { 'role': 'root' } } } } } }
+    #   { <stp-mode>: { 'vlans': { <vlan-id>: { 'interfaces':
+    #   { <intf>: { 'role': 'root' } } } } } }
     for mode_data in stp_data.values():
         if not isinstance(mode_data, dict):
             continue
@@ -212,12 +228,50 @@ def _find_root_ports(stp_data: Optional[dict]) -> set[str]:
             if not isinstance(vlan_info, dict):
                 continue
             for intf, intf_data in vlan_info.get("interfaces", {}).items():
-                if isinstance(intf_data, dict) and intf_data.get("role", "").lower() == "root":
+                if (
+                    isinstance(intf_data, dict)
+                    and intf_data.get("role", "").lower() == "root"
+                ):
                     root_ports.add(normalize_intf(intf))
 
     if root_ports:
         log.info("STP root ports detected: %s", root_ports)
     return root_ports
+
+
+def _find_alternate_ports(stp_data: Optional[dict]) -> set[str]:
+    """Extract every interface that is an STP Alternate Port for any VLAN.
+
+    Alternate ports are backup uplinks that would become active if the root port fails.
+    They are typically shown as 'Altn' role with 'BLK' (blocked) status in STP output.
+
+    Note: We look across all VLANs and identify ports that are alternate in ANY VLAN,
+    since the alternate port should be consistent across all VLANs on an access switch.
+    """
+    alternate_ports: set[str] = set()
+    if not stp_data:
+        return alternate_ports
+
+    # Genie 'show spanning-tree' structure:
+    #   { <stp-mode>: { 'vlans': { <vlan-id>: { 'interfaces':
+    #   { <intf>: { 'role': 'alternate' } } } } } }
+    for mode_data in stp_data.values():
+        if not isinstance(mode_data, dict):
+            continue
+        vlans = mode_data.get("vlans", {})
+        for vlan_info in vlans.values():
+            if not isinstance(vlan_info, dict):
+                continue
+            for intf, intf_data in vlan_info.get("interfaces", {}).items():
+                if isinstance(intf_data, dict):
+                    role = intf_data.get("role", "").lower()
+                    # Check for both 'alternate' and common abbreviations like 'altn'
+                    if role in ("alternate", "altn", "alt"):
+                        alternate_ports.add(normalize_intf(intf))
+
+    if alternate_ports:
+        log.info("STP alternate ports detected: %s", alternate_ports)
+    return alternate_ports
 
 
 def _map_etherchannel_members(
@@ -255,8 +309,11 @@ def _map_etherchannel_members(
                     ports[member_norm].port_channel_member_of = po_norm
                     mapped = True
             if members:
-                log.info("Port-channel %s members: %s",
-                         po_norm, [normalize_intf(m) for m in members])
+                log.info(
+                    "Port-channel %s members: %s",
+                    po_norm,
+                    [normalize_intf(m) for m in members],
+                )
 
     # ── Fallback: parse 'channel-group' from running-config ─────
     if not mapped:
@@ -300,7 +357,9 @@ def _map_cdp_neighbors(
                 pi.is_endpoint_neighbor = True
             else:
                 # Fall back to hostname role parsing
-                host_info = parse_hostname(neighbor_id.split(".")[0], role_config=role_config)
+                host_info = parse_hostname(
+                    neighbor_id.split(".")[0], role_config=role_config
+                )
                 if host_info.parsed and host_info.role_code:
                     pi.cdp_neighbor_role = host_info.role_code
 
@@ -321,7 +380,9 @@ def _map_lldp_neighbors(
         if local_if not in ports or ports[local_if].cdp_neighbor:
             continue  # CDP already populated
         neighbors = if_data.get("port_id", {})
-        for neigh_data in (neighbors.values() if isinstance(neighbors, dict) else []):
+        for neigh_data in (
+            neighbors.values() if isinstance(neighbors, dict) else []
+        ):
             if not isinstance(neigh_data, dict):
                 continue
             system_name = neigh_data.get("system_name", "")
@@ -334,14 +395,18 @@ def _map_lldp_neighbors(
                 if _is_endpoint(system_name, system_desc, "", ep_patterns):
                     pi.is_endpoint_neighbor = True
                 else:
-                    host_info = parse_hostname(system_name.split(".")[0], role_config=role_config)
+                    host_info = parse_hostname(
+                        system_name.split(".")[0], role_config=role_config
+                    )
                     if host_info.parsed and host_info.role_code:
                         pi.cdp_neighbor_role = host_info.role_code
                 break
 
 
 _ENDPOINT_DEFAULT_HOSTNAME = [re.compile(r"^AP[\d_-]+", re.IGNORECASE)]
-_ENDPOINT_DEFAULT_PLATFORM = [re.compile(r"AIR-|C91[2-7]|CW91|MR\d", re.IGNORECASE)]
+_ENDPOINT_DEFAULT_PLATFORM = [
+    re.compile(r"AIR-|C91[2-7]|CW91|MR\d", re.IGNORECASE)
+]
 _ENDPOINT_DEFAULT_CAPABILITIES = [re.compile(r"Trans-Bridge", re.IGNORECASE)]
 
 
@@ -369,9 +434,12 @@ def _compile_endpoint_patterns(ep_cfg: dict | None) -> dict:
         return compiled
 
     return {
-        "hostname": _compile_list(ep_cfg.get("hostname_patterns", [])) or _ENDPOINT_DEFAULT_HOSTNAME,
-        "platform": _compile_list(ep_cfg.get("platform_patterns", [])) or _ENDPOINT_DEFAULT_PLATFORM,
-        "capabilities": _compile_list(ep_cfg.get("capabilities", [])) or _ENDPOINT_DEFAULT_CAPABILITIES,
+        "hostname": _compile_list(ep_cfg.get("hostname_patterns", []))
+        or _ENDPOINT_DEFAULT_HOSTNAME,
+        "platform": _compile_list(ep_cfg.get("platform_patterns", []))
+        or _ENDPOINT_DEFAULT_PLATFORM,
+        "capabilities": _compile_list(ep_cfg.get("capabilities", []))
+        or _ENDPOINT_DEFAULT_CAPABILITIES,
     }
 
 
@@ -434,14 +502,16 @@ def _determine_role(
         return PortRole.SVI
     if name.startswith("Tunnel"):
         return PortRole.OTHER
-    if name.startswith("AppGigabitEthernet") or name.lower().startswith("mgmt"):
+    if name.startswith("AppGigabitEthernet") or name.lower().startswith(
+        "mgmt"
+    ):
         return PortRole.MGMT
 
     is_po = name.startswith("Port-channel")
 
     # Check if it's a routed (no switchport) interface
     if (is_po or _is_physical(name)) and any(
-        l.startswith("no switchport") for l in pi.config_lines
+        line.startswith("no switchport") for line in pi.config_lines
     ):
         return PortRole.ROUTED
 
@@ -461,6 +531,10 @@ def _determine_role(
 
         # Signal 2: STP root port → uplink
         if pi.is_stp_root_port:
+            return PortRole.TRUNK_UPLINK
+
+        # Signal 2b: STP alternate port → uplink (backup uplink)
+        if pi.is_stp_alternate_port:
             return PortRole.TRUNK_UPLINK
 
         # Signal 3: CDP/LLDP neighbor role → use trunk_signal from config

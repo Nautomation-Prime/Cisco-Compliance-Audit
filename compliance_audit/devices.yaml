@@ -4,6 +4,10 @@
 # ║  Each entry needs:                                                  ║
 # ║    hostname  – used to detect the device role                       ║
 # ║    ip        – management IP (or DNS name) the auditor connects     ║
+# ║    role      – (optional) explicit device role override             ║
+# ║                (e.g., "access_switch", "core_switch",               ║
+# ║                 "sdwan_router", "industrial_switch")                ║
+# ║                If not specified, role is determined from hostname.  ║
 # ║                                                                     ║
 # ║  To skip this file and audit a single device ad-hoc, use:           ║
 # ║    python -m compliance_audit --device GB-SITE1-001ASW001:10.1.1.1  ║
@@ -16,5 +20,6 @@ devices:
     ip: 192.0.2.62
   # - hostname: placeholder
   #   ip: 10.1.3.1
+  #   role: core_switch  # Optional: explicitly set the device role
   # - hostname: placeholder
   #   ip: 10.1.4.1

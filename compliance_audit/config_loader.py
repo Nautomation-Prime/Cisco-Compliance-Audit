@@ -1,6 +1,10 @@
+"""Configuration loading helpers for audit and connection settings."""
+
 import os
-import yaml
 from pathlib import Path
+
+import yaml
+
 
 class Config:
     """
@@ -12,6 +16,7 @@ class Config:
     """
 
     def __init__(self, config_file: str = "compliance_config.yaml"):
+        """Load config data from the given YAML file path."""
         self._config_file = Path(config_file)
         if not self._config_file.exists():
             # Try relative to this module's directory
@@ -25,22 +30,27 @@ class Config:
 
     def _load_yaml(self) -> dict:
         if not self._config_file.exists():
-            raise FileNotFoundError(f"Config file not found: {self._config_file}")
+            raise FileNotFoundError(
+                f"Config file not found: {self._config_file}"
+            )
         with open(self._config_file, "r", encoding="utf-8") as f:
             return yaml.safe_load(f) or {}
 
     # --- Public API surface ---
     @property
     def jump_host(self) -> str:
+        """Return configured jump host from connection or legacy key."""
         conn = self._config.get("connection", {})
         return conn.get("jump_host") or self._config.get("JUMP_HOST", "")
 
     @property
     def settings(self) -> dict:
+        """Return generic top-level settings from the config."""
         return self._config.get("settings", {})
 
     @property
     def connection(self) -> dict:
+        """Return connection settings section from the config."""
         return self._config.get("connection", {})
 
     @property
@@ -57,14 +67,17 @@ class Config:
 
     @property
     def audit_settings(self) -> dict:
+        """Return audit runtime settings section from the config."""
         return self._config.get("audit_settings", {})
 
     @property
     def compliance(self) -> dict:
+        """Return compliance policy section from the config."""
         return self._config.get("compliance", {})
 
     @property
     def raw(self) -> dict:
+        """Return the full loaded configuration dictionary."""
         return self._config
 
     def __repr__(self):
