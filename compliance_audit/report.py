@@ -192,6 +192,34 @@ def _score_colour(pct: float) -> str:
     return "#ef4444"
 
 
+def _get_result_roi(result: AuditResult) -> dict | None:
+    """Return ROI payload from a result if available."""
+    roi = getattr(result, "_roi", None) or getattr(result, "roi", None)
+    return roi if isinstance(roi, dict) else None
+
+
+def _build_roi_html(roi: dict, title: str = "ROI Estimate") -> str:
+    """Render ROI metrics as compact stat cards."""
+    rate = float(roi.get("hourly_rate", 0.0) or 0.0)
+    currency = _esc(str(roi.get("currency", "GBP")))
+    value_html = (
+        f'{currency} {float(roi.get("value_saved", 0.0) or 0.0):.2f}'
+        if rate > 0
+        else "-"
+    )
+    return (
+        '<div class="roi-wrap">'
+        f'<div class="roi-title">{_esc(title)}</div>'
+        '<div class="roi-grid">'
+        f'<div class="roi-card"><div class="roi-value">{float(roi.get("manual_minutes_estimate", 0.0) or 0.0):.1f}m</div><div class="roi-label">Manual Estimate</div></div>'
+        f'<div class="roi-card"><div class="roi-value">{float(roi.get("automated_minutes", 0.0) or 0.0):.1f}m</div><div class="roi-label">Automated Runtime</div></div>'
+        f'<div class="roi-card"><div class="roi-value" style="color:var(--pass);">{float(roi.get("hours_saved", 0.0) or 0.0):.2f}h</div><div class="roi-label">Time Saved</div></div>'
+        f'<div class="roi-card"><div class="roi-value">{value_html}</div><div class="roi-label">Estimated Value</div></div>'
+        '</div>'
+        '</div>'
+    )
+
+
 def _build_findings_table(findings: list[Finding], table_id: str = "") -> str:
     """Return an HTML <table> for a list of findings."""
     rows: list[str] = []
@@ -244,6 +272,16 @@ display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap
 border-radius:8px;padding:16px 20px;min-width:130px;flex:1;text-align:center;}
 .stat-card .value{font-size:1.8rem;font-weight:700;}
 .stat-card .label{font-size:.8rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:.05em;}
+
+/* ── ROI cards ─────────────────────────────────────────── */
+.roi-wrap{margin:0 24px 16px;padding:14px 16px;background:var(--surface);
+border:1px solid var(--border);border-radius:8px;}
+.roi-title{font-size:.9rem;color:var(--text-dim);text-transform:uppercase;
+letter-spacing:.05em;margin-bottom:10px;}
+.roi-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;}
+.roi-card{background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:10px 12px;}
+.roi-card .roi-value{font-size:1.2rem;font-weight:700;}
+.roi-card .roi-label{font-size:.78rem;color:var(--text-dim);margin-top:2px;}
 
 /* ── Filters ────────────────────────────────────────────── */
 .filters{padding:0 24px 12px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;}
@@ -409,6 +447,8 @@ def save_html(result: AuditResult, output_dir: str) -> Path | None:
 
     ts_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     sc = _score_colour(result.score_pct)
+    roi = _get_result_roi(result)
+    roi_html = _build_roi_html(roi) if roi else ""
 
     # Build category sections
     categories: dict[str, list[Finding]] = {}
@@ -443,6 +483,7 @@ def save_html(result: AuditResult, output_dir: str) -> Path | None:
   <div class="stat-card"><div class="value" style="color:var(--warn)">{result.warn_count}</div><div class="label">Warn</div></div>
   <div class="stat-card"><div class="value" style="color:var(--error)">{result.error_count}</div><div class="label">Error</div></div>
 </div>
+{roi_html}
 <div style="padding:0 24px 12px;">
   <div style="font-size:.95rem;"><strong style="color:var(--accent);">{_esc(result.hostname)}</strong>
   <span style="color:var(--text-dim);"> ({_esc(result.ip)}) &mdash; {_esc(result.role_display)}</span></div>
@@ -495,6 +536,34 @@ def save_consolidated_html(results: list[AuditResult], output_dir: str) -> Path 
     total_checks = total_pass + total_fail + total_warn + total_error
     overall_score = round(total_pass / total_checks * 100, 1) if total_checks else 100
     sc = _score_colour(overall_score)
+
+    aggregate_roi = {
+        "manual_minutes_estimate": 0.0,
+        "automated_minutes": 0.0,
+        "hours_saved": 0.0,
+        "hourly_rate": 0.0,
+        "currency": "GBP",
+        "value_saved": 0.0,
+    }
+    roi_count = 0
+    for r in results:
+        roi = _get_result_roi(r)
+        if not roi:
+            continue
+        roi_count += 1
+        aggregate_roi["manual_minutes_estimate"] += float(roi.get("manual_minutes_estimate", 0.0) or 0.0)
+        aggregate_roi["automated_minutes"] += float(roi.get("automated_minutes", 0.0) or 0.0)
+        aggregate_roi["hours_saved"] += float(roi.get("hours_saved", 0.0) or 0.0)
+        aggregate_roi["value_saved"] += float(roi.get("value_saved", 0.0) or 0.0)
+        aggregate_roi["hourly_rate"] = float(roi.get("hourly_rate", aggregate_roi["hourly_rate"]) or 0.0)
+        aggregate_roi["currency"] = str(roi.get("currency", aggregate_roi["currency"]))
+
+    roi_html = ""
+    if roi_count:
+        roi_html = _build_roi_html(
+            aggregate_roi,
+            title=f"ROI Estimate ({roi_count} device(s))",
+        )
 
     # ── Device cards for the dashboard ─────────────────────
     cards: list[str] = []
@@ -573,6 +642,7 @@ def save_consolidated_html(results: list[AuditResult], output_dir: str) -> Path 
   <div class="stat-card"><div class="value" style="color:var(--warn)">{total_warn}</div><div class="label">Warn</div></div>
   <div class="stat-card"><div class="value" style="color:var(--error)">{total_error}</div><div class="label">Error</div></div>
 </div>
+{roi_html}
 <div class="device-grid">{"".join(cards)}</div>
 <div class="filters">
   <label>Filter:</label>

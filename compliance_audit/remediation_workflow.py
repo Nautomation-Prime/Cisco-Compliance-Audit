@@ -503,11 +503,13 @@ def _generate_post_remediation_report(
         # Attach ROI data so reports can show savings information
         roi_settings = _get_roi_settings(audit_settings)
         if roi_settings["enabled"]:
-            result._roi = _estimate_roi_for_result(
+            roi = _estimate_roi_for_result(
                 result,
                 roi_settings,
                 context="post_remediation",
             )
+            result._roi = roi
+            result.roi = roi
 
         # Populate metadata
         result.duration_secs = round(time.monotonic() - start_time, 1)

@@ -516,6 +516,12 @@ def _audit_single_device(job: _DeviceJob) -> Optional[AuditResult]:
 
         # Save per-device reports
         out_dir = job.audit_settings.get("output_dir", "./reports")
+        roi_settings = _get_roi_settings(job.audit_settings)
+        if roi_settings.get("enabled", False):
+            roi = _estimate_roi_for_result(result, roi_settings, context="audit")
+            # Keep both names for backward compatibility with existing callers.
+            setattr(result, "_roi", roi)
+            setattr(result, "roi", roi)
         rem = get_remediation_settings(job.audit_settings)
         if job.audit_settings.get("json_report", True):
             save_json(result, out_dir)
@@ -775,9 +781,10 @@ def run_audit(
     if results:
         if roi_settings.get("enabled", False):
             for r in results:
-                setattr(r, "roi", _estimate_roi_for_result(
-                    r, roi_settings, context="audit"
-                ))
+                if not getattr(r, "_roi", None):
+                    roi = _estimate_roi_for_result(r, roi_settings, context="audit")
+                    setattr(r, "_roi", roi)
+                    setattr(r, "roi", roi)
 
         console.print()
         console.rule("[bold cyan]AUDIT SUMMARY[/]")
