@@ -6,8 +6,8 @@ collects CLI output, then parses it into structured data using Genie
 standalone parsers (no live PyATS testbed required).
 """
 
-import logging
 import re
+import logging
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -50,7 +50,6 @@ except ImportError:
     )
 
     def genie_parse(command: str, output: str) -> Optional[dict]:  # type: ignore[misc]
-        """Return None when Genie is unavailable in this runtime."""
         return None
 
 
@@ -78,7 +77,6 @@ class ParsedConfig:
         return [ln for ln in self.global_lines if rx.search(ln)]
 
     def interface_has(self, intf: str, pattern: str) -> bool:
-        """Return True when an interface subcommand matches *pattern*."""
         rx = re.compile(pattern, re.IGNORECASE)
         for ln in self.interfaces.get(intf, []):
             if rx.search(ln):
@@ -86,12 +84,10 @@ class ParsedConfig:
         return False
 
     def interface_lines(self, intf: str, pattern: str) -> list[str]:
-        """Return interface subcommands that match *pattern*."""
         rx = re.compile(pattern, re.IGNORECASE)
         return [ln for ln in self.interfaces.get(intf, []) if rx.search(ln)]
 
     def line_config_has(self, line_name: str, pattern: str) -> bool:
-        """Return True when a line section command matches *pattern*."""
         rx = re.compile(pattern, re.IGNORECASE)
         for ln in self.line_configs.get(line_name, []):
             if rx.search(ln):
@@ -112,11 +108,7 @@ def parse_running_config(config_text: str) -> ParsedConfig:
 
     for line in config_text.splitlines():
         stripped = line.strip()
-        if (
-            not stripped
-            or stripped == "!"
-            or stripped.startswith("Building configuration")
-        ):
+        if not stripped or stripped == "!" or stripped.startswith("Building configuration"):
             current_section = None
             current_name = None
             continue
@@ -129,15 +121,9 @@ def parse_running_config(config_text: str) -> ParsedConfig:
             current_section = "line"
             current_name = line.split("line ", 1)[1].strip()
             pc.line_configs.setdefault(current_name, [])
-        elif (
-            current_section == "interface"
-            and line.startswith(" ")
-            and current_name
-        ):
+        elif current_section == "interface" and line.startswith(" ") and current_name:
             pc.interfaces[current_name].append(stripped)
-        elif (
-            current_section == "line" and line.startswith(" ") and current_name
-        ):
+        elif current_section == "line" and line.startswith(" ") and current_name:
             pc.line_configs[current_name].append(stripped)
         elif not line.startswith(" "):
             # Top-level config line (also resets section context)
@@ -175,7 +161,7 @@ def normalize_intf(name: str) -> str:
     """Expand abbreviated interface names to their full Cisco form."""
     for abbr, full in _ABBREV_MAP.items():
         if name.startswith(abbr) and not name.startswith(full):
-            return full + name[len(abbr) :]
+            return full + name[len(abbr):]
     return name
 
 
@@ -190,15 +176,15 @@ class DeviceData:
     ip: str = ""
     running_config: str = ""
     parsed_config: Optional[ParsedConfig] = None
-    interfaces: Optional[dict] = None  # Genie: show interfaces
-    switchports: Optional[dict] = None  # Genie: show interfaces switchport
-    stp: Optional[dict] = None  # Genie: show spanning-tree
-    stp_root: Optional[dict] = None  # Genie: show spanning-tree root
-    cdp: Optional[dict] = None  # Genie: show cdp neighbors detail
-    lldp: Optional[dict] = None  # Genie: show lldp neighbors detail
-    version: Optional[dict] = None  # Genie: show version
-    vtp: Optional[dict] = None  # Genie: show vtp status
-    etherchannel: Optional[dict] = None  # Genie: show etherchannel summary
+    interfaces: Optional[dict] = None        # Genie: show interfaces
+    switchports: Optional[dict] = None       # Genie: show interfaces switchport
+    stp: Optional[dict] = None               # Genie: show spanning-tree
+    stp_root: Optional[dict] = None          # Genie: show spanning-tree root
+    cdp: Optional[dict] = None               # Genie: show cdp neighbors detail
+    lldp: Optional[dict] = None              # Genie: show lldp neighbors detail
+    version: Optional[dict] = None           # Genie: show version
+    vtp: Optional[dict] = None               # Genie: show vtp status
+    etherchannel: Optional[dict] = None      # Genie: show etherchannel summary
     raw_commands: dict = field(default_factory=dict)
 
 
@@ -225,7 +211,6 @@ class DataCollector:
     """Collect and parse data from a live Netmiko connection."""
 
     def __init__(self, timeout: int = 30):
-        """Store command read timeout used for Netmiko show commands."""
         self.timeout = timeout
 
     def collect(self, connection: Any, ip: str = "") -> DeviceData:
@@ -316,7 +301,6 @@ class OfflineCollector:
     """
 
     def __init__(self, base_dir: str):
-        """Initialize the base directory used for dry-run command files."""
         self.base_dir = Path(base_dir)
 
     def collect(self, hostname: str, ip: str = "") -> DeviceData | None:
@@ -326,11 +310,7 @@ class OfflineCollector:
             # Try IP as folder name
             host_dir = self.base_dir / ip
         if not host_dir.is_dir():
-            log.warning(
-                "Dry-run: no data directory for %s in %s",
-                hostname,
-                self.base_dir,
-            )
+            log.warning("Dry-run: no data directory for %s in %s", hostname, self.base_dir)
             return None
 
         data = DeviceData(hostname=hostname, ip=ip)
@@ -339,15 +319,8 @@ class OfflineCollector:
             fname = cmd.replace(" ", "_") + ".txt"
             fpath = host_dir / fname
             if fpath.exists():
-                data.raw_commands[cmd] = fpath.read_text(
-                    encoding="utf-8", errors="replace"
-                )
-                log.info(
-                    "Loaded offline: %s/%s (%d bytes)",
-                    hostname,
-                    fname,
-                    len(data.raw_commands[cmd]),
-                )
+                data.raw_commands[cmd] = fpath.read_text(encoding="utf-8", errors="replace")
+                log.info("Loaded offline: %s/%s (%d bytes)", hostname, fname, len(data.raw_commands[cmd]))
             else:
                 data.raw_commands[cmd] = ""
                 log.debug("Dry-run file missing: %s", fpath)
@@ -358,38 +331,14 @@ class OfflineCollector:
 
         # Genie-parse structured commands
         if GENIE_AVAILABLE:
-            data.version = genie_parse(
-                "show version", data.raw_commands.get("show version", "")
-            )
-            data.interfaces = genie_parse(
-                "show interfaces", data.raw_commands.get("show interfaces", "")
-            )
-            data.switchports = genie_parse(
-                "show interfaces switchport",
-                data.raw_commands.get("show interfaces switchport", ""),
-            )
-            data.stp = genie_parse(
-                "show spanning-tree",
-                data.raw_commands.get("show spanning-tree", ""),
-            )
-            data.stp_root = genie_parse(
-                "show spanning-tree root",
-                data.raw_commands.get("show spanning-tree root", ""),
-            )
-            data.cdp = genie_parse(
-                "show cdp neighbors detail",
-                data.raw_commands.get("show cdp neighbors detail", ""),
-            )
-            data.lldp = genie_parse(
-                "show lldp neighbors detail",
-                data.raw_commands.get("show lldp neighbors detail", ""),
-            )
-            data.vtp = genie_parse(
-                "show vtp status", data.raw_commands.get("show vtp status", "")
-            )
-            data.etherchannel = genie_parse(
-                "show etherchannel summary",
-                data.raw_commands.get("show etherchannel summary", ""),
-            )
+            data.version = genie_parse("show version", data.raw_commands.get("show version", ""))
+            data.interfaces = genie_parse("show interfaces", data.raw_commands.get("show interfaces", ""))
+            data.switchports = genie_parse("show interfaces switchport", data.raw_commands.get("show interfaces switchport", ""))
+            data.stp = genie_parse("show spanning-tree", data.raw_commands.get("show spanning-tree", ""))
+            data.stp_root = genie_parse("show spanning-tree root", data.raw_commands.get("show spanning-tree root", ""))
+            data.cdp = genie_parse("show cdp neighbors detail", data.raw_commands.get("show cdp neighbors detail", ""))
+            data.lldp = genie_parse("show lldp neighbors detail", data.raw_commands.get("show lldp neighbors detail", ""))
+            data.vtp = genie_parse("show vtp status", data.raw_commands.get("show vtp status", ""))
+            data.etherchannel = genie_parse("show etherchannel summary", data.raw_commands.get("show etherchannel summary", ""))
 
         return data

@@ -10,7 +10,7 @@ in the compliance YAML config (default: 5, set to 1 for sequential).
 import logging
 import sys
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import concurrent.futures
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -327,11 +327,11 @@ def load_compliance_config(path: str) -> dict:
         sys.exit(1)
 
     # Validate required top-level keys exist and have correct types
-    _EXPECTED_KEYS = {
+    expected_keys = {
         "connection": dict,
         "compliance": dict,
     }
-    for key, expected_type in _EXPECTED_KEYS.items():
+    for key, expected_type in expected_keys.items():
         val = cfg.get(key)
         if val is None:
             console.print(
@@ -375,11 +375,11 @@ def load_device_inventory(
         cfg = load_compliance_config(config_path)
         inventory_path = cfg.get("inventory_file", "devices.yaml")
 
-    p = Path(inventory_path)
+    p = Path(inventory_path or "devices.yaml")
     if not p.is_absolute():
         p = cfg_dir / p
     if not p.exists():
-        p = Path(__file__).parent / inventory_path
+        p = Path(__file__).parent / (inventory_path or "devices.yaml")
     if not p.exists():
         return []
 
@@ -435,18 +435,20 @@ def _audit_single_device(job: _DeviceJob) -> Optional[AuditResult]:
         conn = None
     else:
         # ── Live SSH connection ────────────────────────────
-        connector = DeviceConnector(
-            ip=ip,
-            username=job.username,
-            password=job.password,
-            device_type=job.device_type,
-            jump=job.jump,
-            retries=job.audit_settings.get(
+        connector_kwargs = {
+            "ip": ip,
+            "username": job.username,
+            "password": job.password,
+            "device_type": job.device_type,
+            "jump": job.jump,
+            "retries": job.audit_settings.get(
                 "retries",
                 job.audit_settings.get("_connection", {}).get("retries", 3),
             ),
-            **({"secret": job.enable_secret} if job.enable_secret else {}),
-        )
+        }
+        if job.enable_secret:
+            connector_kwargs["secret"] = job.enable_secret
+        connector = DeviceConnector(**connector_kwargs)
         try:
             conn = connector.connect()
         except Exception as exc:
@@ -483,8 +485,8 @@ def _audit_single_device(job: _DeviceJob) -> Optional[AuditResult]:
         result = AuditResult(
             hostname=hostname,
             ip=ip,
-            role=host_info.role,
-            role_display=host_info.role_display,
+            role=host_info.role or "unknown",
+            role_display=host_info.role_display or "unknown",
             findings=[
                 Finding(
                     check_name="engine_error",
@@ -532,7 +534,7 @@ def _audit_single_device(job: _DeviceJob) -> Optional[AuditResult]:
                 if baseline:
                     delta = compute_delta(baseline, result)
                     save_delta_report(delta, hostname, out_dir)
-                    result._delta = delta  # stash for console output
+                    setattr(result, "_delta", delta)
 
         log.info(
             "Completed audit of %s — score %s%% (%.1fs)",
@@ -735,12 +737,14 @@ def run_audit(
         ) as progress:
             task_id = progress.add_task("Auditing devices", total=len(jobs))
 
-            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            with concurrent.futures.ThreadPoolExecutor(
+                max_workers=max_workers
+            ) as executor:
                 future_to_job = {
                     executor.submit(_audit_single_device, job): job
                     for job in jobs
                 }
-                for future in as_completed(future_to_job):
+                for future in concurrent.futures.as_completed(future_to_job):
                     job = future_to_job[future]
                     try:
                         result = future.result()
@@ -771,9 +775,9 @@ def run_audit(
     if results:
         if roi_settings.get("enabled", False):
             for r in results:
-                r._roi = _estimate_roi_for_result(
+                setattr(r, "roi", _estimate_roi_for_result(
                     r, roi_settings, context="audit"
-                )
+                ))
 
         console.print()
         console.rule("[bold cyan]AUDIT SUMMARY[/]")

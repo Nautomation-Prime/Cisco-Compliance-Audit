@@ -16,37 +16,17 @@ so they can be added/changed/removed without touching this file.
 """
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 # ---------------------------------------------------------------------------
 # Defaults — used when no config is supplied
 # ---------------------------------------------------------------------------
 DEFAULT_ROLES: list[dict] = [
-    {
-        "code": "ASW",
-        "role": "access_switch",
-        "display": "Access Switch",
-        "trunk_signal": "downlink",
-    },
-    {
-        "code": "CSW",
-        "role": "core_switch",
-        "display": "Core Switch",
-        "trunk_signal": "uplink",
-    },
-    {
-        "code": "SDW",
-        "role": "sdwan_router",
-        "display": "SD-WAN Router",
-        "trunk_signal": "none",
-    },
-    {
-        "code": "ISW",
-        "role": "industrial_switch",
-        "display": "Industrial Switch",
-        "trunk_signal": "downlink",
-    },
+    {"code": "ASW", "role": "access_switch",     "display": "Access Switch",     "trunk_signal": "downlink"},
+    {"code": "CSW", "role": "core_switch",       "display": "Core Switch",       "trunk_signal": "uplink"},
+    {"code": "SDW", "role": "sdwan_router",      "display": "SD-WAN Router",     "trunk_signal": "none"},
+    {"code": "ISW", "role": "industrial_switch",  "display": "Industrial Switch", "trunk_signal": "downlink"},
 ]
 
 
@@ -92,31 +72,25 @@ class HostnameInfo:
 
     @property
     def is_access(self) -> bool:
-        """Return True when the parsed role is access switch."""
         return self.role == "access_switch"
 
     @property
     def is_core(self) -> bool:
-        """Return True when the parsed role is core switch."""
         return self.role == "core_switch"
 
     @property
     def is_sdwan(self) -> bool:
-        """Return True when the parsed role is SD-WAN router."""
         return self.role == "sdwan_router"
 
     @property
     def is_industrial(self) -> bool:
-        """Return True when the parsed role is industrial switch."""
         return self.role == "industrial_switch"
 
 
 # ---------------------------------------------------------------------------
 # Compiled defaults (used when no config is passed)
 # ---------------------------------------------------------------------------
-_DEFAULT_ROLE_MAP, _DEFAULT_DISPLAY_MAP, _DEFAULT_SIGNAL_MAP = (
-    _build_role_maps(DEFAULT_ROLES)
-)
+_DEFAULT_ROLE_MAP, _DEFAULT_DISPLAY_MAP, _DEFAULT_SIGNAL_MAP = _build_role_maps(DEFAULT_ROLES)
 _DEFAULT_PATTERN = _build_pattern(list(_DEFAULT_ROLE_MAP.keys()))
 
 
@@ -137,9 +111,9 @@ def parse_hostname(
         Each dict must have at least ``code``, ``role``, ``display``.
         If None, built-in defaults (ASW/CSW/SDW/ISW) are used.
     explicit_role : str | None
-        If provided, use this role instead of parsing from hostname.
-        This allows the role to be specified in devices.yaml.
-        Should be one of the role values (e.g., "access_switch", "core_switch").
+        If set, override the role derived from the hostname.
+        Accepts a role code (e.g. ``ASW``) or a role name
+        (e.g. ``access_switch``).
     """
     if role_config:
         role_map, display_map, _ = _build_role_maps(role_config)
@@ -149,46 +123,44 @@ def parse_hostname(
         display_map = _DEFAULT_DISPLAY_MAP
         pattern = _DEFAULT_PATTERN
 
-    # If an explicit role is provided, use it and skip hostname parsing
-    if explicit_role:
-        # Find the matching role code and display name from the role config
-        role_display = None
-        role_code = None
-        for code, role in role_map.items():
-            if role == explicit_role:
-                role_code = code
-                role_display = display_map.get(
-                    code, explicit_role.replace("_", " ").title()
-                )
-                break
-        # If not found in role_map, use the explicit_role as-is
-        if role_display is None:
-            role_display = explicit_role.replace("_", " ").title()
-
-        return HostnameInfo(
+    m = pattern.match(hostname.strip().upper())
+    if not m:
+        info = HostnameInfo(raw=hostname, parsed=False)
+    else:
+        role_code = m.group("role").upper()
+        info = HostnameInfo(
             raw=hostname,
-            role=explicit_role,
-            role_display=role_display,
+            country=m.group("country"),
+            site_code=m.group("site"),
+            site_instance=m.group("site_inst"),
+            comms_room=m.group("comms"),
             role_code=role_code,
+            role=role_map.get(role_code, "unknown"),
+            role_display=display_map.get(role_code, "Unknown"),
+            device_number=m.group("num"),
             parsed=True,
         )
 
-    m = pattern.match(hostname.strip().upper())
-    if not m:
-        return HostnameInfo(raw=hostname, parsed=False)
-    role_code = m.group("role").upper()
-    return HostnameInfo(
-        raw=hostname,
-        country=m.group("country"),
-        site_code=m.group("site"),
-        site_instance=m.group("site_inst"),
-        comms_room=m.group("comms"),
-        role_code=role_code,
-        role=role_map.get(role_code, "unknown"),
-        role_display=display_map.get(role_code, "Unknown"),
-        device_number=m.group("num"),
-        parsed=True,
-    )
+    # Apply explicit role override
+    if explicit_role:
+        upper = explicit_role.upper()
+        if upper in role_map:
+            info.role_code = upper
+            info.role = role_map[upper]
+            info.role_display = display_map.get(upper, upper)
+        else:
+            # Treat as a role name; try to reverse-lookup the code
+            reverse = {v: k for k, v in role_map.items()}
+            code = reverse.get(explicit_role)
+            if code:
+                info.role_code = code
+                info.role = explicit_role
+                info.role_display = display_map.get(code, explicit_role)
+            else:
+                info.role = explicit_role
+                info.role_display = explicit_role
+
+    return info
 
 
 def extract_role_from_hostname(
@@ -200,9 +172,7 @@ def extract_role_from_hostname(
     return info.role_code if info.parsed else None
 
 
-def get_trunk_signal_map(
-    role_config: Optional[list[dict]] = None,
-) -> dict[str, str]:
+def get_trunk_signal_map(role_config: Optional[list[dict]] = None) -> dict[str, str]:
     """
     Return {code: trunk_signal} from the role config.
     trunk_signal is "uplink", "downlink", or "none".
