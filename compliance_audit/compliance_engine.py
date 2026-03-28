@@ -142,7 +142,6 @@ class ComplianceEngine:
             ("management_plane", self._check_users),
             ("management_plane", self._check_vty_lines),
             ("management_plane", self._check_console),
-            ("management_plane", self._check_archive),
             ("management_plane", self._check_login_security),
             ("management_plane", self._check_cdp_lldp),
             ("control_plane",    self._check_stp),
@@ -321,8 +320,20 @@ class ComplianceEngine:
         # SSH version
         if _enabled(mp, "ssh_version"):
             ver = mp.get("ssh_version", {}).get("version", 2)
-            f.append(self._present(cfg, rf"^ip ssh version\s+{ver}",
-                     "ssh_version", f"ip ssh version {ver}", f"ip ssh version {ver}"))
+            if cfg.has_line(rf"^ip ssh version\s+{ver}"):
+                f.append(Finding("ssh_version", Status.PASS,
+                         f"ip ssh version {ver}"))
+            else:
+                # Fallback: check "show ip ssh" output for active version
+                ssh_out = data.raw_commands.get("show ip ssh", "")
+                m = re.search(r"SSH\s+Enabled\s*-\s*version\s+(\d+)", ssh_out)
+                if m and int(m.group(1)) == int(ver):
+                    f.append(Finding("ssh_version", Status.PASS,
+                             f"ip ssh version {ver} (confirmed via show ip ssh)"))
+                else:
+                    f.append(Finding("ssh_version", Status.FAIL,
+                             f"Missing: ip ssh version {ver}",
+                             remediation=f"ip ssh version {ver}"))
 
         # SSH timeout
         if _enabled(mp, "ssh_timeout"):
@@ -935,21 +946,7 @@ class ComplianceEngine:
         return f
 
     # ── ARCHIVE ───────────────────────────────────────────────
-    def _check_archive(self, cfg: ParsedConfig, data: DeviceData,
-                       host: HostnameInfo, ports: dict) -> list[Finding]:
-        f: list[Finding] = []
-        if "management_plane" not in self.policy:
-            return f
-        mp = self.policy.get("management_plane", {})
-        if not _enabled(mp, "archive_logging"):
-            return f
-        if cfg.has_line(r"^archive") and cfg.has_line(r"logging enable"):
-            f.append(Finding("archive_logging", Status.PASS, "Archive config logging enabled"))
-        else:
-            f.append(Finding("archive_logging", Status.FAIL,
-                     "Archive config logging not enabled",
-                     remediation="archive / log config / logging enable"))
-        return f
+    # Archive compliance check temporarily removed as requested.
 
     # ── LOGIN SECURITY ────────────────────────────────────────
     def _check_login_security(self, cfg: ParsedConfig, data: DeviceData,

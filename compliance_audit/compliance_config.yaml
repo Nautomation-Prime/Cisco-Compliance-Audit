@@ -27,17 +27,11 @@ audit_settings:
   native_vlan: 99                 # Expected native VLAN on trunks (for checking)
 
   roi:
-    enabled: false                # Show estimated time/value saved in reports
+    enabled: true                # Show estimated time/value saved in reports
     # Top-level ROI keys are defaults for all contexts.
     # Values under profiles.audit / profiles.post_remediation override these defaults.
-    #
-    # The manual-time model uses diminishing returns (logarithmic scaling):
-    #   manual = base_per_device + per_check × inflection × ln(1 + checks / inflection)
-    # This is approximately linear for small check counts, then flattens.
-    manual_minutes_per_device: 15.0    # Base effort: SSH login, navigate config, context-switch
-    manual_minutes_per_check: 0.5      # Per-check effort (scales logarithmically past inflection)
-    check_scaling_inflection: 20.0     # Check count where diminishing returns kick in
-    max_manual_minutes_per_device: 120.0  # Hard cap on manual estimate (0 = no cap)
+    manual_minutes_per_device: 20.0    # Baseline manual effort per device audit
+    manual_minutes_per_check: 0.25     # Extra manual effort per evaluated check
     automation_overhead_minutes_per_device: 2.0  # Human overhead to run/review automation
     validation_minutes_per_device: 0.0 # Extra human validation effort to include in automated estimate
     min_runtime_seconds: 0.0      # Optional runtime floor to avoid near-zero timing distortion
@@ -45,31 +39,27 @@ audit_settings:
     currency: "GBP"             # Currency label for value estimates
     profiles:                    # Optional context-specific overrides (falls back to top-level values)
       audit:
-        manual_minutes_per_device: 15.0
-        manual_minutes_per_check: 0.5
+        manual_minutes_per_device: 20.0
+        manual_minutes_per_check: 0.25
         automation_overhead_minutes_per_device: 2.0
         validation_minutes_per_device: 0.0
       post_remediation:
-        # Post-remediation validation involves verifying changes took effect.
-        # Typically performed on a subset of checks, but each check needs
-        # careful before/after comparison — so per-check effort is higher,
-        # while the base overhead is lower since you already have context.
-        manual_minutes_per_device: 10.0
-        manual_minutes_per_check: 0.35
-        automation_overhead_minutes_per_device: 1.0
-        validation_minutes_per_device: 0.5
+        manual_minutes_per_device: 8.0
+        manual_minutes_per_check: 0.10
+        automation_overhead_minutes_per_device: 0.25
+        validation_minutes_per_device: 0.10
 
   remediation:
-    enabled: false                 # Master switch for remediation workflow (generate/list/approve/apply)
+    enabled: true                 # Master switch for remediation workflow (generate/list/approve/apply)
     generate_script: true         # Generate per-device remediation script files
     generate_review_pack: true    # Generate review-pack JSON + SQLite tracking entry
 
     approval:
       default_expires_hours: 24   # Default approval TTL used by --remediation-approve
-      require_ticket_id: true     # Enforce change ticket ID for approvals
+      require_ticket_id: false     # Enforce change ticket ID for approvals
 
     execution:
-      enabled: false               # Allow --remediation-apply operations
+      enabled: true               # Allow --remediation-apply operations
       linux_only: true            # Enforce Linux runtime for apply lifecycle commands
       block_high_risk_by_default: true   # Require explicit --allow-high-risk for high-risk packs
       enforce_checksum: true      # Block apply if remediation script changed since approval
@@ -77,7 +67,7 @@ audit_settings:
       require_hostname_match: true # Ensure connected device prompt matches expected hostname
       save_config: true           # Persist config after successful apply (write memory)
       command_verify: false       # Netmiko command verification during send_config_set
-      generate_post_report: false # Generate compliance audit report after applying remediation
+      generate_post_report: true # Generate compliance audit report after applying remediation
       generate_consolidated_post_report: true # For apply-all, also generate a consolidated post-remediation report
       post_report_formats: ["json", "html"]  # Formats for post-remediation report (json, html, csv, txt)
 
@@ -225,55 +215,55 @@ compliance:
 
     # ── SERVICES ────────────────────────────────────────────────
     service_password_encryption:
-      enabled: false
+      enabled: true
       # Expect: service password-encryption
 
     service_timestamps_debug:
-      enabled: false
+      enabled: true
       expected: "service timestamps debug datetime msec localtime show-timezone"
 
     service_timestamps_log:
-      enabled: false
+      enabled: true
       expected: "service timestamps log datetime msec localtime show-timezone"
 
     service_tcp_keepalives_in:
-      enabled: false
+      enabled: true
       # Expect: service tcp-keepalives-in
 
     service_tcp_keepalives_out:
-      enabled: false
+      enabled: true
       # Expect: service tcp-keepalives-out
 
     no_service_pad:
-      enabled: false
+      enabled: true
       # Expect: no service pad
 
     no_service_finger:
-      enabled: false        # rare on modern IOS-XE
+      enabled: true        # rare on modern IOS-XE
       # Expect: no service finger
 
     no_service_config:
-      enabled: false
+      enabled: true
       # Expect: no service config
 
     no_service_tcp_small_servers:
-      enabled: false        # only relevant on very old IOS
+      enabled: true        # only relevant on very old IOS
     no_service_udp_small_servers:
-      enabled: false
+      enabled: true
 
     # ── IP SETTINGS ─────────────────────────────────────────────
     no_ip_source_route:
-      enabled: false
+      enabled: true
       # Expect: no ip source-route
 
     no_ip_finger:
-      enabled: false        # not present on most IOS-XE
+      enabled: true        # not present on most IOS-XE
     no_ip_bootp_server:
-      enabled: false
+      enabled: true
       # Expect: no ip bootp server
 
     no_ip_http_server:
-      enabled: false
+      enabled: true
       # Expect: no ip http server  (disable plain HTTP)
 
     ip_http_secure_server:
@@ -281,7 +271,7 @@ compliance:
       # Expect: ip http secure-server
 
     no_ip_http_secure_server:
-      enabled: false         # Set true if you want HTTPS OFF
+      enabled: true         # Set true if you want HTTPS OFF
       # Expect: no ip http secure-server
 
     ip_http_authentication:
@@ -301,12 +291,12 @@ compliance:
       # Expect: ip cef
 
     no_ip_domain_lookup:
-      enabled: false
+      enabled: true
       # Expect: no ip domain lookup
 
     ip_domain_name:
-      enabled: false
-      expected: "test.domain.com"          # Set your corporate domain, e.g. "corp.example.com"
+      enabled: true
+      expected: "weavermanor.co.uk"          # Set your corporate domain, e.g. "corp.example.com"
 
     # ── SSH ─────────────────────────────────────────────────────
     ssh_version:
@@ -329,7 +319,7 @@ compliance:
       interface: ""         # e.g. "Loopback0" or "Vlan100"
 
     ssh_rsa_min_modulus:
-      enabled: false
+      enabled: true
       min_bits: 2048
 
     # ── AAA ─────────────────────────────────────────────────────
@@ -499,12 +489,12 @@ compliance:
       # Checks: 'enable password' does NOT exist
 
     username_secret:
-      enabled: false
+      enabled: true
       # Checks: all 'username' definitions use 'secret' not 'password'
 
     # ── VTY LINES ───────────────────────────────────────────────
     vty_transport_input_ssh:
-      enabled: false
+      enabled: true
       # Expect: transport input ssh (no telnet)
 
     vty_exec_timeout:
@@ -517,7 +507,7 @@ compliance:
       acl_name: ""            # Expected access-class ACL
 
     vty_logging_synchronous:
-      enabled: false
+      enabled: true
 
     vty_login_authentication:
       enabled: false
@@ -536,10 +526,6 @@ compliance:
       enabled: false
       method_list: "default"
 
-    # ── ARCHIVE / CONFIG LOGGING ────────────────────────────────
-    archive_logging:
-      enabled: false
-      # Expect: archive / log config / logging enable
 
     # ── LOGIN SECURITY ──────────────────────────────────────────
     login_block_for:
@@ -728,7 +714,7 @@ compliance:
     # Applied on ACCESS ports and TRUNK_ENDPOINT ports (APs etc.).
     # Never on trunk uplinks/downlinks to other switches.
     bpdu_guard:
-      enabled: false
+      enabled: true
       on_endpoint_trunks: false   # Also require BPDU guard on AP trunk ports
       # Expect: spanning-tree bpduguard enable  (per-interface)
 
@@ -743,7 +729,7 @@ compliance:
 
     # ── PORTFAST ────────────────────────────────────────────────
     portfast:
-      enabled: false
+      enabled: true
       # Applied on access ports only
       # Expect: spanning-tree portfast
 
