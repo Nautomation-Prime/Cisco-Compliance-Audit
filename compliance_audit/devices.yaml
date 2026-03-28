@@ -5,7 +5,7 @@
 # ║                                                                     ║
 # ║    Bare hostname    - "GB-SITE1-001ASW001"  (connects via DNS)      ║
 # ║    Bare IP          - "192.0.2.61"   (hostname discovered from      ║
-# ║                                       device prompt)               ║
+# ║                                       device prompt)                ║
 # ║    Hostname only    - hostname: GB-SITE1-001ASW001                  ║
 # ║    Hostname + IP    - hostname: GB-SITE1-001ASW001                  ║
 # ║                       ip: 192.0.2.61                                ║
