@@ -9,6 +9,7 @@ in the compliance YAML config (default: 5, set to 1 for sequential).
 
 import logging
 import math
+import socket
 import sys
 import time
 import concurrent.futures
@@ -453,6 +454,111 @@ def _resolve_config_path(path: str) -> Path:
     return Path(__file__).parent
 
 
+def _normalise_device_entry(entry, *, location: str = "devices") -> dict:
+    """Turn a bare string or dict into a normalised ``{hostname, ip}`` dict.
+
+    Accepted forms:
+      - ``"192.0.2.61"``          → ip-only  (hostname discovered at connect)
+      - ``"GB-SITE1-001ASW001"``  → hostname used as connection target (DNS)
+      - ``{hostname: …, ip: …}``  → explicit (current format)
+      - ``{hostname: …}``         → hostname used as connection target
+      - ``{ip: …}``              → ip-only
+
+    Raises ``ValueError`` for entries that cannot be normalised.
+    *location* is included in error messages to help the user find the problem.
+    """
+    if isinstance(entry, str):
+        value = entry.strip()
+        if not value:
+            raise ValueError(
+                f"Empty string in {location} — each entry must be a "
+                "hostname, IP address, or {{hostname: …, ip: …}} mapping."
+            )
+        parts = value.split(".")
+        if len(parts) == 4 and all(p.isdigit() for p in parts):
+            return {"ip": value, "hostname": value}
+        return {"hostname": value, "ip": value}
+    if isinstance(entry, dict):
+        out = dict(entry)
+        if "hostname" not in out and "ip" not in out:
+            raise ValueError(
+                f"Device entry in {location} must contain at least "
+                f"'hostname' or 'ip': {entry!r}"
+            )
+        if "hostname" in out and "ip" not in out:
+            out["ip"] = out["hostname"]
+        elif "ip" in out and "hostname" not in out:
+            out["hostname"] = out["ip"]
+        return out
+    raise ValueError(
+        f"Invalid entry in {location} (expected string or mapping, "
+        f"got {type(entry).__name__}): {entry!r}"
+    )
+
+
+def _flatten_inventory(data: dict) -> list[dict]:
+    """Merge flat ``devices:`` list and Ansible-style ``groups:`` into one list.
+
+    Group-level keys (currently only ``role``) are inherited by every device
+    in that group unless the device specifies its own value.
+
+    Validates every entry and deduplicates by connection target (``ip``).
+    """
+    flat: list[dict] = []
+    errors: list[str] = []
+
+    # ── Flat devices list ─────────────────────────────────────
+    for idx, raw in enumerate(data.get("devices", []) or []):
+        try:
+            flat.append(_normalise_device_entry(raw, location=f"devices[{idx}]"))
+        except ValueError as exc:
+            errors.append(str(exc))
+
+    # ── Grouped devices ──────────────────────────────────────
+    for group_name, group_body in (data.get("groups") or {}).items():
+        if not isinstance(group_body, dict):
+            errors.append(
+                f"Group '{group_name}' is not a mapping — expected "
+                "keys like 'role' and 'devices'."
+            )
+            continue
+        group_role = group_body.get("role")
+        for idx, raw in enumerate(group_body.get("devices") or []):
+            try:
+                entry = _normalise_device_entry(
+                    raw, location=f"groups.{group_name}.devices[{idx}]"
+                )
+            except ValueError as exc:
+                errors.append(str(exc))
+                continue
+            if group_role and "role" not in entry:
+                entry["role"] = group_role
+            entry.setdefault("_group", group_name)
+            flat.append(entry)
+
+    if errors:
+        raise ValueError(
+            "Inventory validation failed:\n  • " + "\n  • ".join(errors)
+        )
+
+    # ── Deduplicate by connection target ───────────────────────
+    seen: dict[str, str] = {}      # ip → first location label
+    unique: list[dict] = []
+    for entry in flat:
+        ip = entry["ip"]
+        source = entry.get("_group", "devices")
+        if ip in seen:
+            log.warning(
+                "Duplicate device '%s' (already loaded from %s) — skipping.",
+                ip, seen[ip],
+            )
+            continue
+        seen[ip] = source
+        unique.append(entry)
+
+    return unique
+
+
 def load_device_inventory(
     inventory_path: str | None, config_path: str
 ) -> list[dict]:
@@ -462,6 +568,8 @@ def load_device_inventory(
     1. Explicit CLI value (--inventory).
     2. ``inventory_file`` key inside the main config YAML.
     3. ``devices.yaml`` next to the config file.
+
+    Supports both a flat ``devices:`` list and Ansible-style ``groups:``.
     """
     cfg_dir = _resolve_config_path(config_path)
 
@@ -479,7 +587,7 @@ def load_device_inventory(
 
     with open(p, "r", encoding="utf-8") as fh:
         data = yaml.safe_load(fh) or {}
-    return data.get("devices", []) or []
+    return _flatten_inventory(data)
 
 
 @dataclass
@@ -546,13 +654,36 @@ def _audit_single_device(job: _DeviceJob) -> Optional[AuditResult]:
         try:
             conn = connector.connect()
         except Exception as exc:
-            log.error("Connection to %s (%s) failed: %s", hostname, ip, exc)
+            # Detect DNS resolution failures and give a clear message
+            if isinstance(exc.__cause__, socket.gaierror) or (
+                isinstance(exc, OSError)
+                and "getaddrinfo" in str(exc).lower()
+            ):
+                log.error(
+                    "DNS resolution failed for %s (%s) — check that the "
+                    "hostname resolves or provide an explicit IP.",
+                    hostname, ip,
+                )
+            else:
+                log.error("Connection to %s (%s) failed: %s", hostname, ip, exc)
             return None
 
         try:
             collector = DataCollector(timeout=job.timeout)
             data = collector.collect(conn, ip=ip)
-            data.hostname = hostname
+            # Only overwrite the discovered hostname when the user
+            # explicitly provided one (not just an IP echo).
+            if job.hostname and job.hostname != job.ip:
+                data.hostname = job.hostname
+            else:
+                # Hostname was discovered from the device prompt.
+                # Update local variable and re-parse for role detection.
+                hostname = data.hostname
+                host_info = parse_hostname(
+                    hostname,
+                    role_config=job.role_config,
+                    explicit_role=job.explicit_role,
+                )
         except Exception as exc:
             log.error(
                 "Data collection from %s (%s) failed: %s", hostname, ip, exc
@@ -737,6 +868,26 @@ def run_audit(
                 devices.append({"hostname": entry, "ip": entry})
     else:
         devices = load_device_inventory(inventory_path, config_path)
+
+    # ── Inventory summary ──────────────────────────────────
+    if devices:
+        group_counts: dict[str, int] = {}
+        flat_count = 0
+        for d in devices:
+            grp = d.get("_group")
+            if grp:
+                group_counts[grp] = group_counts.get(grp, 0) + 1
+            else:
+                flat_count += 1
+        parts: list[str] = []
+        if flat_count:
+            parts.append(f"{flat_count} from flat list")
+        for grp, cnt in group_counts.items():
+            parts.append(f"{cnt} from group '{grp}'")
+        console.print(
+            f"[cyan]Inventory loaded:[/] {len(devices)} device(s) "
+            f"({', '.join(parts)})"
+        )
 
     # ── Credentials ────────────────────────────────────────
     username, password, enable_secret = "", "", None
