@@ -12,6 +12,9 @@ Usage examples
     python -m compliance_audit --remediation-list
     python -m compliance_audit --remediation-apply-all
     python -m compliance_audit --remediation-apply-all --apply-dry-run
+    python -m compliance_audit --interactive
+    python -m compliance_audit --tui
+    python -m compliance_audit --list-options
 """
 
 import argparse
@@ -22,6 +25,8 @@ import sys
 from rich.console import Console
 
 from .auditor import load_compliance_config, run_audit
+from .cli_discovery import print_options_table
+from .interactive_cli import launch_interactive
 from .remediation_cli import (
     limit_review_entries,
     print_remediation_list_hints,
@@ -38,6 +43,7 @@ from .remediation_workflow import (
     list_review_packs,
     reject_review_pack,
 )
+from .textual_app import launch_textual
 
 console = Console()
 
@@ -226,6 +232,21 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Apply all currently approved remediation packs in sequence.",
     )
+    p.add_argument(
+        "--interactive",
+        action="store_true",
+        help="Launch guided interactive CLI wizard mode.",
+    )
+    p.add_argument(
+        "--tui",
+        action="store_true",
+        help="Launch full-screen Textual terminal application.",
+    )
+    p.add_argument(
+        "--list-options",
+        action="store_true",
+        help="Print all available CLI options in a table and exit.",
+    )
     return p
 
 
@@ -363,7 +384,7 @@ def _handle_remediation_mode(args: argparse.Namespace) -> bool:
                 )
                 print(f"✓ Approved: {row.pack_id} ({row.hostname})")
                 approved_count += 1
-            except Exception as exc:
+            except RuntimeError as exc:
                 print(
                     f"✗ Failed to approve {row.pack_id} ({row.hostname}): {exc}"
                 )
@@ -440,6 +461,18 @@ def main() -> None:
     parser = _build_parser()
     args = parser.parse_args()
 
+    if args.list_options:
+        print_options_table(parser, console=console)
+        return
+
+    if args.tui:
+        launch_textual(parser)
+        return
+
+    if args.interactive:
+        launch_interactive(parser)
+        return
+
     # Logging setup
     level = {0: logging.WARNING, 1: logging.INFO}.get(
         args.verbose, logging.DEBUG
@@ -454,7 +487,7 @@ def main() -> None:
     try:
         if _handle_remediation_mode(args):
             return
-    except Exception as exc:
+    except (RuntimeError, ValueError) as exc:
         print(f"Error: {exc}")
         sys.exit(2)
 

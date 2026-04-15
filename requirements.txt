@@ -8,6 +8,8 @@ genie>=24.0
 
 # Reporting and configuration
 rich>=13.7.0
+questionary>=2.0.1
+textual>=0.79.1
 PyYAML>=6.0
 
 # Credential management

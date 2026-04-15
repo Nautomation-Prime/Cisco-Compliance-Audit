@@ -104,6 +104,7 @@ a {
 <li>Approve or reject packs</li>
 <li>Apply one approved pack</li>
 <li>Apply all approved packs</li>
+<li>Run guided interactive workflows without memorizing flags</li>
 </ul>
 <p>This guide assumes you have network reachability to devices and can run commands from a shell (for example Linux, WSL, or Windows PowerShell).</p>
 <h2 id="pre-checks-start-here">Pre-Checks (Start Here)</h2>
@@ -149,6 +150,15 @@ python -m compliance_audit -c configs/site_london.yaml
 # Run audit for a single device
 python -m compliance_audit --device GB-SITE1-001ASW001:10.1.1.1
 
+# Launch guided interactive wizard
+python -m compliance_audit --interactive
+
+# Launch full-screen premium TUI
+python -m compliance_audit --tui
+
+# Show all available CLI options in a table
+python -m compliance_audit --list-options
+
 # List remediation packs
 python -m compliance_audit --remediation-list
 
@@ -173,6 +183,19 @@ python -m compliance_audit --remediation-apply &lt;PACK_ID&gt;
 # Apply all approved packs
 python -m compliance_audit --remediation-apply-all</code></pre>
 <h2 id="standard-operating-procedure">Standard Operating Procedure</h2>
+<h3 id="0-choose-operator-experience">0) Choose Operator Experience</h3>
+<p>Guided wizard mode (recommended for discoverability):</p>
+<pre><code class="language-bash">python -m compliance_audit --interactive</code></pre>
+<p>Full-screen premium terminal UI:</p>
+<pre><code class="language-bash">python -m compliance_audit --tui</code></pre>
+<p>Command discovery table (all argparse options):</p>
+<pre><code class="language-bash">python -m compliance_audit --list-options</code></pre>
+<p>Notes:</p>
+<ul>
+<li>Use <code>--interactive</code> when you want prompts and command previews.</li>
+<li>Use <code>--tui</code> when you want a full-screen dashboard and keyboard-driven navigation.</li>
+<li>Use standard flags for CI/automation and scripted operations.</li>
+</ul>
 <h3 id="1-run-audit">1) Run Audit</h3>
 <pre><code class="language-bash">python -m compliance_audit -c compliance_audit/compliance_config.yaml</code></pre>
 <p>Expected outcome:</p>

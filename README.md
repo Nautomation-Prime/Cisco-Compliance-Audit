@@ -245,6 +245,15 @@ python -m compliance_audit -v
 # Debug output (DEBUG level)
 python -m compliance_audit -vv
 
+# Guided interactive wizard (Questionary)
+python -m compliance_audit --interactive
+
+# Full-screen premium terminal app (Textual)
+python -m compliance_audit --tui
+
+# Show all CLI options in a discoverable table
+python -m compliance_audit --list-options
+
 # Remediation lifecycle workflow (with approval tracking)
 python -m compliance_audit --remediation-list
 python -m compliance_audit --remediation-approve PACK_ID --approver "john.doe" --ticket-id "CHG0012345"
@@ -268,7 +277,8 @@ python -m compliance_audit [-h] [-c CONFIG] [-d DEVICES] [-i INVENTORY]
                            [--remediation-apply-all]
                            [--approver NAME] [--ticket-id ID] [--reason TEXT]
                            [--expires-hours HOURS] [--apply-dry-run]
-                           [--allow-high-risk]
+                           [--allow-high-risk] [--interactive] [--tui]
+                           [--list-options]
 
 Options:
   -h, --help                    Show help and exit
@@ -299,6 +309,11 @@ Remediation Lifecycle Operations:
   --expires-hours HOURS         Approval expiry in hours (default: from config, fallback 24)
   --apply-dry-run               Run preflight for remediation apply operations without sending config
   --allow-high-risk             Allow applying approved packs containing high-risk commands
+
+Premium Interactive Modes:
+  --interactive                 Launch guided wizard mode (menu + prompts)
+  --tui                         Launch full-screen Textual terminal application
+  --list-options                Print all available CLI options in a table and exit
 ```
 
 **Exit codes:** `0` = all devices passed, `1` = at least one failure (or below `--fail-threshold`).

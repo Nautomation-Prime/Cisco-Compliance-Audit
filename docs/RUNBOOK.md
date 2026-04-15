@@ -22,6 +22,7 @@ Use this guide to:
 - Approve or reject packs
 - Apply one approved pack
 - Apply all approved packs
+- Run guided interactive workflows without memorizing flags
 
 This guide assumes you have network reachability to devices and can run commands
 from a shell (for example Linux, WSL, or Windows PowerShell).
@@ -73,6 +74,15 @@ python -m compliance_audit -c configs/site_london.yaml
 # Run audit for a single device
 python -m compliance_audit --device GB-SITE1-001ASW001:10.1.1.1
 
+# Launch guided interactive wizard
+python -m compliance_audit --interactive
+
+# Launch full-screen premium TUI
+python -m compliance_audit --tui
+
+# Show all available CLI options in a table
+python -m compliance_audit --list-options
+
 # List remediation packs
 python -m compliance_audit --remediation-list
 
@@ -99,6 +109,31 @@ python -m compliance_audit --remediation-apply-all
 ```
 
 ## Standard Operating Procedure
+
+### 0) Choose Operator Experience
+
+Guided wizard mode (recommended for discoverability):
+
+```bash
+python -m compliance_audit --interactive
+```
+
+Full-screen premium terminal UI:
+
+```bash
+python -m compliance_audit --tui
+```
+
+Command discovery table (all argparse options):
+
+```bash
+python -m compliance_audit --list-options
+```
+
+Notes:
+- Use `--interactive` when you want prompts and command previews.
+- Use `--tui` when you want a full-screen dashboard and keyboard-driven navigation.
+- Use standard flags for CI/automation and scripted operations.
 
 ### 1) Run Audit
 
