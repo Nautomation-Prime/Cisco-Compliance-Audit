@@ -135,6 +135,18 @@ Notes:
 - Use `--tui` when you want a full-screen dashboard and keyboard-driven navigation.
 - Use standard flags for CI/automation and scripted operations.
 
+#### Textual Keyboard Cheat Sheet
+
+When running `python -m compliance_audit --tui`:
+
+- `1` launch guided wizard mode
+- `2` run quick audit using default settings
+- `3` focus the CLI options table
+- `q` quit the full-screen TUI
+
+Tip:
+- From the options table, use your terminal arrow keys to scroll rows.
+
 ### 1) Run Audit
 
 ```bash

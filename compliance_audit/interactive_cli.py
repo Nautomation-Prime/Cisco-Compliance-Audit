@@ -57,23 +57,28 @@ def _load_questionary():
     return questionary
 
 
+def _quote(value: str) -> str:
+    """Quote a value for shell display if it contains spaces."""
+    return f'"{value}"' if " " in value else value
+
+
 def _build_audit_preview(cfg: AuditWizardConfig) -> str:
     cmd = ["python", "-m", "compliance_audit"]
     if cfg.config_path != "compliance_config.yaml":
-        cmd.extend(["--config", cfg.config_path])
+        cmd.extend(["--config", _quote(cfg.config_path)])
     if cfg.inventory_path:
-        cmd.extend(["--inventory", cfg.inventory_path])
+        cmd.extend(["--inventory", _quote(cfg.inventory_path)])
     for dev in cfg.devices:
-        cmd.extend(["--device", dev])
+        cmd.extend(["--device", _quote(dev)])
     if cfg.skip_jump:
         cmd.append("--no-jump")
     if cfg.categories:
         cmd.append("--categories")
         cmd.extend(cfg.categories)
     if cfg.output_dir:
-        cmd.extend(["--output-dir", cfg.output_dir])
+        cmd.extend(["--output-dir", _quote(cfg.output_dir)])
     if cfg.dry_run_dir:
-        cmd.extend(["--dry-run", cfg.dry_run_dir])
+        cmd.extend(["--dry-run", _quote(cfg.dry_run_dir)])
     if cfg.csv_report is True:
         cmd.append("--csv")
     if cfg.csv_report is False:
@@ -194,7 +199,7 @@ def _run_audit_wizard(questionary) -> None:
     _configure_logging(verbose)
     results = run_audit(
         config_path=wizard_cfg.config_path,
-        device_overrides=wizard_cfg.devices,
+        device_overrides=wizard_cfg.devices or None,
         skip_jump=wizard_cfg.skip_jump,
         categories=wizard_cfg.categories,
         output_dir=wizard_cfg.output_dir,
@@ -251,6 +256,10 @@ def _run_remediation_wizard(questionary) -> None:
         ],
     ).ask()
 
+    if action is None:
+        console.print("Cancelled.")
+        return
+
     if action == "List review packs":
         status_choice = questionary.select(
             "Status filter:",
@@ -297,6 +306,9 @@ def _run_remediation_wizard(questionary) -> None:
 
     if action == "Approve one pack":
         pack_id = (questionary.text("Pack ID to approve:").ask() or "").strip()
+        if not pack_id:
+            console.print("Cancelled — no pack ID provided.")
+            return
         approver = (questionary.text("Approver name:").ask() or "").strip()
         ticket_id = (questionary.text("Ticket ID:").ask() or "").strip()
         expires_raw = questionary.text("Approval expiry hours (blank uses config):", default="").ask()
@@ -316,6 +328,9 @@ def _run_remediation_wizard(questionary) -> None:
 
     if action == "Reject one pack":
         pack_id = (questionary.text("Pack ID to reject:").ask() or "").strip()
+        if not pack_id:
+            console.print("Cancelled — no pack ID provided.")
+            return
         approver = (questionary.text("Approver name:").ask() or "").strip()
         reason = (questionary.text("Reject reason:").ask() or "").strip()
         path = reject_review_pack(
@@ -333,6 +348,9 @@ def _run_remediation_wizard(questionary) -> None:
                 "Remediation execution is disabled in config (audit_settings.remediation.execution.enabled=false)."
             )
         pack_id = (questionary.text("Pack ID to apply:").ask() or "").strip()
+        if not pack_id:
+            console.print("Cancelled — no pack ID provided.")
+            return
         skip_jump = bool(questionary.confirm("Skip jump host?", default=False).ask())
         dry_run = bool(questionary.confirm("Apply dry-run mode?", default=False).ask())
         allow_high_risk = bool(
@@ -387,6 +405,7 @@ def _run_remediation_wizard(questionary) -> None:
                     expires_hours=expires_hours,
                     require_ticket_id=rem.get("approval_require_ticket_id", True),
                 )
+                console.print(f"\u2713 Approved: {row.pack_id} ({row.hostname})")
                 approved_count += 1
             except RuntimeError as exc:
                 console.print(f"Failed to approve {row.pack_id} ({row.hostname}): {exc}")
