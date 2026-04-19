@@ -969,7 +969,7 @@ def load_baseline(baseline_path: str) -> dict | None:
         return None
     try:
         return json.loads(p.read_text(encoding="utf-8"))
-    except Exception as exc:
+    except (OSError, json.JSONDecodeError) as exc:
         log.warning("Failed to load baseline %s: %s", baseline_path, exc)
         return None
 
