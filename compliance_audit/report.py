@@ -980,8 +980,9 @@ def _find_latest_baseline(output_dir: str, hostname: str) -> Path | None:
     if not outdir.exists():
         return None
     safe = _safe_hostname(hostname)
+    audit_name = re.compile(rf"^{re.escape(safe)}_\d{{8}}_\d{{6}}\.json$")
     candidates = sorted(
-        outdir.glob(f"{safe}_*.json"),
+        [path for path in outdir.glob(f"{safe}_*.json") if audit_name.match(path.name)],
         key=lambda p: p.stat().st_mtime,
         reverse=True,
     )
@@ -1001,6 +1002,24 @@ class DeltaEntry:
     remediation: str
 
 
+def _delta_finding_key(
+    check_name: str,
+    category: str,
+    interface: str,
+    remediation: str,
+    detail: str,
+) -> tuple[str, str, str, str]:
+    """Return a stable identity for delta comparisons.
+
+    Some checks intentionally emit multiple findings with the same check name and
+    interface, such as storm-control broadcast and multicast findings. Use the
+    remediation command as the primary discriminator so those sibling findings do
+    not overwrite each other in delta maps.
+    """
+    discriminator = remediation or detail
+    return (check_name, category, interface, discriminator)
+
+
 def compute_delta(
     baseline: dict,
     current: AuditResult,
@@ -1014,10 +1033,16 @@ def compute_delta(
       - unchanged_fails: still failing
       - score_change: current - baseline score
     """
-    # Build lookup from baseline: (check, interface) → status
-    base_map: dict[tuple[str, str], dict] = {}
+    # Build lookup from baseline using a stable identity for repeated findings.
+    base_map: dict[tuple[str, str, str, str], dict] = {}
     for f in baseline.get("findings", []):
-        key = (f.get("check", ""), f.get("interface", ""))
+        key = _delta_finding_key(
+            f.get("check", ""),
+            f.get("category", ""),
+            f.get("interface", ""),
+            f.get("remediation", ""),
+            f.get("detail", ""),
+        )
         base_map[key] = f
 
     resolved: list[dict] = []
@@ -1027,7 +1052,13 @@ def compute_delta(
     for f in current.findings:
         if f.status == Status.SKIP:
             continue
-        key = (f.check_name, f.interface)
+        key = _delta_finding_key(
+            f.check_name,
+            f.category,
+            f.interface,
+            f.remediation,
+            f.detail,
+        )
         base_finding = base_map.pop(key, None)
 
         if f.status in (Status.FAIL, Status.WARN):
