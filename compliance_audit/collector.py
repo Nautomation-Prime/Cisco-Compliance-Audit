@@ -186,6 +186,7 @@ class DeviceData:
     vtp: Optional[dict] = None               # Genie: show vtp status
     etherchannel: Optional[dict] = None      # Genie: show etherchannel summary
     raw_commands: dict = field(default_factory=dict)
+    structured_parse_engine: dict[str, str] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -205,6 +206,39 @@ COMMANDS = [
     "show ip ssh",
     "show etherchannel summary",
 ]
+
+STRUCTURED_COMMAND_FIELDS: dict[str, str] = {
+    "show version": "version",
+    "show interfaces": "interfaces",
+    "show interfaces switchport": "switchports",
+    "show spanning-tree": "stp",
+    "show spanning-tree root": "stp_root",
+    "show cdp neighbors detail": "cdp",
+    "show lldp neighbors detail": "lldp",
+    "show vtp status": "vtp",
+    "show etherchannel summary": "etherchannel",
+}
+
+
+def _populate_structured_data(data: DeviceData) -> None:
+    """Populate structured command fields with Genie as the primary parser."""
+    for command, attr_name in STRUCTURED_COMMAND_FIELDS.items():
+        output = data.raw_commands.get(command, "")
+        if not output.strip():
+            data.structured_parse_engine[command] = "missing-output"
+            continue
+
+        if not GENIE_AVAILABLE:
+            data.structured_parse_engine[command] = "raw-only"
+            continue
+
+        parsed = genie_parse(command, output)
+        if parsed is None:
+            data.structured_parse_engine[command] = "raw-only"
+            continue
+
+        setattr(data, attr_name, parsed)
+        data.structured_parse_engine[command] = "genie"
 
 
 class DataCollector:
@@ -246,44 +280,7 @@ class DataCollector:
         data.running_config = data.raw_commands.get("show running-config", "")
         data.parsed_config = parse_running_config(data.running_config)
 
-        # Genie-parse structured commands
-        if GENIE_AVAILABLE:
-            data.version = genie_parse(
-                "show version",
-                data.raw_commands.get("show version", ""),
-            )
-            data.interfaces = genie_parse(
-                "show interfaces",
-                data.raw_commands.get("show interfaces", ""),
-            )
-            data.switchports = genie_parse(
-                "show interfaces switchport",
-                data.raw_commands.get("show interfaces switchport", ""),
-            )
-            data.stp = genie_parse(
-                "show spanning-tree",
-                data.raw_commands.get("show spanning-tree", ""),
-            )
-            data.stp_root = genie_parse(
-                "show spanning-tree root",
-                data.raw_commands.get("show spanning-tree root", ""),
-            )
-            data.cdp = genie_parse(
-                "show cdp neighbors detail",
-                data.raw_commands.get("show cdp neighbors detail", ""),
-            )
-            data.lldp = genie_parse(
-                "show lldp neighbors detail",
-                data.raw_commands.get("show lldp neighbors detail", ""),
-            )
-            data.vtp = genie_parse(
-                "show vtp status",
-                data.raw_commands.get("show vtp status", ""),
-            )
-            data.etherchannel = genie_parse(
-                "show etherchannel summary",
-                data.raw_commands.get("show etherchannel summary", ""),
-            )
+        _populate_structured_data(data)
 
         return data
 
@@ -329,16 +326,6 @@ class OfflineCollector:
         data.running_config = data.raw_commands.get("show running-config", "")
         data.parsed_config = parse_running_config(data.running_config)
 
-        # Genie-parse structured commands
-        if GENIE_AVAILABLE:
-            data.version = genie_parse("show version", data.raw_commands.get("show version", ""))
-            data.interfaces = genie_parse("show interfaces", data.raw_commands.get("show interfaces", ""))
-            data.switchports = genie_parse("show interfaces switchport", data.raw_commands.get("show interfaces switchport", ""))
-            data.stp = genie_parse("show spanning-tree", data.raw_commands.get("show spanning-tree", ""))
-            data.stp_root = genie_parse("show spanning-tree root", data.raw_commands.get("show spanning-tree root", ""))
-            data.cdp = genie_parse("show cdp neighbors detail", data.raw_commands.get("show cdp neighbors detail", ""))
-            data.lldp = genie_parse("show lldp neighbors detail", data.raw_commands.get("show lldp neighbors detail", ""))
-            data.vtp = genie_parse("show vtp status", data.raw_commands.get("show vtp status", ""))
-            data.etherchannel = genie_parse("show etherchannel summary", data.raw_commands.get("show etherchannel summary", ""))
+        _populate_structured_data(data)
 
         return data

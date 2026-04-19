@@ -4,7 +4,6 @@ Rich-based console + file report generation for compliance audit results.
 
 import csv
 import html as html_mod
-import io
 import json
 import logging
 import re
@@ -43,6 +42,12 @@ _STATUS_CSS = {
     "WARN":  ("#eab308", "#422006"),
     "ERROR": ("#c026d3", "#4a044e"),
     "SKIP":  ("#64748b", "#1e293b"),
+}
+
+_PARSER_ENGINE_CSS = {
+    "genie": ("#22c55e", "#052e16"),
+    "raw-only": ("#f97316", "#431407"),
+    "missing-output": ("#94a3b8", "#0f172a"),
 }
 
 
@@ -158,6 +163,9 @@ def save_json(result: AuditResult, output_dir: str) -> Path | None:
             if f.status != Status.SKIP
         ],
     }
+    structured_parsing = _get_structured_parsing_payload(result)
+    if structured_parsing:
+        payload["structured_parsing"] = structured_parsing
     roi = _get_result_roi(result)
     if roi:
         payload["roi"] = roi
@@ -199,6 +207,87 @@ def _get_result_roi(result: AuditResult) -> dict | None:
     """Return ROI payload from a result if available."""
     roi = getattr(result, "_roi", None) or getattr(result, "roi", None)
     return roi if isinstance(roi, dict) else None
+
+
+def _get_structured_parsing_payload(result: AuditResult) -> dict | None:
+    """Return structured parsing metadata if the result carries it."""
+    if not result.structured_parse_engine:
+        return None
+
+    return {
+        "primary_engine": "genie",
+        "summary": result.structured_parse_summary,
+        "counts": dict(result.structured_parse_counts),
+        "commands": {
+            command: result.structured_parse_engine[command]
+            for command in sorted(result.structured_parse_engine)
+        },
+    }
+
+
+def _parser_engine_label(engine: str) -> str:
+    return {
+        "genie": "Genie",
+        "raw-only": "Raw fallback",
+        "missing-output": "Missing output",
+    }.get(engine, engine)
+
+
+def _parser_engine_badge(engine: str, count: int | None = None) -> str:
+    fg, bg = _PARSER_ENGINE_CSS.get(engine, ("#94a3b8", "#1e293b"))
+    label = _parser_engine_label(engine)
+    if count is not None:
+        label = f"{label}: {count}"
+    return (
+        f'<span class="badge" style="color:{fg};background:{bg};">'
+        f'{_esc(label)}</span>'
+    )
+
+
+def _build_structured_parsing_html(
+    result: AuditResult,
+    compact: bool = False,
+) -> str:
+    """Render a structured parsing summary block for HTML reports."""
+    payload = _get_structured_parsing_payload(result)
+    if not payload:
+        return ""
+
+    counts = payload["counts"]
+    ordered_engines = ["genie", "raw-only", "missing-output"]
+    badges = []
+    for engine in ordered_engines:
+        if engine in counts:
+            badges.append(_parser_engine_badge(engine, counts[engine]))
+    for engine in sorted(counts):
+        if engine not in ordered_engines:
+            badges.append(_parser_engine_badge(engine, counts[engine]))
+
+    table_html = ""
+    if not compact:
+        rows = []
+        for command, engine in payload["commands"].items():
+            rows.append(
+                "<tr>"
+                f"<td>{_esc(command)}</td>"
+                f"<td>{_parser_engine_badge(engine)}</td>"
+                "</tr>"
+            )
+        table_html = (
+            '<table class="parser-table">'
+            '<thead><tr><th>Command</th><th>Engine</th></tr></thead>'
+            f'<tbody>{"".join(rows)}</tbody></table>'
+        )
+
+    classes = "parser-wrap compact" if compact else "parser-wrap"
+    return (
+        f'<div class="{classes}">'
+        '<div class="parser-title">Structured Parsing</div>'
+        f'<div class="parser-summary">{_esc(payload["summary"])}</div>'
+        f'<div class="parser-badges">{"".join(badges)}</div>'
+        f'{table_html}'
+        '</div>'
+    )
 
 
 def _build_roi_html(roi: dict, title: str = "ROI Estimate") -> str:
@@ -308,6 +397,21 @@ letter-spacing:.05em;margin-bottom:10px;}
 border-radius:6px;font-size:.82rem;color:#fbbf24;}
 .roi-warnings ul{margin:0;padding-left:18px;}
 .roi-warnings li{margin-bottom:2px;}
+
+/* ── Structured parsing ────────────────────────────────── */
+.parser-wrap{margin:0 24px 16px;padding:14px 16px;background:var(--surface);
+border:1px solid var(--border);border-radius:8px;}
+.parser-wrap.compact{margin:0 0 14px;padding:12px 14px;}
+.parser-title{font-size:.9rem;color:var(--text-dim);text-transform:uppercase;
+letter-spacing:.05em;margin-bottom:8px;}
+.parser-summary{font-size:.88rem;margin-bottom:10px;}
+.parser-badges{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px;}
+.parser-table{width:100%;border-collapse:collapse;font-size:.82rem;}
+.parser-table th{text-align:left;padding:6px 0;color:var(--text-dim);
+font-weight:600;border-bottom:1px solid var(--border);font-size:.76rem;
+text-transform:uppercase;letter-spacing:.04em;}
+.parser-table td{padding:6px 0;border-bottom:1px solid var(--surface2);}
+.parser-table tr:last-child td{border-bottom:none;}
 
 /* ── Filters ────────────────────────────────────────────── */
 .filters{padding:0 24px 12px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;}
@@ -475,6 +579,7 @@ def save_html(result: AuditResult, output_dir: str) -> Path | None:
     sc = _score_colour(result.score_pct)
     roi = _get_result_roi(result)
     roi_html = _build_roi_html(roi) if roi else ""
+    parser_html = _build_structured_parsing_html(result)
 
     # Build category sections
     categories: dict[str, list[Finding]] = {}
@@ -517,6 +622,7 @@ def save_html(result: AuditResult, output_dir: str) -> Path | None:
     {f'IOS-XE: {_esc(result.ios_version)} &nbsp;|&nbsp; ' if result.ios_version else ''}Tool v{_esc(result.tool_version)}{f' &nbsp;|&nbsp; Duration: {result.duration_secs}s' if result.duration_secs else ''}
   </div>
 </div>
+{parser_html}
 <div class="filters">
   <label>Filter:</label>
   <button class="filter-btn active" data-filter="all">All</button>
@@ -633,6 +739,7 @@ def save_consolidated_html(results: list[AuditResult], output_dir: str) -> Path 
     sections: list[str] = []
     for i, r in enumerate(results):
         c = _score_colour(r.score_pct)
+        parser_html = _build_structured_parsing_html(r, compact=True)
 
         # Build category HTML inside the device
         categories: dict[str, list[Finding]] = {}
@@ -672,7 +779,7 @@ def save_consolidated_html(results: list[AuditResult], output_dir: str) -> Path 
             f'</div>'
             f'<span class="dev-score" style="color:{c};">{r.score_pct}%</span>'
             f'</div>'
-            f'<div class="device-body">{"".join(cat_html)}</div>'
+            f'<div class="device-body">{parser_html}{"".join(cat_html)}</div>'
             f'</div>'
         )
 

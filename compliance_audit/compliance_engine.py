@@ -10,7 +10,6 @@ import re
 import logging
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Optional
 
 from .collector import DeviceData, ParsedConfig
 from .hostname_parser import HostnameInfo
@@ -51,6 +50,7 @@ class AuditResult:
     tool_version: str = ""
     duration_secs: float = 0.0
     audit_ts: str = ""
+    structured_parse_engine: dict[str, str] = field(default_factory=dict)
 
     @property
     def total(self) -> int:
@@ -78,6 +78,35 @@ class AuditResult:
         if t == 0:
             return 100.0
         return round(self.pass_count / t * 100, 1)
+
+    @property
+    def structured_parse_counts(self) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for engine in self.structured_parse_engine.values():
+            counts[engine] = counts.get(engine, 0) + 1
+        return counts
+
+    @property
+    def structured_parse_summary(self) -> str:
+        if not self.structured_parse_engine:
+            return ""
+
+        counts = self.structured_parse_counts
+        total = len(self.structured_parse_engine)
+        parts: list[str] = []
+
+        if counts.get("genie"):
+            parts.append(f"Genie {counts['genie']}/{total}")
+        if counts.get("raw-only"):
+            parts.append(f"raw fallback {counts['raw-only']}")
+        if counts.get("missing-output"):
+            parts.append(f"missing output {counts['missing-output']}")
+
+        for engine, count in sorted(counts.items()):
+            if engine not in {"genie", "raw-only", "missing-output"}:
+                parts.append(f"{engine} {count}")
+
+        return ", ".join(parts)
 
 
 # ---------------------------------------------------------------------------
@@ -109,6 +138,7 @@ class ComplianceEngine:
 
     def __init__(self, policy: dict):
         self.policy = policy  # compliance section of YAML
+        self._current_data: DeviceData | None = None
 
     # ── public entry point ──────────────────────────────────────
     def audit(
@@ -122,6 +152,7 @@ class ComplianceEngine:
             ip=data.ip,
             role=host_info.role or "unknown",
             role_display=host_info.role_display or "Unknown",
+            structured_parse_engine=dict(data.structured_parse_engine),
         )
         cfg = data.parsed_config
         if cfg is None:
@@ -161,7 +192,7 @@ class ComplianceEngine:
                 for f in findings:
                     f.category = f.category or category
                 result.findings.extend(findings)
-            except Exception as exc:
+            except (AttributeError, LookupError, TypeError, ValueError, re.error) as exc:
                 result.findings.append(
                     Finding(func.__name__, Status.ERROR, str(exc), category)
                 )
@@ -174,8 +205,8 @@ class ComplianceEngine:
     # ===================================================================
 
     # ── SERVICES ──────────────────────────────────────────────
-    def _check_services(self, cfg: ParsedConfig, data: DeviceData,
-                        host: HostnameInfo, ports: dict) -> list[Finding]:
+    def _check_services(self, cfg: ParsedConfig, _data: DeviceData,
+                        _host: HostnameInfo, _ports: dict) -> list[Finding]:
         f: list[Finding] = []
         if "management_plane" not in self.policy:
             return f
@@ -224,8 +255,8 @@ class ComplianceEngine:
         return f
 
     # ── IP SETTINGS ───────────────────────────────────────────
-    def _check_ip_settings(self, cfg: ParsedConfig, data: DeviceData,
-                           host: HostnameInfo, ports: dict) -> list[Finding]:
+    def _check_ip_settings(self, cfg: ParsedConfig, _data: DeviceData,
+                           _host: HostnameInfo, _ports: dict) -> list[Finding]:
         f: list[Finding] = []
         if "management_plane" not in self.policy:
             return f
@@ -311,7 +342,7 @@ class ComplianceEngine:
 
     # ── SSH ───────────────────────────────────────────────────
     def _check_ssh(self, cfg: ParsedConfig, data: DeviceData,
-                   host: HostnameInfo, ports: dict) -> list[Finding]:
+                   _host: HostnameInfo, _ports: dict) -> list[Finding]:
         f: list[Finding] = []
         if "management_plane" not in self.policy:
             return f
@@ -428,8 +459,8 @@ class ComplianceEngine:
         return f
 
     # ── AAA ───────────────────────────────────────────────────
-    def _check_aaa(self, cfg: ParsedConfig, data: DeviceData,
-                   host: HostnameInfo, ports: dict) -> list[Finding]:
+    def _check_aaa(self, cfg: ParsedConfig, _data: DeviceData,
+                   _host: HostnameInfo, _ports: dict) -> list[Finding]:
         f: list[Finding] = []
         if "management_plane" not in self.policy:
             return f
@@ -501,8 +532,8 @@ class ComplianceEngine:
         return f
 
     # ── NTP ───────────────────────────────────────────────────
-    def _check_ntp(self, cfg: ParsedConfig, data: DeviceData,
-                   host: HostnameInfo, ports: dict) -> list[Finding]:
+    def _check_ntp(self, cfg: ParsedConfig, _data: DeviceData,
+                   _host: HostnameInfo, _ports: dict) -> list[Finding]:
         f: list[Finding] = []
         if "management_plane" not in self.policy:
             return f
@@ -545,8 +576,8 @@ class ComplianceEngine:
         return f
 
     # ── LOGGING ───────────────────────────────────────────────
-    def _check_logging(self, cfg: ParsedConfig, data: DeviceData,
-                       host: HostnameInfo, ports: dict) -> list[Finding]:
+    def _check_logging(self, cfg: ParsedConfig, _data: DeviceData,
+                       _host: HostnameInfo, _ports: dict) -> list[Finding]:
         f: list[Finding] = []
         if "management_plane" not in self.policy:
             return f
@@ -619,8 +650,8 @@ class ComplianceEngine:
         return f
 
     # ── SNMP ──────────────────────────────────────────────────
-    def _check_snmp(self, cfg: ParsedConfig, data: DeviceData,
-                    host: HostnameInfo, ports: dict) -> list[Finding]:
+    def _check_snmp(self, cfg: ParsedConfig, _data: DeviceData,
+                    _host: HostnameInfo, _ports: dict) -> list[Finding]:
         f: list[Finding] = []
         if "management_plane" not in self.policy:
             return f
@@ -727,7 +758,7 @@ class ComplianceEngine:
 
     # ── BANNERS ───────────────────────────────────────────────
     def _check_banners(self, cfg: ParsedConfig, data: DeviceData,
-                       host: HostnameInfo, ports: dict) -> list[Finding]:
+                       _host: HostnameInfo, _ports: dict) -> list[Finding]:
         f: list[Finding] = []
         if "management_plane" not in self.policy:
             return f
@@ -765,8 +796,8 @@ class ComplianceEngine:
         return f
 
     # ── LOCAL USERS ───────────────────────────────────────────
-    def _check_users(self, cfg: ParsedConfig, data: DeviceData,
-                     host: HostnameInfo, ports: dict) -> list[Finding]:
+    def _check_users(self, cfg: ParsedConfig, _data: DeviceData,
+                     _host: HostnameInfo, _ports: dict) -> list[Finding]:
         f: list[Finding] = []
         if "management_plane" not in self.policy:
             return f
@@ -797,8 +828,8 @@ class ComplianceEngine:
         return f
 
     # ── VTY LINES ─────────────────────────────────────────────
-    def _check_vty_lines(self, cfg: ParsedConfig, data: DeviceData,
-                         host: HostnameInfo, ports: dict) -> list[Finding]:
+    def _check_vty_lines(self, cfg: ParsedConfig, _data: DeviceData,
+                         _host: HostnameInfo, _ports: dict) -> list[Finding]:
         f: list[Finding] = []
         if "management_plane" not in self.policy:
             return f
@@ -884,8 +915,8 @@ class ComplianceEngine:
         return f
 
     # ── CONSOLE ───────────────────────────────────────────────
-    def _check_console(self, cfg: ParsedConfig, data: DeviceData,
-                       host: HostnameInfo, ports: dict) -> list[Finding]:
+    def _check_console(self, cfg: ParsedConfig, _data: DeviceData,
+                       _host: HostnameInfo, _ports: dict) -> list[Finding]:
         f: list[Finding] = []
         if "management_plane" not in self.policy:
             return f
@@ -949,8 +980,8 @@ class ComplianceEngine:
     # Archive compliance check temporarily removed as requested.
 
     # ── LOGIN SECURITY ────────────────────────────────────────
-    def _check_login_security(self, cfg: ParsedConfig, data: DeviceData,
-                              host: HostnameInfo, ports: dict) -> list[Finding]:
+    def _check_login_security(self, cfg: ParsedConfig, _data: DeviceData,
+                              _host: HostnameInfo, _ports: dict) -> list[Finding]:
         f: list[Finding] = []
         if "management_plane" not in self.policy:
             return f
@@ -984,8 +1015,8 @@ class ComplianceEngine:
         return f
 
     # ── CDP / LLDP ────────────────────────────────────────────
-    def _check_cdp_lldp(self, cfg: ParsedConfig, data: DeviceData,
-                        host: HostnameInfo, ports: dict) -> list[Finding]:
+    def _check_cdp_lldp(self, cfg: ParsedConfig, _data: DeviceData,
+                        _host: HostnameInfo, _ports: dict) -> list[Finding]:
         f: list[Finding] = []
         if "management_plane" not in self.policy:
             return f
@@ -1018,7 +1049,7 @@ class ComplianceEngine:
 
     # ── STP ───────────────────────────────────────────────────
     def _check_stp(self, cfg: ParsedConfig, data: DeviceData,
-                   host: HostnameInfo, ports: dict) -> list[Finding]:
+                   host: HostnameInfo, _ports: dict) -> list[Finding]:
         f: list[Finding] = []
         if "control_plane" not in self.policy:
             return f
@@ -1109,7 +1140,7 @@ class ComplianceEngine:
 
     # ── VTP ───────────────────────────────────────────────────
     def _check_vtp(self, cfg: ParsedConfig, data: DeviceData,
-                   host: HostnameInfo, ports: dict) -> list[Finding]:
+                   _host: HostnameInfo, _ports: dict) -> list[Finding]:
         f: list[Finding] = []
         if "control_plane" not in self.policy:
             return f
@@ -1144,8 +1175,8 @@ class ComplianceEngine:
         return f
 
     # ── DHCP SNOOPING ─────────────────────────────────────────
-    def _check_dhcp_snooping(self, cfg: ParsedConfig, data: DeviceData,
-                             host: HostnameInfo, ports: dict) -> list[Finding]:
+    def _check_dhcp_snooping(self, cfg: ParsedConfig, _data: DeviceData,
+                             _host: HostnameInfo, _ports: dict) -> list[Finding]:
         f: list[Finding] = []
         if "control_plane" not in self.policy:
             return f
@@ -1175,8 +1206,8 @@ class ComplianceEngine:
         return f
 
     # ── ARP INSPECTION ────────────────────────────────────────
-    def _check_arp_inspection(self, cfg: ParsedConfig, data: DeviceData,
-                              host: HostnameInfo, ports: dict) -> list[Finding]:
+    def _check_arp_inspection(self, cfg: ParsedConfig, _data: DeviceData,
+                              _host: HostnameInfo, _ports: dict) -> list[Finding]:
         f: list[Finding] = []
         if "control_plane" not in self.policy:
             return f
@@ -1205,8 +1236,8 @@ class ComplianceEngine:
         return f
 
     # ── ERRDISABLE ────────────────────────────────────────────
-    def _check_errdisable(self, cfg: ParsedConfig, data: DeviceData,
-                          host: HostnameInfo, ports: dict) -> list[Finding]:
+    def _check_errdisable(self, cfg: ParsedConfig, _data: DeviceData,
+                          _host: HostnameInfo, _ports: dict) -> list[Finding]:
         f: list[Finding] = []
         if "control_plane" not in self.policy:
             return f
@@ -1232,8 +1263,8 @@ class ComplianceEngine:
         return f
 
     # ── UDLD ──────────────────────────────────────────────────
-    def _check_udld(self, cfg: ParsedConfig, data: DeviceData,
-                    host: HostnameInfo, ports: dict) -> list[Finding]:
+    def _check_udld(self, cfg: ParsedConfig, _data: DeviceData,
+                    _host: HostnameInfo, _ports: dict) -> list[Finding]:
         f: list[Finding] = []
         if "control_plane" not in self.policy:
             return f
@@ -1246,8 +1277,8 @@ class ComplianceEngine:
         return f
 
     # ── CONTROL-PLANE POLICING ──────────────────────────────
-    def _check_copp(self, cfg: ParsedConfig, data: DeviceData,
-                    host: HostnameInfo, ports: dict) -> list[Finding]:
+    def _check_copp(self, cfg: ParsedConfig, _data: DeviceData,
+                    _host: HostnameInfo, _ports: dict) -> list[Finding]:
         f: list[Finding] = []
         if "control_plane" not in self.policy:
             return f
@@ -1270,7 +1301,7 @@ class ComplianceEngine:
     # ===================================================================
 
     def _check_interfaces(self, cfg: ParsedConfig, data: DeviceData,
-                          host: HostnameInfo, ports: dict[str, PortInfo]) -> list[Finding]:
+                          _host: HostnameInfo, ports: dict[str, PortInfo]) -> list[Finding]:
         f: list[Finding] = []
         # Skip all data plane checks if data_plane not in policy (e.g. category filtering)
         if "data_plane" not in self.policy:
@@ -1278,7 +1309,7 @@ class ComplianceEngine:
         dp = self.policy.get("data_plane", {})
         self._current_data = data   # stash for trunk_native_vlan lookups
 
-        for intf_name, pi in ports.items():
+        for pi in ports.values():
             role = pi.role
 
             # Port-channel members are classified as OTHER and skipped;
@@ -1299,7 +1330,7 @@ class ComplianceEngine:
         return f
 
     # ── ACCESS PORT CHECKS ────────────────────────────────────
-    def _check_access_port(self, cfg: ParsedConfig, dp: dict,
+    def _check_access_port(self, _cfg: ParsedConfig, dp: dict,
                            pi: PortInfo) -> list[Finding]:
         f: list[Finding] = []
         intf = pi.name
@@ -1453,7 +1484,7 @@ class ComplianceEngine:
         return f
 
     # ── ENDPOINT TRUNK PORT CHECKS (APs etc.) ─────────────────
-    def _check_endpoint_trunk_port(self, cfg: ParsedConfig, dp: dict,
+    def _check_endpoint_trunk_port(self, _cfg: ParsedConfig, dp: dict,
                                    pi: PortInfo) -> list[Finding]:
         """
         Checks for trunk ports connected to endpoints (wireless APs, etc.).
@@ -1615,7 +1646,7 @@ class ComplianceEngine:
         return f
 
     # ── TRUNK PORT CHECKS ─────────────────────────────────────
-    def _check_trunk_port(self, cfg: ParsedConfig, dp: dict,
+    def _check_trunk_port(self, _cfg: ParsedConfig, dp: dict,
                           pi: PortInfo) -> list[Finding]:
         f: list[Finding] = []
         intf = pi.name
@@ -1774,7 +1805,7 @@ class ComplianceEngine:
         return f
 
     # ── ROUTED PORT CHECKS ────────────────────────────────────
-    def _check_routed_port(self, cfg: ParsedConfig, dp: dict,
+    def _check_routed_port(self, _cfg: ParsedConfig, dp: dict,
                            pi: PortInfo) -> list[Finding]:
         """Checks for L3 (routed) interfaces and SVIs."""
         f: list[Finding] = []
@@ -1794,7 +1825,7 @@ class ComplianceEngine:
         return f
 
     # ── UNUSED PORT CHECKS ────────────────────────────────────
-    def _check_unused_port(self, cfg: ParsedConfig, dp: dict,
+    def _check_unused_port(self, _cfg: ParsedConfig, dp: dict,
                            pi: PortInfo) -> list[Finding]:
         f: list[Finding] = []
         intf = pi.name
@@ -1881,7 +1912,7 @@ class ComplianceEngine:
         tier = thresholds.get(speed) or thresholds.get(str(speed))
         if tier is None:
             # Find the nearest tier
-            for spd in sorted(thresholds.keys(), key=lambda x: int(x), reverse=True):
+            for spd in sorted(thresholds.keys(), key=int, reverse=True):
                 if speed >= int(spd):
                     tier = thresholds[spd]
                     break
@@ -1897,12 +1928,26 @@ class ComplianceEngine:
 
                 # Support both old format (single value) and new format (rising/falling)
                 if isinstance(expected, dict):
-                    expected_rising = expected.get("rising")
-                    expected_falling = expected.get("falling")
+                    expected_rising_raw = expected.get("rising")
+                    expected_falling_raw = expected.get("falling")
                 else:
                     # Backward compatibility: if it's a single number, use it for both
-                    expected_rising = expected
-                    expected_falling = None
+                    expected_rising_raw = expected
+                    expected_falling_raw = None
+
+                if expected_rising_raw is None:
+                    continue
+
+                expected_rising = float(expected_rising_raw)
+                expected_falling = (
+                    float(expected_falling_raw)
+                    if expected_falling_raw is not None else None
+                )
+                expected_rising_text = str(expected_rising_raw)
+                expected_falling_text = (
+                    str(expected_falling_raw)
+                    if expected_falling_raw is not None else None
+                )
 
                 # Look in interface config for matching storm-control line
                 # Pattern captures both rising and optional falling threshold
@@ -1932,40 +1977,40 @@ class ComplianceEngine:
                         if actual_falling is not None and expected_falling is not None:
                             f.append(Finding("storm_control", Status.PASS,
                                      f"{intf}: {sc_type} storm-control {actual_rising}%/{actual_falling}% "
-                                     f"<= {expected_rising}%/{expected_falling}% ({speed}Mbps tier)",
+                                     f"<= {expected_rising_text}%/{expected_falling_text}% ({speed}Mbps tier)",
                                      interface=intf))
                         else:
                             f.append(Finding("storm_control", Status.PASS,
-                                     f"{intf}: {sc_type} storm-control {actual_rising}% <= {expected_rising}% "
+                                     f"{intf}: {sc_type} storm-control {actual_rising}% <= {expected_rising_text}% "
                                      f"({speed}Mbps tier)",
                                      interface=intf))
                     else:
                         # Build failure message based on what failed
                         if not rising_ok and not falling_ok:
                             fail_msg = (f"{intf}: {sc_type} storm-control {actual_rising}%/{actual_falling or 'N/A'}% "
-                                       f"> {expected_rising}%/{expected_falling}% ({speed}Mbps tier)")
+                                       f"> {expected_rising_text}%/{expected_falling_text}% ({speed}Mbps tier)")
                         elif not rising_ok:
                             fail_msg = (f"{intf}: {sc_type} storm-control rising {actual_rising}% "
-                                       f"> {expected_rising}% ({speed}Mbps tier)")
+                                       f"> {expected_rising_text}% ({speed}Mbps tier)")
                         else:
                             if actual_falling is None:
                                 fail_msg = (f"{intf}: {sc_type} storm-control falling threshold not configured "
-                                           f"(expected {expected_falling}%, {speed}Mbps tier)")
+                                           f"(expected {expected_falling_text}%, {speed}Mbps tier)")
                             else:
                                 fail_msg = (f"{intf}: {sc_type} storm-control falling {actual_falling}% "
-                                           f"> {expected_falling}% ({speed}Mbps tier)")
+                                           f"> {expected_falling_text}% ({speed}Mbps tier)")
 
-                        remediation_cmd = f"storm-control {sc_type} level {expected_rising}"
-                        if expected_falling is not None:
-                            remediation_cmd += f" {expected_falling}"
+                        remediation_cmd = f"storm-control {sc_type} level {expected_rising_text}"
+                        if expected_falling_text is not None:
+                            remediation_cmd += f" {expected_falling_text}"
 
                         f.append(Finding("storm_control", Status.FAIL, fail_msg,
                                        interface=intf, remediation=remediation_cmd))
                 else:
                     # Not configured at all
-                    remediation_cmd = f"storm-control {sc_type} level {expected_rising}"
-                    if expected_falling is not None:
-                        remediation_cmd += f" {expected_falling}"
+                    remediation_cmd = f"storm-control {sc_type} level {expected_rising_text}"
+                    if expected_falling_text is not None:
+                        remediation_cmd += f" {expected_falling_text}"
 
                     f.append(Finding("storm_control", Status.FAIL,
                              f"{intf}: {sc_type} storm-control not configured ({speed}Mbps tier)",
@@ -2008,24 +2053,37 @@ class ComplianceEngine:
 
         return f
 
-    def _check_core_role(self, cfg, data, host, ports, rs) -> list[Finding]:
+    def _stp_root_status(self, data: DeviceData) -> tuple[list[str], list[str]]:
+        """Return VLAN IDs where the local switch is and is not the STP root."""
+        root_vlans: list[str] = []
+        non_root_vlans: list[str] = []
+        if not data.stp:
+            return root_vlans, non_root_vlans
+
+        for mode_data in data.stp.values():
+            if not isinstance(mode_data, dict):
+                continue
+            for vid, vinfo in mode_data.get("vlans", {}).items():
+                root = vinfo.get("root", {})
+                bridge = vinfo.get("bridge", {})
+                if not (root.get("address") and bridge.get("address")):
+                    continue
+                vlan_id = str(vid)
+                if root["address"] == bridge["address"]:
+                    root_vlans.append(vlan_id)
+                else:
+                    non_root_vlans.append(vlan_id)
+
+        return root_vlans, non_root_vlans
+
+    def _check_core_role(self, _cfg: ParsedConfig, data: DeviceData,
+                         _host: HostnameInfo, _ports: dict[str, PortInfo],
+                         rs: dict) -> list[Finding]:
         f: list[Finding] = []
         core_pol = rs.get("core_switch", {})
 
         if _enabled(core_pol, "stp_root_check") and data.stp:
-            root_vlans = []
-            non_root_vlans = []
-            for mode_data in data.stp.values():
-                if not isinstance(mode_data, dict):
-                    continue
-                for vid, vinfo in mode_data.get("vlans", {}).items():
-                    root = vinfo.get("root", {})
-                    bridge = vinfo.get("bridge", {})
-                    if root.get("address") and bridge.get("address"):
-                        if root["address"] == bridge["address"]:
-                            root_vlans.append(vid)
-                        else:
-                            non_root_vlans.append(vid)
+            root_vlans, non_root_vlans = self._stp_root_status(data)
 
             # Report each VLAN where this core switch IS the root (PASS)
             for vid in root_vlans:
@@ -2040,21 +2098,14 @@ class ComplianceEngine:
 
         return f
 
-    def _check_access_role(self, cfg, data, host, ports, rs) -> list[Finding]:
+    def _check_access_role(self, _cfg: ParsedConfig, data: DeviceData,
+                           _host: HostnameInfo, ports: dict[str, PortInfo],
+                           rs: dict) -> list[Finding]:
         f: list[Finding] = []
         asw_pol = rs.get("access_switch", {})
 
         if _enabled(asw_pol, "stp_not_root") and data.stp:
-            root_vlans = []
-            for mode_data in data.stp.values():
-                if not isinstance(mode_data, dict):
-                    continue
-                for vid, vinfo in mode_data.get("vlans", {}).items():
-                    root = vinfo.get("root", {})
-                    bridge = vinfo.get("bridge", {})
-                    if (root.get("address") and bridge.get("address") and
-                            root["address"] == bridge["address"]):
-                        root_vlans.append(vid)
+            root_vlans, _non_root_vlans = self._stp_root_status(data)
 
             if root_vlans:
                 # Create a finding for each VLAN where this switch is root

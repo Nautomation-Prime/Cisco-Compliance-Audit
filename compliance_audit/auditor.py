@@ -712,6 +712,7 @@ def _audit_single_device(job: _DeviceJob) -> Optional[AuditResult]:
             ip=ip,
             role=host_info.role or "unknown",
             role_display=host_info.role_display or "unknown",
+            structured_parse_engine=dict(data.structured_parse_engine),
             findings=[
                 Finding(
                     check_name="engine_error",
@@ -767,12 +768,22 @@ def _audit_single_device(job: _DeviceJob) -> Optional[AuditResult]:
                     save_delta_report(delta, hostname, out_dir)
                     setattr(result, "_delta", delta)
 
-        log.info(
-            "Completed audit of %s — score %s%% (%.1fs)",
-            hostname,
-            result.score_pct,
-            result.duration_secs,
-        )
+        parser_summary = result.structured_parse_summary
+        if parser_summary:
+            log.info(
+                "Completed audit of %s — score %s%% (%.1fs) — structured parsing: %s",
+                hostname,
+                result.score_pct,
+                result.duration_secs,
+                parser_summary,
+            )
+        else:
+            log.info(
+                "Completed audit of %s — score %s%% (%.1fs)",
+                hostname,
+                result.score_pct,
+                result.duration_secs,
+            )
         return result
 
     finally:
@@ -1002,18 +1013,18 @@ def run_audit(
                         if result is not None:
                             results.append(result)
                             progress.console.print(
-                                f"  [green]✓[/] {job.hostname} ({job.ip}) — "
+                                f"  [green]OK[/] {job.hostname} ({job.ip}) - "
                                 f"Score: {result.score_pct}%"
                             )
                         else:
                             progress.console.print(
-                                f"  [red]✗[/] {job.hostname} ({job.ip}) — "
+                                f"  [red]FAIL[/] {job.hostname} ({job.ip}) - "
                                 f"Connection failed"
                             )
                     except Exception as exc:
                         log.exception("Audit of %s failed", job.hostname)
                         progress.console.print(
-                            f"  [red]✗[/] {job.hostname} ({job.ip}) — Error: {exc}"
+                            f"  [red]FAIL[/] {job.hostname} ({job.ip}) - Error: {exc}"
                         )
                     progress.advance(task_id)
 
