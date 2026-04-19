@@ -4,11 +4,11 @@
 # ║                                                                     ║
 # ║  Devices can be specified in several ways:                          ║
 # ║                                                                     ║
-# ║    Bare hostname    - "GB-SITE1-001ASW001"  (connects via DNS)      ║
+# ║    Bare hostname    - "ZZ-LAB1-001ASW001"  (connects via DNS)       ║
 # ║    Bare IP          - "192.0.2.61"   (hostname discovered from      ║
 # ║                                       device prompt)                ║
-# ║    Hostname only    - hostname: GB-SITE1-001ASW001                  ║
-# ║    Hostname + IP    - hostname: GB-SITE1-001ASW001                  ║
+# ║    Hostname only    - hostname: ZZ-LAB1-001ASW001                   ║
+# ║    Hostname + IP    - hostname: ZZ-LAB1-001ASW001                   ║
 # ║                       ip: 192.0.2.61                                ║
 # ║                                                                     ║
 # ║  You can list devices in two ways (or combine both):                ║
@@ -20,18 +20,18 @@
 # ║     group-level value.                                              ║
 # ║                                                                     ║
 # ║  To skip this file and audit a single device ad-hoc, use:           ║
-# ║    python -m compliance_audit --device GB-SITE1-001ASW001:10.1.1.1  ║
-# ║    python -m compliance_audit --device GB-SITE1-001ASW001           ║
+# ║    python -m compliance_audit --device ZZ-LAB1-001ASW001:192.0.2.61 ║
+# ║    python -m compliance_audit --device ZZ-LAB1-001ASW001            ║
 # ╚═════════════════════════════════════════════════════════════════════╝
 
 
 # ── FLAT LIST (individual devices) ──────────────────────────────────
 # devices:
-#   - GB-SITE1-001ASW001                   # bare hostname (DNS)
+#   - ZZ-LAB1-001ASW001                    # bare hostname (DNS)
 #   - 192.0.2.61                           # bare IP
-#   - hostname: GB-SITE1-001ASW001         # hostname only (DNS)
+#   - hostname: ZZ-LAB1-001ASW001          # hostname only (DNS)
 #   - hostname: LEGACY-DEVICE-001          # full form with IP
-#     ip: 10.1.1.1
+#     ip: 192.0.2.62
 #     role: access_switch                  # optional role override
 
 
@@ -40,14 +40,14 @@ groups:
   access_switches:
     role: access_switch
     devices:
-      - GB-SITE1-001ASW001                 # bare hostname
-      - GB-SITE1-001ASW002
+      - ZZ-LAB1-001ASW001                  # bare hostname
+      - ZZ-LAB1-001ASW002
       # Full form also works inside groups:
-      # - hostname: GB-SITE1-001ASW003
+      # - hostname: ZZ-LAB1-001ASW003
       #   ip: 192.0.2.63
 
   # core_switches:
   #   role: core_switch
   #   devices:
-  #     - GB-SITE1-001CSW001
-  #     - GB-SITE1-001CSW002
+  #     - ZZ-LAB1-001CSW001
+  #     - ZZ-LAB1-001CSW002

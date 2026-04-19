@@ -1,15 +1,15 @@
 """
-Parse the corporate hostname naming convention to extract device role,
+Parse the configurable hostname naming convention to extract device role,
 site information, and cabinet/instance numbers.
 
-Convention:  GB-MKD1-005ASW001
+Convention:  ZZ-LAB1-005ASW001
              ││  │││  │││││ │││
              ││  │││  │││││ └── device number (001)
              ││  │││  ││└──── role code (ASW/CSW/SDW/ISW — configurable)
              ││  │││  └────── comms room / cabinet (005)
              ││  ││└───────── site instance (1)
-             ││  └─────────── site code (MKD)
-             └──────────────── country code (GB)
+             ││  └─────────── site code (LAB = sample site code)
+             └──────────────── prefix / country code (ZZ placeholder)
 
 Role codes are loaded from 'hostname_roles' in compliance_config.yaml
 so they can be added/changed/removed without touching this file.

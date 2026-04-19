@@ -6,7 +6,7 @@
 # ║  Parameters under each check set the expected (compliant) value   ║
 # ║                                                                   ║
 # ║  Tip: Copy this file per site and run with:                       ║
-# ║       python -m compliance_audit -c site_london.yaml              ║
+# ║       python -m compliance_audit -c site_alpha.yaml               ║
 # ╚═══════════════════════════════════════════════════════════════════╝
 
 
@@ -297,7 +297,7 @@ compliance:
 
     ip_domain_name:
       enabled: true
-      expected: "weavermanor.co.uk"          # Set your corporate domain, e.g. "corp.example.com"
+      expected: "corp.example.com"           # Set your corporate domain
 
     # ── SSH ─────────────────────────────────────────────────────
     ssh_version:

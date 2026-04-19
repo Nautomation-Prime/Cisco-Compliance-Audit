@@ -445,7 +445,7 @@ def _normalise_device_entry(entry, *, location: str = "devices") -> dict:
 
     Accepted forms:
       - ``"192.0.2.61"``          → ip-only  (hostname discovered at connect)
-      - ``"GB-SITE1-001ASW001"``  → hostname used as connection target (DNS)
+        Example hostname: ``"ZZ-LAB1-001ASW001"`` → hostname used as connection target (DNS)
       - ``{hostname: …, ip: …}``  → explicit (current format)
       - ``{hostname: …}``         → hostname used as connection target
       - ``{ip: …}``              → ip-only

@@ -52,7 +52,7 @@ Built on **PyATS/Genie** for structured parsing, **Netmiko** for transport, and 
 | ------ | ----------- |
 | **90+ compliance checks** | Every check toggleable via `enabled: true/false` in YAML |
 | **Concurrent auditing** | Audit multiple devices in parallel — configurable worker count via `max_workers` |
-| **Multiple config files** | Run different YAML configs per site or purpose with `-c site_london.yaml` |
+| **Multiple config files** | Run different YAML configs per site or purpose with `-c site_alpha.yaml` |
 | **Separate device inventory** | Devices listed in their own `devices.yaml` — swap inventories without touching compliance policy |
 | **Role-aware** | Automatically detects device role (Access / Core / SD-WAN / Industrial) from the hostname naming convention |
 | **Port classification** | Every interface is classified as ACCESS, TRUNK_UPLINK, TRUNK_DOWNLINK, UNUSED, ROUTED, SVI, etc. |
@@ -164,16 +164,16 @@ pip install -r requirements.txt
 #    compliance_audit/compliance_config.yaml
 
 # 3. Run the audit against a single device
-python -m compliance_audit --device GB-SITE1-001ASW001:10.1.1.1
+python -m compliance_audit --device ZZ-LAB1-001ASW001:192.0.2.61
 
 # 4. Or audit all devices in the inventory (concurrently)
 python -m compliance_audit
 
 # 5. Use a site-specific config file
-python -m compliance_audit -c configs/site_london.yaml
+python -m compliance_audit -c configs/site_alpha.yaml
 
 # 6. Use a different device inventory
-python -m compliance_audit -i inventories/site_london_devices.yaml
+python -m compliance_audit -i inventories/site_alpha_devices.yaml
 
 # 7. View the reports in ./reports/
 ```
@@ -200,26 +200,26 @@ The runbook is command-first and covers audit, approval, apply, apply-all, and t
 
 ```bash
 # Audit a single device (hostname:ip format)
-python -m compliance_audit --device GB-SITE1-001ASW001:10.1.1.1
+python -m compliance_audit --device ZZ-LAB1-001ASW001:192.0.2.61
 
 # Audit multiple devices
-python -m compliance_audit --device GB-SITE1-001ASW001:10.1.1.1 --device GB-SITE1-001CSW001:10.1.1.2
+python -m compliance_audit --device ZZ-LAB1-001ASW001:192.0.2.61 --device ZZ-HUB1-001CSW001:192.0.2.62
 
 # Audit by IP only (hostname won't be parsed for role)
-python -m compliance_audit --device 10.1.1.1
+python -m compliance_audit --device 192.0.2.61
 
 # Audit all devices listed in devices.yaml
 python -m compliance_audit
 
 # Use a different device inventory file
-python -m compliance_audit -i inventories/site_london_devices.yaml
+python -m compliance_audit -i inventories/site_alpha_devices.yaml
 
 # Use a different config file (e.g. per-site configs)
-python -m compliance_audit -c configs/site_london.yaml
-python -m compliance_audit -c configs/site_manchester.yaml
+python -m compliance_audit -c configs/site_alpha.yaml
+python -m compliance_audit -c configs/site_beta.yaml
 
 # Skip the jump host (connect directly)
-python -m compliance_audit --device 10.1.1.1 --no-jump
+python -m compliance_audit --device 192.0.2.61 --no-jump
 
 # Only run management plane checks
 python -m compliance_audit --categories management_plane
@@ -338,25 +338,25 @@ To manage different sites, environments, or audit scopes, copy the default confi
 
 ```bash
 # Copy the default config for a new site
-cp compliance_audit/compliance_config.yaml configs/site_london.yaml
-cp compliance_audit/compliance_config.yaml configs/site_manchester.yaml
+cp compliance_audit/compliance_config.yaml configs/site_alpha.yaml
+cp compliance_audit/compliance_config.yaml configs/site_beta.yaml
 
 # Run each site independently
-python -m compliance_audit -c configs/site_london.yaml
-python -m compliance_audit -c configs/site_manchester.yaml
+python -m compliance_audit -c configs/site_alpha.yaml
+python -m compliance_audit -c configs/site_beta.yaml
 ```
 
 Each config file is self-contained for policy — connection settings and compliance checks are all in one file. The device inventory is referenced via `inventory_file` in the config, so different sites can point to their own inventory:
 
 ```yaml
-# In configs/site_london.yaml
-inventory_file: "../inventories/london_devices.yaml"
+# In configs/site_alpha.yaml
+inventory_file: "../inventories/site_alpha_devices.yaml"
 ```
 
 Or override on the command line:
 
 ```bash
-python -m compliance_audit -c configs/site_london.yaml -i inventories/london_devices.yaml
+python -m compliance_audit -c configs/site_alpha.yaml -i inventories/site_alpha_devices.yaml
 ```
 
 ### Audit Settings (§1)
@@ -416,14 +416,14 @@ The inventory file format:
 ```yaml
 # devices.yaml
 devices:
-  - hostname: GB-SITE1-001ASW001
-    ip: 10.1.1.1
-  - hostname: GB-SITE1-001CSW001
-    ip: 10.1.1.2
-  - hostname: GB-SEV1-001ISW001
-    ip: 10.2.3.4
+  - hostname: ZZ-LAB1-001ASW001
+    ip: 192.0.2.61
+  - hostname: ZZ-HUB1-001CSW001
+    ip: 192.0.2.62
+  - hostname: ZZ-PLT1-001ISW001
+    ip: 198.51.100.14
   - hostname: non-standard-hostname
-    ip: 10.1.2.3
+    ip: 203.0.113.10
     role: core_switch  # Optional: explicitly override device role detection
 ```
 
@@ -434,7 +434,7 @@ If a device hostname doesn't follow the standard naming convention, you can expl
 ```yaml
 devices:
   - hostname: legacy-switch-01
-    ip: 192.168.1.10
+    ip: 203.0.113.10
     role: access_switch  # Bypasses hostname-based role detection
 ```
 
@@ -463,19 +463,19 @@ Set `enabled: false` to skip any check your organisation doesn't need.
 
 ## Hostname Naming Convention
 
-The tool automatically detects device roles by parsing hostnames against a specific naming convention. This drives role-specific compliance checks and per-interface policies.
+The tool automatically detects device roles by parsing hostnames against a configurable naming convention. The format below is only a neutral example; the site codes and prefixes can be adapted to whatever standard your environment uses.
 
 ### Format
 
 ```text
-GB-SITE1-001ASW001
-│   │││  │││││ │││
-│   │││  │││││ └── Device number (001 = 1st switch in cabinet)
-│   │││  ││└──── Role code (ASW/CSW/SDW/ISW)
-│   │││  └────── Comms room / cabinet number (005)
-│   ││└───────── Site instance (1 = first branch in city)
-│   └─────────── Site code (MKD = government standard code)
-└──────────────── Country code (GB)
+ZZ-LAB1-005ASW001
+││  │││  │││││ │││
+││  │││  │││││ └── Device number (001 = 1st switch in cabinet)
+││  │││  ││└──── Role code (ASW/CSW/SDW/ISW)
+││  │││  └────── Comms room / cabinet number (005)
+││  ││└───────── Site instance (1 = first branch for that site code)
+││  └─────────── Site code (LAB = sample site code)
+└──────────────── Prefix / country code (ZZ placeholder)
 ```
 
 ### Role Codes
@@ -489,24 +489,25 @@ GB-SITE1-001ASW001
 
 ### Site Code
 
-The 2-4 letter site code follows UK government location standards:
+The 2-4 letter site code is fully configurable. Example placeholders:
 
-| Example | Location |
+| Example | Meaning |
 | --------- | ---------- |
-| MKD | Maidenhead |
-| SEV | Severnside |
-| MNC | Manchester |
+| LAB | Example lab or staging site |
+| HUB | Example shared services site |
+| BRN | Example branch site |
+| PLT | Example plant / industrial site |
 
-The digit after the site code is the branch instance (e.g. `MKD1` = first branch in Maidenhead).
+The digit after the site code is the site instance (e.g. `LAB1` = first instance of the sample site code).
 
 ### Examples
 
-| Hostname | Country | Site | Branch | Cabinet | Role | Device # |
-| ---------- | --------- | ------ | -------- | --------- | ------ | ---------- |
-| `GB-MKD1-001ASW001` | GB | MKD | 1 | 005 | Access Switch | 001 |
-| `GB-SEV1-001CSW001` | GB | SEV | 1 | 001 | Core Switch | 001 |
-| `GB-MNC2-003SDW001` | GB | MNC | 2 | 003 | SD-WAN Router | 001 |
-| `GB-MKD1-001ISW001` | GB | MKD | 1 | 005 | Industrial Switch | 001 |
+| Hostname | Prefix | Site | Branch | Cabinet | Role | Device # |
+| ---------- | -------- | ------ | -------- | --------- | ------ | ---------- |
+| `ZZ-LAB1-001ASW001` | ZZ | LAB | 1 | 001 | Access Switch | 001 |
+| `ZZ-HUB1-001CSW001` | ZZ | HUB | 1 | 001 | Core Switch | 001 |
+| `ZZ-BRN2-003SDW001` | ZZ | BRN | 2 | 003 | SD-WAN Router | 001 |
+| `ZZ-PLT1-001ISW001` | ZZ | PLT | 1 | 001 | Industrial Switch | 001 |
 
 > **What if the hostname doesn't match?** The audit still runs — it just skips role-specific checks and logs a warning. To enable role-specific checks for non-standard hostnames, you can explicitly specify the device role in `devices.yaml` using the optional `role` field (see [Device Inventory](#device-inventory-3)).
 
@@ -791,8 +792,8 @@ A compact summary table is printed to the terminal showing device scores at a gl
 ╭────────────────────────┬─────────────┬──────────────┬───────┬──────┬──────┬──────┬───────╮
 │ Device                 │ IP          │ Role         │ Score │ Pass │ Fail │ Warn │ Error │
 ├────────────────────────┼─────────────┼──────────────┼───────┼──────┼──────┼──────┼───────┤
-│ GB-SITE1-001ASW001     │ 10.1.1.1    │ Access Switch│  87%  │  55  │   8  │   2  │   0   │
-│ GB-SITE1-001CSW001     │ 10.1.1.2    │ Core Switch  │  94%  │  62  │   4  │   1  │   0   │
+│ ZZ-LAB1-001ASW001      │ 192.0.2.61  │ Access Switch│  87%  │  55  │   8  │   2  │   0   │
+│ ZZ-HUB1-001CSW001      │ 192.0.2.62  │ Core Switch  │  94%  │  62  │   4  │   1  │   0   │
 ╰────────────────────────┴─────────────┴──────────────┴───────┴──────┴──────┴──────┴───────╯
 ```
 
@@ -806,8 +807,8 @@ Tabular summary of all findings across all devices, suitable for spreadsheet ana
 
 ```json
 {
-  "hostname": "GB-SITE1-001ASW001",
-  "ip": "10.1.1.1",
+  "hostname": "ZZ-LAB1-001ASW001",
+  "ip": "192.0.2.61",
   "score_pct": 87.3,
   "pass": 55,
   "fail": 8,
@@ -849,10 +850,10 @@ When ROI is enabled, additional stat cards show estimated minutes saved and valu
 All reports are saved to the `output_dir` (default `./reports/`) with filenames like:
 
 ```text
-reports/GB-SITE1-001ASW001_20260308_143025.json
-reports/GB-SITE1-001ASW001_20260308_143025.html
-reports/GB-SITE1-001ASW001_remediation_20260308_143025.txt
-reports/GB-SITE1-001ASW002_20260308_143025.html
+reports/ZZ-LAB1-001ASW001_20260308_143025.json
+reports/ZZ-LAB1-001ASW001_20260308_143025.html
+reports/ZZ-LAB1-001ASW001_remediation_20260308_143025.txt
+reports/ZZ-LAB1-001ASW002_20260308_143025.html
 reports/consolidated_report_20260308_143025.html
 reports/compliance_audit_20260308_143025.csv
 ```
@@ -866,7 +867,7 @@ For each device with FAIL findings, a ready-to-paste IOS-XE config snippet is ge
 - Deduplicates commands and ends with `write memory`
 
 ```text
-! Remediation script for GB-SITE1-001ASW001 (10.1.1.1)
+! Remediation script for ZZ-LAB1-001ASW001 (192.0.2.61)
 ! Generated: 2026-03-08 14:30 UTC
 ! Findings to fix: 8
 !
@@ -906,8 +907,8 @@ python -m compliance_audit --remediation-list approved
 **Example output:**
 
 ```text
-baea5533a7f61a24 | pending  | GB-SITE1-001ASW001       | 10.1.1.1        | risk=medium | findings=8   | created=2026-03-23T14:30:25Z
-220f8b3b0ce7a91e | approved | GB-SITE1-001CSW001       | 10.1.1.2        | risk=low    | findings=4   | created=2026-03-23T14:30:28Z
+baea5533a7f61a24 | pending  | ZZ-LAB1-001ASW001        | 192.0.2.61      | risk=medium | findings=8   | created=2026-03-23T14:30:25Z
+220f8b3b0ce7a91e | approved | ZZ-HUB1-001CSW001        | 192.0.2.62      | risk=low    | findings=4   | created=2026-03-23T14:30:28Z
 ```
 
 ##### 2. Approve a Review Pack
@@ -973,14 +974,14 @@ python -m compliance_audit --remediation-approve-all \
 
 ```text
 Found 15 pending remediation pack(s):
-  baea5533... | GB-MKD1-022ASW001        | 10.112.224.99   | risk=medium | findings= 72
-  220f8b3b... | GB-MKD1-023ASW001        | 10.112.224.97   | risk=medium | findings= 32
+  baea5533... | ZZ-BRN2-022ASW001        | 198.51.100.99   | risk=medium | findings= 72
+  220f8b3b... | ZZ-BRN2-023ASW001        | 198.51.100.97   | risk=medium | findings= 32
   ...
 
 Approve all 15 pack(s)? [y/n]: y
 
-✓ Approved: baea5533... (GB-MKD1-022ASW001)
-✓ Approved: 220f8b3b... (GB-MKD1-023ASW001)
+✓ Approved: baea5533... (ZZ-BRN2-022ASW001)
+✓ Approved: 220f8b3b... (ZZ-BRN2-023ASW001)
 ...
 
 Bulk approval complete: 15 approved, 0 failed
@@ -1054,8 +1055,8 @@ The tool provides real-time progress indicators and detailed output including:
 ```json
 {
   "pack_id": "baea5533a7f61a24",
-  "hostname": "GB-SITE1-001ASW001",
-  "ip": "10.1.1.1",
+  "hostname": "ZZ-LAB1-001ASW001",
+  "ip": "192.0.2.61",
   "status": "success",
   "preflight_still_failing": 8,
   "resolved": 8,
@@ -1122,7 +1123,7 @@ Test the auditor against saved command outputs without live SSH access:
 ```bash
 # Save outputs first (directory per device, one file per command)
 saved_outputs/
-  GB-SITE1-001ASW001/
+  ZZ-LAB1-001ASW001/
     show_running-config.txt
     show_version.txt
     show_interfaces.txt
@@ -1196,11 +1197,11 @@ Cisco-Compliance-Audit/
 │   ├── report.py               # Rich console + interactive HTML + JSON + CSV reports
 │   └── auditor.py              # Orchestrator (concurrent via ThreadPoolExecutor)
 ├── configs/                    # (optional) Per-site config files
-│   ├── site_london.yaml
-│   └── site_manchester.yaml
+│   ├── site_alpha.yaml
+│   └── site_beta.yaml
 ├── inventories/                # (optional) Per-site device inventories
-│   ├── london_devices.yaml
-│   └── manchester_devices.yaml
+│   ├── site_alpha_devices.yaml
+│   └── site_beta_devices.yaml
 ├── requirements.txt            # Python dependencies
 ├── README.md                   # This file
 └── LICENSE

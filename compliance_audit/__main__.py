@@ -5,8 +5,8 @@ Usage examples
 --------------
     python -m compliance_audit
     python -m compliance_audit --config custom.yaml
-    python -m compliance_audit --device 10.1.1.1
-    python -m compliance_audit --device GB-MKD1-005ASW001:10.1.1.1
+    python -m compliance_audit --device 192.0.2.61
+    python -m compliance_audit --device ZZ-LAB1-005ASW001:192.0.2.61
     python -m compliance_audit --no-jump
     python -m compliance_audit --categories management_plane control_plane
     python -m compliance_audit --remediation-list

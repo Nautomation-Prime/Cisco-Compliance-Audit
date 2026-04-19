@@ -61,10 +61,10 @@ Run full audit from default config:
   python -m compliance_audit
 
 Run audit with specific config:
-  python -m compliance_audit -c configs/site_london.yaml
+  python -m compliance_audit -c configs/site_alpha.yaml
 
 Run audit for a single device:
-  python -m compliance_audit --device GB-SITE1-001ASW001:10.1.1.1
+  python -m compliance_audit --device ZZ-LAB1-001ASW001:192.0.2.61
 
 Launch guided interactive wizard:
   python -m compliance_audit --interactive
