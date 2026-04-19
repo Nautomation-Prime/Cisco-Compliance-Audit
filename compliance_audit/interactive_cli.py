@@ -1,4 +1,4 @@
-"""Guided interactive CLI experience built on top of existing argparse logic."""
+"""Guided interactive CLI experience."""
 
 from __future__ import annotations
 
