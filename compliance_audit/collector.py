@@ -13,7 +13,19 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
+from netmiko.exceptions import NetmikoBaseException
+
 log = logging.getLogger(__name__)
+
+COLLECTION_ERRORS = (
+    AttributeError,
+    NetmikoBaseException,
+    OSError,
+    RuntimeError,
+    TimeoutError,
+    TypeError,
+    ValueError,
+)
 
 # ---------------------------------------------------------------------------
 # Genie standalone parsing (optional but strongly recommended)
@@ -21,8 +33,20 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 try:
     from genie.conf.base import Device as GenieDevice
+    from genie.metaparser.util.exceptions import (
+        SchemaEmptyParserError,
+        SchemaMissingKeyError,
+    )
 
     _genie_local = threading.local()
+    GENIE_PARSE_ERRORS = (
+        AttributeError,
+        LookupError,
+        SchemaEmptyParserError,
+        SchemaMissingKeyError,
+        TypeError,
+        ValueError,
+    )
 
     def _get_genie_device() -> GenieDevice:
         dev = getattr(_genie_local, "device", None)
@@ -37,7 +61,7 @@ try:
         dev = _get_genie_device()
         try:
             return dev.parse(command, output=output)
-        except Exception as exc:
+        except GENIE_PARSE_ERRORS as exc:
             log.debug("Genie parse failed for '%s': %s", command, exc)
             return None
 
@@ -49,7 +73,7 @@ except ImportError:
         "Install with:  pip install pyats[library]"
     )
 
-    def genie_parse(command: str, output: str) -> Optional[dict]:  # type: ignore[misc]
+    def genie_parse(_command: str, _output: str) -> Optional[dict]:  # type: ignore[misc]
         return None
 
 
@@ -262,7 +286,7 @@ class DataCollector:
         try:
             prompt = connection.find_prompt()
             data.hostname = prompt.strip().rstrip("#>")
-        except Exception:
+        except COLLECTION_ERRORS:
             data.hostname = ip
 
         # Collect raw output for each command
@@ -276,7 +300,7 @@ class DataCollector:
                 )
                 data.raw_commands[cmd] = output
                 log.info("Collected: %s (%d bytes)", cmd, len(output))
-            except Exception as exc:
+            except COLLECTION_ERRORS as exc:
                 log.warning("Failed to collect '%s': %s", cmd, exc)
                 data.raw_commands[cmd] = ""
 

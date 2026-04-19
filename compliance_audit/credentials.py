@@ -1,29 +1,25 @@
 import getpass
 import os
 import logging
+from functools import lru_cache
 
 log = logging.getLogger(__name__)
 
+
 # keyring is an optional dependency — import lazily so the tool still
 # works when it isn't installed and credential_store is "none".
-_keyring = None
-
-
+@lru_cache(maxsize=1)
 def _get_keyring():
     """Lazy-import keyring so we fail late, not at module load."""
-    global _keyring
-    if _keyring is None:
-        try:
-            import keyring
-
-            _keyring = keyring
-        except ImportError:
-            raise RuntimeError(
-                'credential_store is set to "keyring" but the keyring '
-                "package is not installed.  Install it with:\n"
-                "  pip install keyring"
-            )
-    return _keyring
+    try:
+        import keyring
+    except ImportError as exc:
+        raise RuntimeError(
+            'credential_store is set to "keyring" but the keyring '
+            "package is not installed.  Install it with:\n"
+            "  pip install keyring"
+        ) from exc
+    return keyring
 
 
 class CredentialHandler:

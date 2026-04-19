@@ -12,6 +12,8 @@ from pathlib import Path
 from typing import Optional
 
 from netmiko.base_connection import BaseConnection
+from netmiko.exceptions import NetmikoBaseException
+from paramiko.ssh_exception import SSHException
 from rich.console import Console
 from rich.progress import (
     BarColumn,
@@ -25,6 +27,25 @@ from rich.prompt import Confirm
 
 log = logging.getLogger(__name__)
 console = Console()
+
+REMEDIATION_ERRORS = (
+    AttributeError,
+    NetmikoBaseException,
+    OSError,
+    RuntimeError,
+    SSHException,
+    TimeoutError,
+    TypeError,
+    ValueError,
+)
+SCRIPT_PARSE_ERRORS = (OSError, UnicodeError, ValueError)
+DISCONNECT_ERRORS = (
+    AttributeError,
+    NetmikoBaseException,
+    OSError,
+    RuntimeError,
+    SSHException,
+)
 
 
 @dataclass
@@ -189,7 +210,7 @@ def apply_remediation_to_device(
         result.success = True
         result.duration_secs = round(time.monotonic() - start_time, 1)
 
-    except Exception as exc:
+    except REMEDIATION_ERRORS as exc:
         log.exception("Remediation failed on %s", hostname)
         result.error_message = str(exc)
         result.duration_secs = round(time.monotonic() - start_time, 1)
@@ -229,7 +250,7 @@ def apply_remediation_scripts(
                 f"  [green]✓[/] {script_path.name}: "
                 f"{len(commands)} commands for {hostname} ({ip})"
             )
-        except Exception as exc:
+        except SCRIPT_PARSE_ERRORS as exc:
             console.print(f"  [red]✗[/] {script_path.name}: {exc}")
             log.error("Failed to parse %s: %s", script_path, exc)
 
@@ -311,7 +332,7 @@ def apply_remediation_scripts(
                         f"{result.error_message or 'Unknown error'}"
                     )
 
-            except Exception as exc:
+            except REMEDIATION_ERRORS as exc:
                 log.exception("Failed to apply remediation to %s", hostname)
                 result = RemediationResult(
                     hostname=hostname,
@@ -332,7 +353,7 @@ def apply_remediation_scripts(
                     try:
                         connection.disconnect()
                         log.debug("Disconnected from %s", hostname)
-                    except Exception:
+                    except DISCONNECT_ERRORS:
                         pass
 
                 # Mark task as complete

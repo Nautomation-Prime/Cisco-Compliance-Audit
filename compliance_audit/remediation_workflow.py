@@ -20,6 +20,8 @@ from pathlib import Path
 from typing import Callable, Optional
 
 import yaml
+from netmiko.exceptions import NetmikoBaseException
+from paramiko.ssh_exception import SSHException
 from rich.console import Console
 from rich.progress import (
     BarColumn,
@@ -40,6 +42,18 @@ from .report import save_consolidated_html, save_csv, save_html, save_json
 
 log = logging.getLogger(__name__)
 console = Console()
+
+DEVICE_OPERATION_ERRORS = (
+    AttributeError,
+    NetmikoBaseException,
+    OSError,
+    RuntimeError,
+    SSHException,
+    TimeoutError,
+    TypeError,
+    ValueError,
+)
+WORKFLOW_ERRORS = DEVICE_OPERATION_ERRORS + (LookupError, sqlite3.Error, yaml.YAMLError)
 
 
 def get_remediation_settings(audit_settings: Optional[dict]) -> dict:
@@ -461,8 +475,6 @@ def _generate_post_remediation_report(
         report_formats: List of report formats to generate (json, html, csv, txt)
         progress: Rich Progress instance for status updates
     """
-    from datetime import datetime, timezone
-
     from . import __version__
 
     task = progress.add_task("[cyan]Generating post-remediation report...", total=None)
@@ -501,7 +513,7 @@ def _generate_post_remediation_report(
                 roi_settings,
                 context="post_remediation",
             )
-            result._roi = roi
+            setattr(result, "_roi", roi)
             result.roi = roi
 
         # Extract IOS-XE version from Genie data
@@ -541,7 +553,7 @@ def _generate_post_remediation_report(
 
         return result
 
-    except Exception as exc:
+    except WORKFLOW_ERRORS as exc:
         progress.update(task, description=f"[yellow]⚠ Report generation failed: {exc}")
         progress.stop_task(task)
         log.warning("Post-remediation report generation failed: %s", exc)
@@ -997,7 +1009,7 @@ def apply_approved_pack(
                 task = progress.add_task("[cyan]Saving configuration...", total=None)
                 try:
                     connection.save_config()
-                except Exception:
+                except DEVICE_OPERATION_ERRORS:
                     connection.send_command_timing("write memory")
                 progress.update(task, description="[green]✓ Configuration saved")
                 progress.stop_task(task)
@@ -1101,7 +1113,7 @@ def apply_approved_pack(
                 "device_output_preview": output[-1000:],
             }
 
-        except Exception as exc:
+        except WORKFLOW_ERRORS as exc:
             pack["execution"]["status"] = "failed"
             pack["execution"]["applied_at"] = _utc_now_str()
             pack["execution"]["summary"] = str(exc)
@@ -1128,7 +1140,7 @@ def apply_approved_pack(
             if connection is not None:
                 try:
                     connection.disconnect()
-                except Exception:
+                except DEVICE_OPERATION_ERRORS:
                     pass
             if jump is not None:
                 jump.close()
@@ -1179,7 +1191,7 @@ def apply_all_approved_packs(
                 post_report_callback=post_report_results.append,
             )
             summaries.append(summary)
-        except Exception as exc:
+        except WORKFLOW_ERRORS as exc:
             console.print(f"[red]✗ Failed: {exc}[/]")
             summaries.append(
                 {

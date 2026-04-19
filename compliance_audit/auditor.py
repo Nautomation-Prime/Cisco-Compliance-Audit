@@ -9,6 +9,7 @@ in the compliance YAML config (default: 5, set to 1 for sequential).
 
 import logging
 import math
+import re
 import socket
 import sys
 import time
@@ -19,6 +20,8 @@ from pathlib import Path
 from typing import Optional
 
 import yaml
+from netmiko.exceptions import NetmikoBaseException
+from paramiko.ssh_exception import SSHException
 from rich import box
 from rich.console import Console
 from rich.progress import (
@@ -633,7 +636,15 @@ def _audit_single_device(job: _DeviceJob) -> Optional[AuditResult]:
         connector = DeviceConnector(**connector_kwargs)
         try:
             conn = connector.connect()
-        except Exception as exc:
+        except (
+            NetmikoBaseException,
+            OSError,
+            RuntimeError,
+            SSHException,
+            TimeoutError,
+            TypeError,
+            ValueError,
+        ) as exc:
             # Detect DNS resolution failures and give a clear message
             if isinstance(exc.__cause__, socket.gaierror) or (
                 isinstance(exc, OSError) and "getaddrinfo" in str(exc).lower()
@@ -664,11 +675,26 @@ def _audit_single_device(job: _DeviceJob) -> Optional[AuditResult]:
                     role_config=job.role_config,
                     explicit_role=job.explicit_role,
                 )
-        except Exception as exc:
+        except (
+            AttributeError,
+            NetmikoBaseException,
+            OSError,
+            RuntimeError,
+            SSHException,
+            TimeoutError,
+            TypeError,
+            ValueError,
+        ) as exc:
             log.error("Data collection from %s (%s) failed: %s", hostname, ip, exc)
             try:
                 conn.disconnect()
-            except Exception:
+            except (
+                AttributeError,
+                NetmikoBaseException,
+                OSError,
+                RuntimeError,
+                SSHException,
+            ):
                 pass
             return None
 
@@ -683,7 +709,16 @@ def _audit_single_device(job: _DeviceJob) -> Optional[AuditResult]:
         # Audit
         engine = ComplianceEngine(job.compliance_policy)
         result = engine.audit(data, host_info, ports)
-    except Exception as exc:
+    except (
+        AttributeError,
+        LookupError,
+        OSError,
+        RuntimeError,
+        TimeoutError,
+        TypeError,
+        ValueError,
+        re.error,
+    ) as exc:
         log.exception("Compliance engine failed for %s (%s)", hostname, ip)
         result = AuditResult(
             hostname=hostname,
@@ -764,7 +799,13 @@ def _audit_single_device(job: _DeviceJob) -> Optional[AuditResult]:
         if conn:
             try:
                 conn.disconnect()
-            except Exception:
+            except (
+                AttributeError,
+                NetmikoBaseException,
+                OSError,
+                RuntimeError,
+                SSHException,
+            ):
                 pass
 
 
@@ -991,7 +1032,19 @@ def run_audit(
                                 f"  [red]FAIL[/] {job.hostname} ({job.ip}) - "
                                 f"Connection failed"
                             )
-                    except Exception as exc:
+                    except (
+                        AttributeError,
+                        LookupError,
+                        NetmikoBaseException,
+                        OSError,
+                        RuntimeError,
+                        SSHException,
+                        TimeoutError,
+                        TypeError,
+                        ValueError,
+                        re.error,
+                        yaml.YAMLError,
+                    ) as exc:
                         log.exception("Audit of %s failed", job.hostname)
                         progress.console.print(
                             f"  [red]FAIL[/] {job.hostname} ({job.ip}) - Error: {exc}"

@@ -2,10 +2,15 @@ import logging
 import time
 from netmiko import ConnectHandler
 from netmiko.base_connection import BaseConnection
+from netmiko.exceptions import NetmikoBaseException
+from paramiko.ssh_exception import SSHException
 from typing import Any, Optional
 from .jump_manager import JumpManager
 
 log = logging.getLogger(__name__)
+
+JUMP_CHANNEL_ERRORS = (OSError, SSHException, TypeError, ValueError)
+DEVICE_CONNECTION_ERRORS = (NetmikoBaseException, OSError, TypeError, ValueError)
 
 
 class DeviceConnector:
@@ -93,10 +98,10 @@ class DeviceConnector:
                 try:
                     sock = self.jump.open_channel(self.ip, self.port)
                     kwargs["sock"] = sock
-                    log.debug(f"Opened jump channel to {self.ip}:{self.port}")
-                except Exception:
+                    log.debug("Opened jump channel to %s:%s", self.ip, self.port)
+                except JUMP_CHANNEL_ERRORS:
                     log.exception(
-                        f"Failed to open jump channel to {self.ip}:{self.port}"
+                        "Failed to open jump channel to %s:%s", self.ip, self.port
                     )
                     raise
 
@@ -104,17 +109,20 @@ class DeviceConnector:
             for _k in ("look_for_keys", "allow_agent"):
                 if _k in kwargs:
                     log.debug(
-                        f"Removing unsupported kwarg {_k} before ConnectHandler()"
+                        "Removing unsupported kwarg %s before ConnectHandler()", _k
                     )
                     kwargs.pop(_k)
 
             log.debug(
-                f"Connecting to device {self.ip} ({self.device_type}) — "
-                f"attempt {attempt}/{self.retries}"
+                "Connecting to device %s (%s) — attempt %s/%s",
+                self.ip,
+                self.device_type,
+                attempt,
+                self.retries,
             )
             try:
                 return ConnectHandler(**kwargs)
-            except Exception as exc:
+            except DEVICE_CONNECTION_ERRORS as exc:
                 last_exc = exc
                 if attempt < self.retries:
                     delay = 2**attempt  # 2s, 4s, 8s, 16s
@@ -135,4 +143,6 @@ class DeviceConnector:
                         exc,
                     )
 
-        raise last_exc  # type: ignore[misc]
+        if last_exc is None:
+            raise RuntimeError(f"Connection to {self.ip} failed without an exception")
+        raise last_exc
