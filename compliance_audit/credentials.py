@@ -15,6 +15,7 @@ def _get_keyring():
     if _keyring is None:
         try:
             import keyring
+
             _keyring = keyring
         except ImportError:
             raise RuntimeError(
@@ -89,7 +90,10 @@ class CredentialHandler:
         Retrieve enable secret if USE_ENABLE is set in environment.
         """
         use_enable = os.environ.get("USE_ENABLE", "false").lower() in {
-            "1", "true", "yes", "y",
+            "1",
+            "true",
+            "yes",
+            "y",
         }
         if not use_enable:
             return None

@@ -140,9 +140,7 @@ def apply_remediation_to_device(
 
     try:
         # Update progress description
-        progress.update(
-            task_id, description=f"[cyan]Applying config to {hostname}"
-        )
+        progress.update(task_id, description=f"[cyan]Applying config to {hostname}")
 
         # Use send_config_set to apply all commands in one go
         # This is more robust than applying commands one by one
@@ -176,9 +174,7 @@ def apply_remediation_to_device(
         progress.update(task_id, completed=len(commands))
 
         # Save configuration
-        progress.update(
-            task_id, description=f"[cyan]Saving config on {hostname}"
-        )
+        progress.update(task_id, description=f"[cyan]Saving config on {hostname}")
         save_output = connection.send_command(
             "write memory",
             expect_string=r"#",
@@ -222,9 +218,7 @@ def apply_remediation_scripts(
         return []
 
     # Parse all scripts first to validate
-    console.print(
-        f"\n[bold]Parsing {len(script_paths)} remediation script(s)...[/]"
-    )
+    console.print(f"\n[bold]Parsing {len(script_paths)} remediation script(s)...[/]")
 
     parsed_scripts = []
     for script_path in script_paths:
@@ -287,9 +281,7 @@ def apply_remediation_scripts(
             connection = None
             try:
                 # Create connection
-                progress.update(
-                    task_id, description=f"[cyan]Connecting to {hostname}"
-                )
+                progress.update(task_id, description=f"[cyan]Connecting to {hostname}")
                 connector = device_connector_factory(ip, hostname)
                 connection = connector.connect()
                 log.info("Connected to %s (%s)", hostname, ip)

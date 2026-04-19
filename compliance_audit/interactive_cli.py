@@ -115,7 +115,9 @@ def _collect_devices(questionary) -> list[str]:
 
 def _run_audit_wizard(questionary) -> None:
     config_path = (
-        questionary.text("Compliance config path:", default="compliance_config.yaml").ask()
+        questionary.text(
+            "Compliance config path:", default="compliance_config.yaml"
+        ).ask()
         or "compliance_config.yaml"
     ).strip()
     inventory_path_raw = questionary.text(
@@ -220,7 +222,9 @@ def _run_audit_wizard(questionary) -> None:
         console.print("Completed successfully with no compliance failures.")
 
 
-def _resolve_remediation_context(config_path: str, output_dir_override: Optional[str]) -> tuple[dict, str]:
+def _resolve_remediation_context(
+    config_path: str, output_dir_override: Optional[str]
+) -> tuple[dict, str]:
     cfg = load_compliance_config(config_path)
     audit_settings = cfg.get("audit_settings", {})
     output_dir = output_dir_override or audit_settings.get("output_dir", "./reports")
@@ -229,7 +233,9 @@ def _resolve_remediation_context(config_path: str, output_dir_override: Optional
 
 def _run_remediation_wizard(questionary) -> None:
     config_path = (
-        questionary.text("Compliance config path:", default="compliance_config.yaml").ask()
+        questionary.text(
+            "Compliance config path:", default="compliance_config.yaml"
+        ).ask()
         or "compliance_config.yaml"
     ).strip()
     output_dir_raw = questionary.text(
@@ -237,7 +243,9 @@ def _run_remediation_wizard(questionary) -> None:
     ).ask()
     output_dir_override = (output_dir_raw or "").strip() or None
 
-    audit_settings, output_dir = _resolve_remediation_context(config_path, output_dir_override)
+    audit_settings, output_dir = _resolve_remediation_context(
+        config_path, output_dir_override
+    )
     rem = get_remediation_settings(audit_settings)
     if not rem.get("enabled", True):
         raise RuntimeError(
@@ -263,7 +271,15 @@ def _run_remediation_wizard(questionary) -> None:
     if action == "List review packs":
         status_choice = questionary.select(
             "Status filter:",
-            choices=["all", "pending", "approved", "rejected", "applied", "failed", "expired"],
+            choices=[
+                "all",
+                "pending",
+                "approved",
+                "rejected",
+                "applied",
+                "failed",
+                "expired",
+            ],
         ).ask()
         output_choice = questionary.select(
             "Output format:", choices=["table", "json", "csv"]
@@ -271,10 +287,16 @@ def _run_remediation_wizard(questionary) -> None:
         sort_choice = questionary.select(
             "Sort by:", choices=["created", "risk", "status", "hostname", "findings"]
         ).ask()
-        limit_raw = questionary.text("Limit results (blank = no limit):", default="").ask()
-        limit: Optional[int] = int(limit_raw) if (limit_raw and limit_raw.strip()) else None
+        limit_raw = questionary.text(
+            "Limit results (blank = no limit):", default=""
+        ).ask()
+        limit: Optional[int] = (
+            int(limit_raw) if (limit_raw and limit_raw.strip()) else None
+        )
 
-        rows = list_review_packs(output_dir, status=None if status_choice == "all" else status_choice)
+        rows = list_review_packs(
+            output_dir, status=None if status_choice == "all" else status_choice
+        )
         if not rows:
             console.print("No remediation review packs found.")
             return
@@ -311,9 +333,13 @@ def _run_remediation_wizard(questionary) -> None:
             return
         approver = (questionary.text("Approver name:").ask() or "").strip()
         ticket_id = (questionary.text("Ticket ID:").ask() or "").strip()
-        expires_raw = questionary.text("Approval expiry hours (blank uses config):", default="").ask()
-        expires_hours = int(expires_raw) if (expires_raw and expires_raw.strip()) else int(
-            rem.get("approval_default_expires_hours", 24)
+        expires_raw = questionary.text(
+            "Approval expiry hours (blank uses config):", default=""
+        ).ask()
+        expires_hours = (
+            int(expires_raw)
+            if (expires_raw and expires_raw.strip())
+            else int(rem.get("approval_default_expires_hours", 24))
         )
         path = approve_review_pack(
             output_dir=output_dir,
@@ -373,9 +399,13 @@ def _run_remediation_wizard(questionary) -> None:
     if action == "Approve all pending packs":
         approver = (questionary.text("Approver name:").ask() or "").strip()
         ticket_id = (questionary.text("Ticket ID:").ask() or "").strip()
-        expires_raw = questionary.text("Approval expiry hours (blank uses config):", default="").ask()
-        expires_hours = int(expires_raw) if (expires_raw and expires_raw.strip()) else int(
-            rem.get("approval_default_expires_hours", 24)
+        expires_raw = questionary.text(
+            "Approval expiry hours (blank uses config):", default=""
+        ).ask()
+        expires_hours = (
+            int(expires_raw)
+            if (expires_raw and expires_raw.strip())
+            else int(rem.get("approval_default_expires_hours", 24))
         )
 
         rows = list_review_packs(output_dir, status="pending")
@@ -389,7 +419,9 @@ def _run_remediation_wizard(questionary) -> None:
             show_created=False,
             console=console,
         )
-        if not questionary.confirm(f"Approve all {len(rows)} pack(s)?", default=False).ask():
+        if not questionary.confirm(
+            f"Approve all {len(rows)} pack(s)?", default=False
+        ).ask():
             console.print("Cancelled.")
             return
 
@@ -408,7 +440,9 @@ def _run_remediation_wizard(questionary) -> None:
                 console.print(f"\u2713 Approved: {row.pack_id} ({row.hostname})")
                 approved_count += 1
             except RuntimeError as exc:
-                console.print(f"Failed to approve {row.pack_id} ({row.hostname}): {exc}")
+                console.print(
+                    f"Failed to approve {row.pack_id} ({row.hostname}): {exc}"
+                )
                 failed_count += 1
 
         console.print(

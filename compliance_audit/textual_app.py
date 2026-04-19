@@ -75,8 +75,12 @@ class _InteractiveChoiceApp:  # pragma: no cover - thin wrapper around Textual r
                     with Vertical(id="actions"):
                         yield Label("Action Hints")
                         yield Label("Press 1 to open the Questionary wizard.")
-                        yield Label("Press 2 to run python -m compliance_audit equivalent defaults.")
-                        yield Label("Press 3 to inspect every available argparse option.")
+                        yield Label(
+                            "Press 2 to run python -m compliance_audit equivalent defaults."
+                        )
+                        yield Label(
+                            "Press 3 to inspect every available argparse option."
+                        )
                     yield DataTable(id="options")
                 yield Footer()
 

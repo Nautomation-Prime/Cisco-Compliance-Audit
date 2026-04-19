@@ -48,7 +48,9 @@ def render_options_table(parser: argparse.ArgumentParser) -> Table:
     return table
 
 
-def print_options_table(parser: argparse.ArgumentParser, console: Console | None = None) -> None:
+def print_options_table(
+    parser: argparse.ArgumentParser, console: Console | None = None
+) -> None:
     """Render parser options table to console."""
     con = console or Console()
     con.print(render_options_table(parser))

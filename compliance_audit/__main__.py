@@ -102,8 +102,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--inventory",
         default=None,
         help=(
-            "Path to the device inventory YAML "
-            "(default: devices.yaml next to config)."
+            "Path to the device inventory YAML (default: devices.yaml next to config)."
         ),
     )
     p.add_argument(
@@ -277,9 +276,7 @@ def _handle_remediation_mode(args: argparse.Namespace) -> bool:
         if args.remediation_limit is not None and args.remediation_limit <= 0:
             raise RuntimeError("--remediation-limit must be greater than 0")
 
-        status = (
-            None if args.remediation_list == "all" else args.remediation_list
-        )
+        status = None if args.remediation_list == "all" else args.remediation_list
         rows = list_review_packs(out_dir, status=status)
         if not rows:
             print("No remediation review packs found.")
@@ -313,13 +310,9 @@ def _handle_remediation_mode(args: argparse.Namespace) -> bool:
 
     if args.remediation_approve:
         if not args.approver:
-            raise RuntimeError(
-                "--approver is required for --remediation-approve"
-            )
+            raise RuntimeError("--approver is required for --remediation-approve")
         if rem.get("approval_require_ticket_id", True) and not args.ticket_id:
-            raise RuntimeError(
-                "--ticket-id is required for --remediation-approve"
-            )
+            raise RuntimeError("--ticket-id is required for --remediation-approve")
         expires_hours = args.expires_hours
         if expires_hours is None:
             expires_hours = rem.get("approval_default_expires_hours", 24)
@@ -336,13 +329,9 @@ def _handle_remediation_mode(args: argparse.Namespace) -> bool:
 
     if args.remediation_approve_all:
         if not args.approver:
-            raise RuntimeError(
-                "--approver is required for --remediation-approve-all"
-            )
+            raise RuntimeError("--approver is required for --remediation-approve-all")
         if rem.get("approval_require_ticket_id", True) and not args.ticket_id:
-            raise RuntimeError(
-                "--ticket-id is required for --remediation-approve-all"
-            )
+            raise RuntimeError("--ticket-id is required for --remediation-approve-all")
         expires_hours = args.expires_hours
         if expires_hours is None:
             expires_hours = rem.get("approval_default_expires_hours", 24)
@@ -378,16 +367,12 @@ def _handle_remediation_mode(args: argparse.Namespace) -> bool:
                     approver=args.approver,
                     ticket_id=args.ticket_id,
                     expires_hours=expires_hours,
-                    require_ticket_id=rem.get(
-                        "approval_require_ticket_id", True
-                    ),
+                    require_ticket_id=rem.get("approval_require_ticket_id", True),
                 )
                 print(f"✓ Approved: {row.pack_id} ({row.hostname})")
                 approved_count += 1
             except RuntimeError as exc:
-                print(
-                    f"✗ Failed to approve {row.pack_id} ({row.hostname}): {exc}"
-                )
+                print(f"✗ Failed to approve {row.pack_id} ({row.hostname}): {exc}")
                 failed_count += 1
 
         print(
@@ -398,9 +383,7 @@ def _handle_remediation_mode(args: argparse.Namespace) -> bool:
 
     if args.remediation_reject:
         if not args.approver:
-            raise RuntimeError(
-                "--approver is required for --remediation-reject"
-            )
+            raise RuntimeError("--approver is required for --remediation-reject")
         if not args.reason:
             raise RuntimeError("--reason is required for --remediation-reject")
         path = reject_review_pack(
@@ -425,8 +408,7 @@ def _handle_remediation_mode(args: argparse.Namespace) -> bool:
             skip_jump=args.no_jump,
             dry_run=args.apply_dry_run,
             allow_high_risk=(
-                args.allow_high_risk
-                or not rem.get("execution_block_high_risk", True)
+                args.allow_high_risk or not rem.get("execution_block_high_risk", True)
             ),
             remediation_settings=rem,
         )
@@ -445,8 +427,7 @@ def _handle_remediation_mode(args: argparse.Namespace) -> bool:
             skip_jump=args.no_jump,
             dry_run=args.apply_dry_run,
             allow_high_risk=(
-                args.allow_high_risk
-                or not rem.get("execution_block_high_risk", True)
+                args.allow_high_risk or not rem.get("execution_block_high_risk", True)
             ),
             remediation_settings=rem,
         )
@@ -474,9 +455,7 @@ def main() -> None:
         return
 
     # Logging setup
-    level = {0: logging.WARNING, 1: logging.INFO}.get(
-        args.verbose, logging.DEBUG
-    )
+    level = {0: logging.WARNING, 1: logging.INFO}.get(args.verbose, logging.DEBUG)
     logging.basicConfig(
         level=level,
         format="%(asctime)s  %(name)-30s  %(levelname)-8s  %(message)s",

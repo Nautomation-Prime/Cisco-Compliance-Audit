@@ -66,20 +66,21 @@ class PortInfo:
     description: str = ""
     is_stp_root_port: bool = False
     cdp_neighbor: str = ""
-    cdp_neighbor_role: str = ""      # ASW / CSW / SDW / ISW / ""
+    cdp_neighbor_role: str = ""  # ASW / CSW / SDW / ISW / ""
     cdp_neighbor_platform: str = ""  # CDP platform string
     cdp_neighbor_capabilities: str = ""  # CDP capabilities string
-    is_endpoint_neighbor: bool = False    # True if CDP/LLDP says AP/endpoint
-    switchport_mode: str = ""        # access / trunk / dynamic / ""
+    is_endpoint_neighbor: bool = False  # True if CDP/LLDP says AP/endpoint
+    switchport_mode: str = ""  # access / trunk / dynamic / ""
     access_vlan: int = 0
     trunk_allowed_vlans: str = ""
-    port_channel_member_of: str = "" # e.g. "Port-channel1" if this is a member
+    port_channel_member_of: str = ""  # e.g. "Port-channel1" if this is a member
     config_lines: list[str] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
 
 def classify_ports(
     data: DeviceData,
@@ -105,7 +106,7 @@ def classify_ports(
         norm = normalize_intf(intf_name)
         pi = PortInfo(name=norm, config_lines=cfg_lines)
         pi.description = _extract_description(cfg_lines)
-        pi.admin_down = any(l == "shutdown" for l in cfg_lines)
+        pi.admin_down = any(config_line == "shutdown" for config_line in cfg_lines)
         pi.switchport_mode = _extract_switchport_mode(cfg_lines)
         pi.access_vlan = _extract_access_vlan(cfg_lines)
         pi.trunk_allowed_vlans = _extract_trunk_allowed_vlans(cfg_lines)
@@ -138,6 +139,7 @@ def classify_ports(
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
 
 def _extract_description(cfg: list[str]) -> str:
     for line in cfg:
@@ -212,7 +214,10 @@ def _find_root_ports(stp_data: Optional[dict]) -> set[str]:
             if not isinstance(vlan_info, dict):
                 continue
             for intf, intf_data in vlan_info.get("interfaces", {}).items():
-                if isinstance(intf_data, dict) and intf_data.get("role", "").lower() == "root":
+                if (
+                    isinstance(intf_data, dict)
+                    and intf_data.get("role", "").lower() == "root"
+                ):
                     root_ports.add(normalize_intf(intf))
 
     if root_ports:
@@ -255,12 +260,15 @@ def _map_etherchannel_members(
                     ports[member_norm].port_channel_member_of = po_norm
                     mapped = True
             if members:
-                log.info("Port-channel %s members: %s",
-                         po_norm, [normalize_intf(m) for m in members])
+                log.info(
+                    "Port-channel %s members: %s",
+                    po_norm,
+                    [normalize_intf(m) for m in members],
+                )
 
     # ── Fallback: parse 'channel-group' from running-config ─────
     if not mapped:
-        for intf_name, pi in ports.items():
+        for pi in ports.values():
             for line in pi.config_lines:
                 m = re.match(r"channel-group\s+(\d+)", line, re.IGNORECASE)
                 if m:
@@ -300,7 +308,9 @@ def _map_cdp_neighbors(
                 pi.is_endpoint_neighbor = True
             else:
                 # Fall back to hostname role parsing
-                host_info = parse_hostname(neighbor_id.split(".")[0], role_config=role_config)
+                host_info = parse_hostname(
+                    neighbor_id.split(".")[0], role_config=role_config
+                )
                 if host_info.parsed and host_info.role_code:
                     pi.cdp_neighbor_role = host_info.role_code
 
@@ -321,7 +331,7 @@ def _map_lldp_neighbors(
         if local_if not in ports or ports[local_if].cdp_neighbor:
             continue  # CDP already populated
         neighbors = if_data.get("port_id", {})
-        for neigh_data in (neighbors.values() if isinstance(neighbors, dict) else []):
+        for neigh_data in neighbors.values() if isinstance(neighbors, dict) else []:
             if not isinstance(neigh_data, dict):
                 continue
             system_name = neigh_data.get("system_name", "")
@@ -334,7 +344,9 @@ def _map_lldp_neighbors(
                 if _is_endpoint(system_name, system_desc, "", ep_patterns):
                     pi.is_endpoint_neighbor = True
                 else:
-                    host_info = parse_hostname(system_name.split(".")[0], role_config=role_config)
+                    host_info = parse_hostname(
+                        system_name.split(".")[0], role_config=role_config
+                    )
                     if host_info.parsed and host_info.role_code:
                         pi.cdp_neighbor_role = host_info.role_code
                 break
@@ -369,9 +381,12 @@ def _compile_endpoint_patterns(ep_cfg: dict | None) -> dict:
         return compiled
 
     return {
-        "hostname": _compile_list(ep_cfg.get("hostname_patterns", [])) or _ENDPOINT_DEFAULT_HOSTNAME,
-        "platform": _compile_list(ep_cfg.get("platform_patterns", [])) or _ENDPOINT_DEFAULT_PLATFORM,
-        "capabilities": _compile_list(ep_cfg.get("capabilities", [])) or _ENDPOINT_DEFAULT_CAPABILITIES,
+        "hostname": _compile_list(ep_cfg.get("hostname_patterns", []))
+        or _ENDPOINT_DEFAULT_HOSTNAME,
+        "platform": _compile_list(ep_cfg.get("platform_patterns", []))
+        or _ENDPOINT_DEFAULT_PLATFORM,
+        "capabilities": _compile_list(ep_cfg.get("capabilities", []))
+        or _ENDPOINT_DEFAULT_CAPABILITIES,
     }
 
 
@@ -441,7 +456,7 @@ def _determine_role(
 
     # Check if it's a routed (no switchport) interface
     if (is_po or _is_physical(name)) and any(
-        l.startswith("no switchport") for l in pi.config_lines
+        config_line.startswith("no switchport") for config_line in pi.config_lines
     ):
         return PortRole.ROUTED
 

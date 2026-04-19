@@ -16,17 +16,37 @@ so they can be added/changed/removed without touching this file.
 """
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional
 
 # ---------------------------------------------------------------------------
 # Defaults — used when no config is supplied
 # ---------------------------------------------------------------------------
 DEFAULT_ROLES: list[dict] = [
-    {"code": "ASW", "role": "access_switch",     "display": "Access Switch",     "trunk_signal": "downlink"},
-    {"code": "CSW", "role": "core_switch",       "display": "Core Switch",       "trunk_signal": "uplink"},
-    {"code": "SDW", "role": "sdwan_router",      "display": "SD-WAN Router",     "trunk_signal": "none"},
-    {"code": "ISW", "role": "industrial_switch",  "display": "Industrial Switch", "trunk_signal": "downlink"},
+    {
+        "code": "ASW",
+        "role": "access_switch",
+        "display": "Access Switch",
+        "trunk_signal": "downlink",
+    },
+    {
+        "code": "CSW",
+        "role": "core_switch",
+        "display": "Core Switch",
+        "trunk_signal": "uplink",
+    },
+    {
+        "code": "SDW",
+        "role": "sdwan_router",
+        "display": "SD-WAN Router",
+        "trunk_signal": "none",
+    },
+    {
+        "code": "ISW",
+        "role": "industrial_switch",
+        "display": "Industrial Switch",
+        "trunk_signal": "downlink",
+    },
 ]
 
 
@@ -90,7 +110,9 @@ class HostnameInfo:
 # ---------------------------------------------------------------------------
 # Compiled defaults (used when no config is passed)
 # ---------------------------------------------------------------------------
-_DEFAULT_ROLE_MAP, _DEFAULT_DISPLAY_MAP, _DEFAULT_SIGNAL_MAP = _build_role_maps(DEFAULT_ROLES)
+_DEFAULT_ROLE_MAP, _DEFAULT_DISPLAY_MAP, _DEFAULT_SIGNAL_MAP = _build_role_maps(
+    DEFAULT_ROLES
+)
 _DEFAULT_PATTERN = _build_pattern(list(_DEFAULT_ROLE_MAP.keys()))
 
 

@@ -53,17 +53,13 @@ def _as_dict(entry: Any) -> dict:
     }
 
 
-def sort_review_entries(
-    entries: list[Any], sort_by: str = "created"
-) -> list[Any]:
+def sort_review_entries(entries: list[Any], sort_by: str = "created") -> list[Any]:
     """Return entries sorted by a supported key."""
     if sort_by == "risk":
         return sorted(
             entries,
             key=lambda e: (
-                RISK_SORT_WEIGHT.get(
-                    str(getattr(e, "highest_risk", "")).lower(), 9
-                ),
+                RISK_SORT_WEIGHT.get(str(getattr(e, "highest_risk", "")).lower(), 9),
                 str(getattr(e, "hostname", "")).lower(),
             ),
         )
@@ -71,16 +67,12 @@ def sort_review_entries(
         return sorted(
             entries,
             key=lambda e: (
-                STATUS_SORT_WEIGHT.get(
-                    str(getattr(e, "status", "")).lower(), 99
-                ),
+                STATUS_SORT_WEIGHT.get(str(getattr(e, "status", "")).lower(), 99),
                 str(getattr(e, "hostname", "")).lower(),
             ),
         )
     if sort_by == "hostname":
-        return sorted(
-            entries, key=lambda e: str(getattr(e, "hostname", "")).lower()
-        )
+        return sorted(entries, key=lambda e: str(getattr(e, "hostname", "")).lower())
     if sort_by == "findings":
         return sorted(
             entries,
@@ -93,9 +85,7 @@ def sort_review_entries(
     )
 
 
-def limit_review_entries(
-    entries: list[Any], limit: Optional[int]
-) -> list[Any]:
+def limit_review_entries(entries: list[Any], limit: Optional[int]) -> list[Any]:
     """Return at most *limit* entries, preserving existing order."""
     if limit is None:
         return entries
@@ -157,9 +147,7 @@ def render_review_entries_table(
     for entry in entries:
         status = str(getattr(entry, "status", ""))
         status_style = STATUS_STYLE.get(status.lower(), "")
-        status_text = (
-            f"[{status_style}]{status}[/]" if status_style else status
-        )
+        status_text = f"[{status_style}]{status}[/]" if status_style else status
 
         row_values = [
             str(getattr(entry, "pack_id", "")),
@@ -186,9 +174,7 @@ def print_review_entries_table(
     """Render and print remediation review entries in table form."""
     con = console or Console()
     con.print(
-        render_review_entries_table(
-            entries, title=title, show_created=show_created
-        )
+        render_review_entries_table(entries, title=title, show_created=show_created)
     )
 
 

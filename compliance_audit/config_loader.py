@@ -2,6 +2,7 @@ import os
 import yaml
 from pathlib import Path
 
+
 class Config:
     """
     Canonical configuration loader.
@@ -82,7 +83,9 @@ class Config:
 
         for idx, raw in enumerate(data.get("devices", []) or []):
             try:
-                flat.append(cls._normalise_device_entry(raw, location=f"devices[{idx}]"))
+                flat.append(
+                    cls._normalise_device_entry(raw, location=f"devices[{idx}]")
+                )
             except ValueError as exc:
                 errors.append(str(exc))
 

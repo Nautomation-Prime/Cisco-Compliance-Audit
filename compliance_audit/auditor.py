@@ -135,9 +135,7 @@ def _get_roi_settings(audit_settings: dict) -> dict:
         "min_runtime_seconds": min_runtime_seconds,
         "check_scaling_inflection": check_scaling_inflection,
         "max_manual_minutes_per_device": max_manual_minutes_per_device,
-        "hourly_rate": _as_non_negative_float(
-            roi.get("hourly_rate", 0.0), 0.0
-        ),
+        "hourly_rate": _as_non_negative_float(roi.get("hourly_rate", 0.0), 0.0),
         "currency": str(roi.get("currency", "GBP")),
         "profiles": roi_profiles,
     }
@@ -168,8 +166,10 @@ def _estimate_manual_minutes(
         return manual_minutes_per_device
 
     inflection = max(check_scaling_inflection, 1.0)
-    scaled = manual_minutes_per_check * inflection * math.log(
-        1.0 + total_checks / inflection
+    scaled = (
+        manual_minutes_per_check
+        * inflection
+        * math.log(1.0 + total_checks / inflection)
     )
     manual = manual_minutes_per_device + scaled
 
@@ -215,12 +215,8 @@ def _estimate_roi_for_result(
             roi_settings.get("validation_minutes_per_device", 0.0),
         )
     )
-    check_scaling_inflection = float(
-        roi_settings.get("check_scaling_inflection", 20.0)
-    )
-    max_manual_minutes = float(
-        roi_settings.get("max_manual_minutes_per_device", 120.0)
-    )
+    check_scaling_inflection = float(roi_settings.get("check_scaling_inflection", 20.0))
+    max_manual_minutes = float(roi_settings.get("max_manual_minutes_per_device", 120.0))
 
     min_runtime_seconds = float(roi_settings.get("min_runtime_seconds", 0.0))
     actual_runtime = float(result.duration_secs)
@@ -246,9 +242,7 @@ def _estimate_roi_for_result(
 
     # ── Automated estimate ─────────────────────────────────
     automated_minutes = (
-        (effective_runtime_seconds / 60.0)
-        + overhead_minutes
-        + validation_minutes
+        (effective_runtime_seconds / 60.0) + overhead_minutes + validation_minutes
     )
 
     # ── Derived metrics ────────────────────────────────────
@@ -259,9 +253,7 @@ def _estimate_roi_for_result(
 
     # Efficiency ratio: < 1.0 means automation is faster than manual
     efficiency_ratio = (
-        round(automated_minutes / manual_minutes, 3)
-        if manual_minutes > 0
-        else None
+        round(automated_minutes / manual_minutes, 3) if manual_minutes > 0 else None
     )
 
     # ── Sanity warnings ────────────────────────────────────
@@ -341,15 +333,10 @@ def _summarize_roi(results: list[AuditResult], roi_settings: dict) -> dict:
                     all_warnings.append(prefixed)
 
     hourly_rate = float(roi_settings.get("hourly_rate", 0.0))
-    efficiency_ratio = (
-        round(automated / manual, 3) if manual > 0 else None
-    )
+    efficiency_ratio = round(automated / manual, 3) if manual > 0 else None
 
     # Pull assumptions from the active profile for the summary context
-    active_profile = (
-        roi_settings.get("profiles", {})
-        .get("audit", {})
-    )
+    active_profile = roi_settings.get("profiles", {}).get("audit", {})
 
     return {
         "enabled": bool(roi_settings.get("enabled", False)),
@@ -387,9 +374,7 @@ def _summarize_roi(results: list[AuditResult], roi_settings: dict) -> dict:
             "automation_overhead_minutes_per_device": float(
                 active_profile.get(
                     "automation_overhead_minutes_per_device",
-                    roi_settings.get(
-                        "automation_overhead_minutes_per_device", 0.0
-                    ),
+                    roi_settings.get("automation_overhead_minutes_per_device", 0.0),
                 )
             ),
             "validation_minutes_per_device": float(
@@ -398,9 +383,7 @@ def _summarize_roi(results: list[AuditResult], roi_settings: dict) -> dict:
                     roi_settings.get("validation_minutes_per_device", 0.0),
                 )
             ),
-            "min_runtime_seconds": float(
-                roi_settings.get("min_runtime_seconds", 0.0)
-            ),
+            "min_runtime_seconds": float(roi_settings.get("min_runtime_seconds", 0.0)),
         },
     }
 
@@ -537,12 +520,10 @@ def _flatten_inventory(data: dict) -> list[dict]:
             flat.append(entry)
 
     if errors:
-        raise ValueError(
-            "Inventory validation failed:\n  • " + "\n  • ".join(errors)
-        )
+        raise ValueError("Inventory validation failed:\n  • " + "\n  • ".join(errors))
 
     # ── Deduplicate by connection target ───────────────────────
-    seen: dict[str, str] = {}      # ip → first location label
+    seen: dict[str, str] = {}  # ip → first location label
     unique: list[dict] = []
     for entry in flat:
         ip = entry["ip"]
@@ -550,7 +531,8 @@ def _flatten_inventory(data: dict) -> list[dict]:
         if ip in seen:
             log.warning(
                 "Duplicate device '%s' (already loaded from %s) — skipping.",
-                ip, seen[ip],
+                ip,
+                seen[ip],
             )
             continue
         seen[ip] = source
@@ -559,9 +541,7 @@ def _flatten_inventory(data: dict) -> list[dict]:
     return unique
 
 
-def load_device_inventory(
-    inventory_path: str | None, config_path: str
-) -> list[dict]:
+def load_device_inventory(inventory_path: str | None, config_path: str) -> list[dict]:
     """Load the device inventory from a dedicated YAML file.
 
     Resolution order for *inventory_path*:
@@ -656,13 +636,13 @@ def _audit_single_device(job: _DeviceJob) -> Optional[AuditResult]:
         except Exception as exc:
             # Detect DNS resolution failures and give a clear message
             if isinstance(exc.__cause__, socket.gaierror) or (
-                isinstance(exc, OSError)
-                and "getaddrinfo" in str(exc).lower()
+                isinstance(exc, OSError) and "getaddrinfo" in str(exc).lower()
             ):
                 log.error(
                     "DNS resolution failed for %s (%s) — check that the "
                     "hostname resolves or provide an explicit IP.",
-                    hostname, ip,
+                    hostname,
+                    ip,
                 )
             else:
                 log.error("Connection to %s (%s) failed: %s", hostname, ip, exc)
@@ -685,9 +665,7 @@ def _audit_single_device(job: _DeviceJob) -> Optional[AuditResult]:
                     explicit_role=job.explicit_role,
                 )
         except Exception as exc:
-            log.error(
-                "Data collection from %s (%s) failed: %s", hostname, ip, exc
-            )
+            log.error("Data collection from %s (%s) failed: %s", hostname, ip, exc)
             try:
                 conn.disconnect()
             except Exception:
@@ -726,9 +704,7 @@ def _audit_single_device(job: _DeviceJob) -> Optional[AuditResult]:
     try:
         # Populate metadata
         result.duration_secs = round(time.monotonic() - t_start, 1)
-        result.audit_ts = datetime.now(timezone.utc).strftime(
-            "%Y-%m-%d %H:%M UTC"
-        )
+        result.audit_ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
         from . import __version__
 
         result.tool_version = __version__
@@ -736,9 +712,7 @@ def _audit_single_device(job: _DeviceJob) -> Optional[AuditResult]:
         # Extract IOS-XE version from Genie data
         if data.version:
             ver = data.version.get("version", {})
-            result.ios_version = ver.get("version", "") or ver.get(
-                "xe_version", ""
-            )
+            result.ios_version = ver.get("version", "") or ver.get("xe_version", "")
 
         # Save per-device reports
         out_dir = job.audit_settings.get("output_dir", "./reports")
@@ -896,8 +870,7 @@ def run_audit(
         for grp, cnt in group_counts.items():
             parts.append(f"{cnt} from group '{grp}'")
         console.print(
-            f"[cyan]Inventory loaded:[/] {len(devices)} device(s) "
-            f"({', '.join(parts)})"
+            f"[cyan]Inventory loaded:[/] {len(devices)} device(s) ({', '.join(parts)})"
         )
 
     # ── Credentials ────────────────────────────────────────
@@ -932,9 +905,7 @@ def run_audit(
             if dr_path.is_dir():
                 for child in sorted(dr_path.iterdir()):
                     if child.is_dir():
-                        devices.append(
-                            {"hostname": child.name, "ip": child.name}
-                        )
+                        devices.append({"hostname": child.name, "ip": child.name})
                 if devices:
                     console.print(
                         f"  Discovered {len(devices)} device(s) from dry-run directory"
@@ -1003,8 +974,7 @@ def run_audit(
                 max_workers=max_workers
             ) as executor:
                 future_to_job = {
-                    executor.submit(_audit_single_device, job): job
-                    for job in jobs
+                    executor.submit(_audit_single_device, job): job for job in jobs
                 }
                 for future in concurrent.futures.as_completed(future_to_job):
                     job = future_to_job[future]

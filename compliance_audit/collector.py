@@ -108,7 +108,11 @@ def parse_running_config(config_text: str) -> ParsedConfig:
 
     for line in config_text.splitlines():
         stripped = line.strip()
-        if not stripped or stripped == "!" or stripped.startswith("Building configuration"):
+        if (
+            not stripped
+            or stripped == "!"
+            or stripped.startswith("Building configuration")
+        ):
             current_section = None
             current_name = None
             continue
@@ -161,7 +165,7 @@ def normalize_intf(name: str) -> str:
     """Expand abbreviated interface names to their full Cisco form."""
     for abbr, full in _ABBREV_MAP.items():
         if name.startswith(abbr) and not name.startswith(full):
-            return full + name[len(abbr):]
+            return full + name[len(abbr) :]
     return name
 
 
@@ -176,15 +180,15 @@ class DeviceData:
     ip: str = ""
     running_config: str = ""
     parsed_config: Optional[ParsedConfig] = None
-    interfaces: Optional[dict] = None        # Genie: show interfaces
-    switchports: Optional[dict] = None       # Genie: show interfaces switchport
-    stp: Optional[dict] = None               # Genie: show spanning-tree
-    stp_root: Optional[dict] = None          # Genie: show spanning-tree root
-    cdp: Optional[dict] = None               # Genie: show cdp neighbors detail
-    lldp: Optional[dict] = None              # Genie: show lldp neighbors detail
-    version: Optional[dict] = None           # Genie: show version
-    vtp: Optional[dict] = None               # Genie: show vtp status
-    etherchannel: Optional[dict] = None      # Genie: show etherchannel summary
+    interfaces: Optional[dict] = None  # Genie: show interfaces
+    switchports: Optional[dict] = None  # Genie: show interfaces switchport
+    stp: Optional[dict] = None  # Genie: show spanning-tree
+    stp_root: Optional[dict] = None  # Genie: show spanning-tree root
+    cdp: Optional[dict] = None  # Genie: show cdp neighbors detail
+    lldp: Optional[dict] = None  # Genie: show lldp neighbors detail
+    version: Optional[dict] = None  # Genie: show version
+    vtp: Optional[dict] = None  # Genie: show vtp status
+    etherchannel: Optional[dict] = None  # Genie: show etherchannel summary
     raw_commands: dict = field(default_factory=dict)
     structured_parse_engine: dict[str, str] = field(default_factory=dict)
 
@@ -307,7 +311,9 @@ class OfflineCollector:
             # Try IP as folder name
             host_dir = self.base_dir / ip
         if not host_dir.is_dir():
-            log.warning("Dry-run: no data directory for %s in %s", hostname, self.base_dir)
+            log.warning(
+                "Dry-run: no data directory for %s in %s", hostname, self.base_dir
+            )
             return None
 
         data = DeviceData(hostname=hostname, ip=ip)
@@ -316,8 +322,15 @@ class OfflineCollector:
             fname = cmd.replace(" ", "_") + ".txt"
             fpath = host_dir / fname
             if fpath.exists():
-                data.raw_commands[cmd] = fpath.read_text(encoding="utf-8", errors="replace")
-                log.info("Loaded offline: %s/%s (%d bytes)", hostname, fname, len(data.raw_commands[cmd]))
+                data.raw_commands[cmd] = fpath.read_text(
+                    encoding="utf-8", errors="replace"
+                )
+                log.info(
+                    "Loaded offline: %s/%s (%d bytes)",
+                    hostname,
+                    fname,
+                    len(data.raw_commands[cmd]),
+                )
             else:
                 data.raw_commands[cmd] = ""
                 log.debug("Dry-run file missing: %s", fpath)
