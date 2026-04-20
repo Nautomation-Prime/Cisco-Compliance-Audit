@@ -191,6 +191,7 @@ class DeviceData:
     version: Optional[dict] = None  # Genie: show version
     vtp: Optional[dict] = None  # Genie: show vtp status
     etherchannel: Optional[dict] = None  # Genie: show etherchannel summary
+    ssh: Optional[dict] = None  # Genie: show ip ssh
     raw_commands: dict = field(default_factory=dict)
     structured_parse_engine: dict[str, str] = field(default_factory=dict)
 
@@ -221,6 +222,7 @@ STRUCTURED_COMMAND_FIELDS: dict[str, str] = {
     "show lldp neighbors detail": "lldp",
     "show vtp status": "vtp",
     "show etherchannel summary": "etherchannel",
+    "show ip ssh": "ssh",
 }
 
 

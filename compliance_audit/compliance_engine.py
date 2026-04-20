@@ -474,26 +474,50 @@ class ComplianceEngine:
             if cfg.has_line(rf"^ip ssh version\s+{ver}"):
                 f.append(Finding("ssh_version", Status.PASS, f"ip ssh version {ver}"))
             else:
-                # Fallback: check "show ip ssh" output for active version
-                ssh_out = data.raw_commands.get("show ip ssh", "")
-                m = re.search(r"SSH\s+Enabled\s*-\s*version\s+(\d+)", ssh_out)
-                if m and int(m.group(1)) == int(ver):
-                    f.append(
-                        Finding(
-                            "ssh_version",
-                            Status.PASS,
-                            f"ip ssh version {ver} (confirmed via show ip ssh)",
+                # Fallback: check "show ip ssh" structured or raw output
+                ssh_struct = getattr(data, "ssh", None) or {}
+                ssh_info = ssh_struct.get("ssh", {})
+                if ssh_info.get("version"):
+                    active_ver = ssh_info["version"].split(".")[0]
+                    if int(active_ver) == int(ver):
+                        f.append(
+                            Finding(
+                                "ssh_version",
+                                Status.PASS,
+                                f"ip ssh version {ver} (confirmed via show ip ssh)",
+                            )
                         )
-                    )
+                    else:
+                        f.append(
+                            Finding(
+                                "ssh_version",
+                                Status.FAIL,
+                                f"Missing: ip ssh version {ver}",
+                                remediation=f"ip ssh version {ver}",
+                            )
+                        )
                 else:
-                    f.append(
-                        Finding(
-                            "ssh_version",
-                            Status.FAIL,
-                            f"Missing: ip ssh version {ver}",
-                            remediation=f"ip ssh version {ver}",
-                        )
+                    ssh_out = data.raw_commands.get("show ip ssh", "")
+                    m = re.search(
+                        r"SSH\s+Enabled\s*-\s*version\s+(\d+)", ssh_out
                     )
+                    if m and int(m.group(1)) == int(ver):
+                        f.append(
+                            Finding(
+                                "ssh_version",
+                                Status.PASS,
+                                f"ip ssh version {ver} (confirmed via show ip ssh)",
+                            )
+                        )
+                    else:
+                        f.append(
+                            Finding(
+                                "ssh_version",
+                                Status.FAIL,
+                                f"Missing: ip ssh version {ver}",
+                                remediation=f"ip ssh version {ver}",
+                            )
+                        )
 
         # SSH timeout
         if _enabled(mp, "ssh_timeout"):
@@ -581,10 +605,34 @@ class ComplianceEngine:
             min_bits = mp.get("ssh_rsa_min_modulus", {}).get("min_bits", 2048)
             modulus_found = False
 
-            # First, try to get modulus size from "show ip ssh" command output
-            if data and data.raw_commands.get("show ip ssh"):
+            # First, try structured "show ip ssh" data
+            ssh_struct = getattr(data, "ssh", None) or {}
+            ssh_info = ssh_struct.get("ssh", {})
+            rsa_key = ssh_info.get("rsa_key", {})
+            if rsa_key.get("modulus_size"):
+                bits = rsa_key["modulus_size"]
+                modulus_found = True
+                if bits >= min_bits:
+                    f.append(
+                        Finding(
+                            "ssh_rsa_min_modulus",
+                            Status.PASS,
+                            f"RSA key size {bits} >= {min_bits} bits",
+                        )
+                    )
+                else:
+                    f.append(
+                        Finding(
+                            "ssh_rsa_min_modulus",
+                            Status.FAIL,
+                            f"RSA key size {bits} < {min_bits} bits",
+                            remediation=f"crypto key generate rsa modulus {min_bits}",
+                        )
+                    )
+
+            # Fallback: try raw "show ip ssh" output
+            if not modulus_found and data and data.raw_commands.get("show ip ssh"):
                 ssh_output = data.raw_commands["show ip ssh"]
-                # Look for "Modulus Size : 2048 bits" pattern
                 for line in ssh_output.splitlines():
                     m = re.search(
                         r"Modulus Size\s*:\s*(\d+)\s*bits?", line, re.IGNORECASE
