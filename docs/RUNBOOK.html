@@ -252,12 +252,7 @@ python -m compliance_audit --categories management_plane</code></pre>
 <li>Ticket ID is required by default and controlled by config:</li>
 <li>Use --expires-hours to override default expiry.</li>
 </ul>
-<h3 id="4-dry-run-before-apply-recommended">4) Dry-Run Before Apply (Recommended)</h3>
-<p>Single pack preflight:</p>
-<pre><code class="language-bash">python -m compliance_audit --remediation-apply &lt;PACK_ID&gt; --apply-dry-run</code></pre>
-<p>Apply-all preflight:</p>
-<pre><code class="language-bash">python -m compliance_audit --remediation-apply-all --apply-dry-run</code></pre>
-<h3 id="5-apply-changes">5) Apply Changes</h3>
+<h3 id="4-apply-changes">4) Apply Changes</h3>
 <p>Apply one approved pack:</p>
 <pre><code class="language-bash">python -m compliance_audit --remediation-apply &lt;PACK_ID&gt;</code></pre>
 <p>Apply all approved packs:</p>
@@ -265,7 +260,7 @@ python -m compliance_audit --categories management_plane</code></pre>
 <p>If high-risk packs are blocked and change authority allows it:</p>
 <pre><code class="language-bash">python -m compliance_audit --remediation-apply &lt;PACK_ID&gt; --allow-high-risk
 python -m compliance_audit --remediation-apply-all --allow-high-risk</code></pre>
-<h3 id="6-post-apply-verification">6) Post-Apply Verification</h3>
+<h3 id="5-post-apply-verification">5) Post-Apply Verification</h3>
 <pre><code class="language-bash">python -m compliance_audit --remediation-list applied
 python -m compliance_audit --remediation-list failed</code></pre>
 <p>Optional: rerun audit for confirmation.</p>
@@ -273,7 +268,6 @@ python -m compliance_audit --remediation-list failed</code></pre>
 <h2 id="safety-rules">Safety Rules</h2>
 <ol>
 <li>Do not use remediation apply during unauthorized change windows.</li>
-<li>Always use --apply-dry-run before production apply.</li>
 <li>Do not approve packs without reviewing risk and ticket alignment.</li>
 <li>Treat --allow-high-risk as exception-only with explicit approval.</li>
 <li>Prefer --remediation-apply-all only after queue review.</li>
@@ -303,7 +297,6 @@ python -m compliance_audit --remediation-list failed</code></pre>
 <li>Run audit.</li>
 <li>Review pending queue.</li>
 <li>Approve/reject with ticket mapping.</li>
-<li>Preflight dry-run.</li>
 <li>Apply (single or all).</li>
 <li>Verify applied/failed status.</li>
 <li>Rerun audit for closure evidence.</li>

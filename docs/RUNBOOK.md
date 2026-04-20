@@ -205,21 +205,7 @@ Notes:
   audit_settings.remediation.approval.require_ticket_id
 - Use --expires-hours to override default expiry.
 
-### 4) Dry-Run Before Apply (Recommended)
-
-Single pack preflight:
-
-```bash
-python -m compliance_audit --remediation-apply <PACK_ID> --apply-dry-run
-```
-
-Apply-all preflight:
-
-```bash
-python -m compliance_audit --remediation-apply-all --apply-dry-run
-```
-
-### 5) Apply Changes
+### 4) Apply Changes
 
 Apply one approved pack:
 
@@ -240,7 +226,7 @@ python -m compliance_audit --remediation-apply <PACK_ID> --allow-high-risk
 python -m compliance_audit --remediation-apply-all --allow-high-risk
 ```
 
-### 6) Post-Apply Verification
+### 5) Post-Apply Verification
 
 ```bash
 python -m compliance_audit --remediation-list applied
@@ -256,10 +242,9 @@ python -m compliance_audit
 ## Safety Rules
 
 1. Do not use remediation apply during unauthorized change windows.
-2. Always use --apply-dry-run before production apply.
-3. Do not approve packs without reviewing risk and ticket alignment.
-4. Treat --allow-high-risk as exception-only with explicit approval.
-5. Prefer --remediation-apply-all only after queue review.
+2. Do not approve packs without reviewing risk and ticket alignment.
+3. Treat --allow-high-risk as exception-only with explicit approval.
+4. Prefer --remediation-apply-all only after queue review.
 
 ## Troubleshooting Quick Table
 
@@ -286,7 +271,6 @@ If apply fails or behavior is unexpected:
 1. Run audit.
 2. Review pending queue.
 3. Approve/reject with ticket mapping.
-4. Preflight dry-run.
-5. Apply (single or all).
-6. Verify applied/failed status.
-7. Rerun audit for closure evidence.
+4. Apply (single or all).
+5. Verify applied/failed status.
+6. Rerun audit for closure evidence.

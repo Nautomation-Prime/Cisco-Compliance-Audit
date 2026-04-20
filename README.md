@@ -70,7 +70,6 @@ Built on **PyATS/Genie** for structured parsing, **Netmiko** for transport, and 
 | **Remediation scripts** | Auto-generated per-device IOS-XE config snippets to fix FAILs — port-channel aware |
 | **Bulk approved-pack apply** | Apply all approved remediation packs in one run with `--remediation-apply-all` |
 | **Remediation lifecycle workflow** | Enterprise-grade workflow with approval tracking, change tickets, expiry times, and risk controls |
-| **Dry-run / offline mode** | Audit saved command outputs without live SSH — useful for testing and CI |
 | **Credential flexibility** | OS keyring (optional) → environment variables → interactive prompt |
 | **Category filtering** | Audit only management plane, or only data plane, etc. |
 | **Severity filtering** | `--min-severity critical/high/medium/low/info` — surface only findings at or above the chosen level |
@@ -251,9 +250,6 @@ python -m compliance_audit -o ./my-reports
 # Fail if any device scores below 80%
 python -m compliance_audit --fail-threshold 80
 
-# Dry-run mode — audit saved command outputs (no SSH)
-python -m compliance_audit --dry-run ./saved_outputs
-
 # Force CSV report generation
 python -m compliance_audit --csv
 
@@ -287,7 +283,7 @@ python -m compliance_audit [-h] [-c CONFIG] [-d DEVICES] [-i INVENTORY]
                            [--no-jump] [--categories CAT [CAT ...]]
                            [--tags TAG [TAG ...]] [--min-severity LEVEL]
                            [-o OUTPUT_DIR] [--fail-threshold PCT]
-                           [--dry-run DIR] [--csv] [--no-csv] [-v]
+                           [--csv] [--no-csv] [-v]
                            [--remediation-list [STATUS]]
                            [--remediation-approve PACK_ID]
                            [--remediation-approve-all]
@@ -295,7 +291,7 @@ python -m compliance_audit [-h] [-c CONFIG] [-d DEVICES] [-i INVENTORY]
                            [--remediation-apply PACK_ID]
                            [--remediation-apply-all]
                            [--approver NAME] [--ticket-id ID] [--reason TEXT]
-                           [--expires-hours HOURS] [--apply-dry-run]
+                           [--expires-hours HOURS]
                            [--allow-high-risk] [--interactive] [--tui]
                            [--list-options]
 
@@ -310,7 +306,6 @@ Options:
   --min-severity LEVEL          Hide findings below this severity (critical > high > medium > low > info)
   -o, --output-dir DIR          Override the report output directory from config
   --fail-threshold PCT          Exit code 1 if any device scores below this %
-  --dry-run DIR                 Offline mode — read saved command outputs from DIR
   --csv / --no-csv              Force-enable or disable CSV report generation
   -v, --verbose                 Increase verbosity (-v = INFO, -vv = DEBUG)
 
@@ -328,7 +323,6 @@ Remediation Lifecycle Operations:
                                 can be disabled in config)
   --reason TEXT                 Reason required when rejecting
   --expires-hours HOURS         Approval expiry in hours (default: from config, fallback 24)
-  --apply-dry-run               Run preflight for remediation apply operations without sending config
   --allow-high-risk             Allow applying approved packs containing high-risk commands
 
 Premium Interactive Modes:
@@ -1068,10 +1062,6 @@ python -m compliance_audit --remediation-apply baea5533a7f61a24
 # Apply all approved packs in sequence
 python -m compliance_audit --remediation-apply-all
 
-# Dry-run mode: preflight checks only, no configuration sent
-python -m compliance_audit --remediation-apply baea5533a7f61a24 --apply-dry-run
-python -m compliance_audit --remediation-apply-all --apply-dry-run
-
 # Allow high-risk commands (normally blocked by default)
 python -m compliance_audit --remediation-apply baea5533a7f61a24 --allow-high-risk
 python -m compliance_audit --remediation-apply-all --allow-high-risk
@@ -1085,7 +1075,6 @@ python -m compliance_audit --remediation-apply-all --allow-high-risk
 - **Checksum enforcement**: Script hash must match the approved review pack
 - **Preflight drift check**: Only findings still failing are applied
 - **Device identity validation**: Device prompt must match approved hostname when enabled
-- **Preflight validation**: Dry-run mode validates connectivity and prerequisites without sending configuration
 
 **Application Output:**
 The tool provides real-time progress indicators and detailed output including:
@@ -1166,24 +1155,6 @@ audit_settings:
 │ Apply       │  → Apply one: --remediation-apply PACK_ID
 │             │    Apply all: --remediation-apply-all
 └─────────────┘
-```
-
-### Dry-Run / Offline Mode
-
-Test the auditor against saved command outputs without live SSH access:
-
-```bash
-# Save outputs first (directory per device, one file per command)
-saved_outputs/
-  ZZ-LAB1-001ASW001/
-    show_running-config.txt
-    show_version.txt
-    show_interfaces.txt
-    show_etherchannel_summary.txt
-    ...
-
-# Run the audit offline
-python -m compliance_audit --dry-run ./saved_outputs
 ```
 
 ---
