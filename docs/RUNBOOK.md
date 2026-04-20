@@ -35,7 +35,7 @@ from a shell (for example Linux, WSL, or Windows PowerShell).
 4. If you track automation value, enable ROI settings in audit_settings.roi.
 
 Example config path:
-- compliance_audit/compliance_config.yaml
+- compliance_audit/compliance_config/
 
 ## Optional ROI Setup
 
@@ -68,11 +68,20 @@ ROI appears in:
 # Run full audit from default config
 python -m compliance_audit
 
-# Run audit with specific config
-python -m compliance_audit -c configs/site_alpha.yaml
+# Run audit with specific config directory
+python -m compliance_audit -c configs/site_alpha
 
 # Run audit for a single device
 python -m compliance_audit --device ZZ-LAB1-001ASW001:192.0.2.61
+
+# Surface only high-severity findings
+python -m compliance_audit --min-severity high
+
+# Surface only CIS or PCI-tagged findings
+python -m compliance_audit --tags cis pci
+
+# Combine severity and tag filters
+python -m compliance_audit --min-severity high --tags cis pci
 
 # Launch guided interactive wizard
 python -m compliance_audit --interactive
@@ -150,7 +159,13 @@ Tip:
 ### 1) Run Audit
 
 ```bash
-python -m compliance_audit -c compliance_audit/compliance_config.yaml
+# Full audit using default config directory
+python -m compliance_audit
+
+# Audit with optional filters
+python -m compliance_audit --min-severity high
+python -m compliance_audit --tags cis pci
+python -m compliance_audit --categories management_plane
 ```
 
 Expected outcome:
@@ -235,7 +250,7 @@ python -m compliance_audit --remediation-list failed
 Optional: rerun audit for confirmation.
 
 ```bash
-python -m compliance_audit -c compliance_audit/compliance_config.yaml
+python -m compliance_audit
 ```
 
 ## Safety Rules
