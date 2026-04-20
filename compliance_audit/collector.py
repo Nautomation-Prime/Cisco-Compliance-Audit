@@ -30,14 +30,14 @@ COLLECTION_ERRORS = (
 # Structured-parsing availability flags (Genie primary, TextFSM fallback)
 # ---------------------------------------------------------------------------
 try:
-    import genie  # noqa: F401
+    import genie  # noqa: F401  # pylint: disable=unused-import
 
     _GENIE_AVAILABLE = True
 except ImportError:
     _GENIE_AVAILABLE = False
 
 try:
-    import ntc_templates  # noqa: F401
+    import ntc_templates  # noqa: F401  # pylint: disable=unused-import
 
     _TEXTFSM_AVAILABLE = True
 except ImportError:
