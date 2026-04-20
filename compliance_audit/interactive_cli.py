@@ -40,6 +40,8 @@ class AuditWizardConfig:
     devices: list[str]
     skip_jump: bool
     categories: Optional[list[str]]
+    tags_filter: Optional[list[str]]
+    min_severity: Optional[str]
     output_dir: Optional[str]
     csv_report: Optional[bool]
     verbose: int
@@ -74,6 +76,11 @@ def _build_audit_preview(cfg: AuditWizardConfig) -> str:
     if cfg.categories:
         cmd.append("--categories")
         cmd.extend(cfg.categories)
+    if cfg.tags_filter:
+        cmd.append("--tags")
+        cmd.extend(cfg.tags_filter)
+    if cfg.min_severity:
+        cmd.extend(["--min-severity", cfg.min_severity])
     if cfg.output_dir:
         cmd.extend(["--output-dir", _quote(cfg.output_dir)])
     if cfg.csv_report is True:
@@ -129,6 +136,23 @@ def _run_audit_wizard(questionary) -> None:
     if categories == []:
         categories = None
 
+    tags_raw = questionary.text(
+        "Filter by tags (space-separated, e.g. 'cis pci hardening'). Blank = no filter:",
+        default="",
+    ).ask()
+    tags_filter: Optional[list[str]] = (
+        [t.strip() for t in tags_raw.split() if t.strip()] if tags_raw and tags_raw.strip() else None
+    )
+
+    min_severity_label = questionary.select(
+        "Minimum severity to surface:",
+        choices=["All (no filter)", "info", "low", "medium", "high", "critical"],
+        default="All (no filter)",
+    ).ask()
+    min_severity: Optional[str] = (
+        None if min_severity_label == "All (no filter)" else min_severity_label
+    )
+
     devices = _collect_devices(questionary)
     skip_jump = bool(questionary.confirm("Skip jump host?", default=False).ask())
 
@@ -171,6 +195,8 @@ def _run_audit_wizard(questionary) -> None:
         devices=devices,
         skip_jump=skip_jump,
         categories=categories,
+        tags_filter=tags_filter,
+        min_severity=min_severity,
         output_dir=output_dir,
         csv_report=csv_report,
         verbose=verbose,
@@ -195,6 +221,8 @@ def _run_audit_wizard(questionary) -> None:
         device_overrides=wizard_cfg.devices or None,
         skip_jump=wizard_cfg.skip_jump,
         categories=wizard_cfg.categories,
+        tags_filter=wizard_cfg.tags_filter,
+        min_severity=wizard_cfg.min_severity,
         output_dir=wizard_cfg.output_dir,
         csv_report=wizard_cfg.csv_report,
         inventory_path=wizard_cfg.inventory_path,

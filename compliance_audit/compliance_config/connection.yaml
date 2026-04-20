@@ -1,0 +1,24 @@
+---
+# ╔═══════════════════════════════════════════════════════════════════╗
+# ║  CONNECTION — how to reach devices                                ║
+# ╚═══════════════════════════════════════════════════════════════════╝
+
+# ═══════════════════════════════════════════════════════════════════
+# §2  CONNECTION
+# ═══════════════════════════════════════════════════════════════════
+
+connection:
+  device_type: "cisco_xe"          # Netmiko device type for IOS-XE
+  timeout: 30                      # SSH connection timeout (seconds)
+  retries: 3                       # Connection retry attempts
+  jump_host: "192.0.2.60"          # Jump/bastion host IP
+  use_jump_host: false             # Set false to connect directly (or use --no-jump)
+
+  # ── Credential Store ─────────────────────────────────────
+  # Options:
+  #   "none"    – env vars → interactive prompt only (default)
+  #   "keyring" – use the OS keyring (GNOME Keyring, KWallet on Linux;
+  #               Credential Manager on Windows; Keychain on macOS).
+  #               Requires: pip install keyring
+  credential_store: "none"         # "none" or "keyring"
+  keyring_service: "cisco-compliance-audit"

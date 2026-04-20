@@ -29,6 +29,16 @@ class Status(str, Enum):
     ERROR = "ERROR"
 
 
+#: Numeric priority for severity levels — higher value = more severe.
+SEVERITY_ORDER: dict[str, int] = {
+    "critical": 5,
+    "high": 4,
+    "medium": 3,
+    "low": 2,
+    "info": 1,
+}
+
+
 @dataclass
 class Finding:
     check_name: str
@@ -37,6 +47,8 @@ class Finding:
     category: str = ""
     interface: str = ""
     remediation: str = ""
+    severity: str = "medium"          # critical | high | medium | low | info
+    tags: list[str] = field(default_factory=list)  # arbitrary labels (e.g. cis, pci)
 
 
 @dataclass
@@ -130,6 +142,104 @@ def _enabled(policy: dict, *path) -> bool:
     return True
 
 
+def _build_check_map(policy: dict) -> dict[str, dict]:
+    """Build a flat ``{check_key → policy_node}`` lookup from the compliance policy."""
+    m: dict[str, dict] = {}
+    for section_key in ("management_plane", "control_plane", "data_plane"):
+        for check_key, node in (policy.get(section_key) or {}).items():
+            if isinstance(node, dict):
+                m[check_key] = node
+    # role_specific has one extra nesting level: role → {check_key: node}
+    for role_checks in (policy.get("role_specific") or {}).values():
+        if isinstance(role_checks, dict):
+            for check_key, node in role_checks.items():
+                if isinstance(node, dict):
+                    m[check_key] = node
+    return m
+
+
+def _find_check_node(check_name: str, check_map: dict[str, dict]) -> dict:
+    """Return the policy node for a finding; prefix-matches dynamic names.
+
+    Dynamic check names like ``errdisable_recovery_bpduguard`` are matched
+    against the ``errdisable_recovery`` YAML key by longest prefix.
+    """
+    if check_name in check_map:
+        return check_map[check_name]
+    candidates = [
+        k for k in check_map
+        if check_name.startswith(k + "_") or check_name == k
+    ]
+    if candidates:
+        return check_map[max(candidates, key=len)]
+    return {}
+
+
+def _annotate_findings(
+    findings: list["Finding"],
+    check_map: dict[str, dict],
+    role: str,
+    hostname: str,
+) -> None:
+    """Annotate findings with ``severity``/``tags`` and apply YAML-level filters in-place.
+
+    YAML-level filters supported per check node:
+
+    * ``severity``           – one of critical / high / medium / low / info
+    * ``tags``               – list of arbitrary label strings
+    * ``applies_to_roles``   – list of role identifiers; findings for other roles
+                               are converted to SKIP
+    * ``exclude_hostnames``  – list of hostname regex patterns; matching devices
+                               have the check converted to SKIP
+    * ``exclude_interfaces`` – list of interface regex patterns; per-interface
+                               findings for matching interfaces are SKIP'd
+    """
+    for f in findings:
+        node = _find_check_node(f.check_name, check_map)
+
+        # Always set severity + tags (even on already-SKIP'd findings)
+        f.severity = node.get("severity", "medium")
+        raw_tags = node.get("tags")
+        f.tags = list(raw_tags) if isinstance(raw_tags, list) else []
+
+        if f.status == Status.SKIP:
+            continue
+
+        # applies_to_roles
+        applies_to = node.get("applies_to_roles")
+        if applies_to and isinstance(applies_to, list) and role not in applies_to:
+            f.status = Status.SKIP
+            f.detail = f"Not applicable to role '{role}'"
+            continue
+
+        # exclude_hostnames
+        excludes = node.get("exclude_hostnames")
+        if excludes and isinstance(excludes, list):
+            for pattern in excludes:
+                try:
+                    if re.match(pattern, hostname, re.IGNORECASE):
+                        f.status = Status.SKIP
+                        f.detail = "Excluded by hostname policy"
+                        break
+                except re.error:
+                    pass
+            if f.status == Status.SKIP:
+                continue
+
+        # exclude_interfaces (only for per-interface findings)
+        if f.interface:
+            excl_intfs = node.get("exclude_interfaces")
+            if excl_intfs and isinstance(excl_intfs, list):
+                for pattern in excl_intfs:
+                    try:
+                        if re.match(pattern, f.interface, re.IGNORECASE):
+                            f.status = Status.SKIP
+                            f.detail = "Interface excluded by policy"
+                            break
+                    except re.error:
+                        pass
+
+
 # ---------------------------------------------------------------------------
 # Engine
 # ---------------------------------------------------------------------------
@@ -205,6 +315,15 @@ class ComplianceEngine:
                     Finding(func.__name__, Status.ERROR, str(exc), category)
                 )
                 log.exception("Check %s raised an exception", func.__name__)
+
+        # Annotate findings with severity/tags and apply YAML-level filters
+        check_map = _build_check_map(self.policy)
+        _annotate_findings(
+            result.findings,
+            check_map,
+            role=host_info.role or "unknown",
+            hostname=result.hostname,
+        )
 
         return result
 

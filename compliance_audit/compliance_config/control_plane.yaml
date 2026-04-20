@@ -1,0 +1,144 @@
+---
+# ╔═══════════════════════════════════════════════════════════════════╗
+# ║  CONTROL PLANE — STP, VTP, DHCP snooping, ARP inspection …       ║
+# ╚═══════════════════════════════════════════════════════════════════╝
+#
+# severity / tags / applies_to_roles / exclude_hostnames are supported
+# on every check — see management_plane.yaml for full field descriptions.
+
+compliance:
+  control_plane:
+
+    # ── SPANNING TREE ─────────────────────────────────────────────
+
+    stp_mode:
+      enabled: false
+      severity: medium
+      tags: [stp, layer2-security, cis]
+      applies_to_roles: [access_switch, core_switch, distribution_switch, server_switch, industrial_switch]
+      mode: "rapid-pvst"           # rapid-pvst | mst
+
+    stp_extend_system_id:
+      enabled: false
+      severity: medium
+      tags: [stp]
+      applies_to_roles: [access_switch, core_switch, distribution_switch, server_switch, industrial_switch]
+
+    stp_pathcost_method:
+      enabled: false
+      severity: low
+      tags: [stp]
+      applies_to_roles: [access_switch, core_switch, distribution_switch, server_switch, industrial_switch]
+      method: "long"
+
+    stp_loopguard_default:
+      enabled: false
+      severity: medium
+      tags: [stp, layer2-security]
+      applies_to_roles: [access_switch, core_switch, distribution_switch, server_switch, industrial_switch]
+
+    stp_priority:
+      enabled: false
+      severity: medium
+      tags: [stp, availability]
+      applies_to_roles: [access_switch, core_switch, distribution_switch, server_switch, industrial_switch]
+      core_priority: 4096
+      access_priority: 36863
+
+    stp_backbonefast:
+      enabled: false
+      severity: low
+      tags: [stp, availability]
+      applies_to_roles: [access_switch, core_switch, distribution_switch, server_switch, industrial_switch]
+
+    stp_uplinkfast:
+      enabled: false
+      severity: low
+      tags: [stp, availability]
+      applies_to_roles: [access_switch, core_switch, distribution_switch, server_switch, industrial_switch]
+
+    # ── VTP ───────────────────────────────────────────────────────
+
+    vtp_mode:
+      enabled: false
+      severity: high
+      tags: [layer2-security, hardening]
+      applies_to_roles: [access_switch, core_switch, distribution_switch, server_switch, industrial_switch]
+      expected: "off"              # transparent | off | client | server
+
+    vtp_domain:
+      enabled: false
+      severity: medium
+      tags: [layer2-security]
+      applies_to_roles: [access_switch, core_switch, distribution_switch, server_switch, industrial_switch]
+      expected: ""
+
+    # ── DHCP SNOOPING ─────────────────────────────────────────────
+
+    dhcp_snooping_global:
+      enabled: false
+      severity: high
+      tags: [layer2-security, cis, pci]
+      applies_to_roles: [access_switch, core_switch, distribution_switch, server_switch, industrial_switch]
+
+    dhcp_snooping_vlans:
+      enabled: false
+      severity: medium
+      tags: [layer2-security]
+      applies_to_roles: [access_switch, core_switch, distribution_switch, server_switch, industrial_switch]
+      vlans: ""
+
+    no_dhcp_snooping_information_option:
+      enabled: false
+      severity: low
+      tags: [layer2-security]
+      applies_to_roles: [access_switch, core_switch, distribution_switch, server_switch, industrial_switch]
+
+    # ── DYNAMIC ARP INSPECTION ────────────────────────────────────
+
+    arp_inspection_vlans:
+      enabled: false
+      severity: high
+      tags: [layer2-security, cis, pci]
+      applies_to_roles: [access_switch, core_switch, distribution_switch, server_switch, industrial_switch]
+      vlans: ""
+
+    arp_inspection_validate:
+      enabled: false
+      severity: medium
+      tags: [layer2-security]
+      applies_to_roles: [access_switch, core_switch, distribution_switch, server_switch, industrial_switch]
+      checks: ["src-mac", "dst-mac", "ip"]
+
+    # ── ERRDISABLE RECOVERY ───────────────────────────────────────
+
+    errdisable_recovery:
+      enabled: false
+      severity: low
+      tags: [availability, hardening]
+      applies_to_roles: [access_switch, core_switch, distribution_switch, server_switch, industrial_switch]
+      causes:
+        - bpduguard
+        - storm-control
+        - psecure-violation
+        - arp-inspection
+        - dhcp-rate-limit
+        - link-flap
+      interval: 300
+
+    # ── UDLD ──────────────────────────────────────────────────────
+
+    udld_global:
+      enabled: false
+      severity: medium
+      tags: [availability, layer2-security]
+      applies_to_roles: [access_switch, core_switch, distribution_switch, server_switch, industrial_switch]
+      mode: "enable"               # enable | aggressive
+
+    # ── CONTROL-PLANE POLICING ────────────────────────────────────
+
+    control_plane_policing:
+      enabled: false
+      severity: high
+      tags: [availability, hardening, cis, nist]
+      applies_to_roles: [access_switch, core_switch, distribution_switch, server_switch]

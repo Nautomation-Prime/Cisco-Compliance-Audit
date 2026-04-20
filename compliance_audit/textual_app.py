@@ -121,6 +121,8 @@ def launch_textual(parser: argparse.ArgumentParser) -> None:
             device_overrides=None,
             skip_jump=False,
             categories=None,
+            tags_filter=None,
+            min_severity=None,
             output_dir=None,
             csv_report=None,
             inventory_path=None,

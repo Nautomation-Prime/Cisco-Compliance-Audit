@@ -1,0 +1,80 @@
+---
+# ╔═══════════════════════════════════════════════════════════════════╗
+# ║  CLASSIFICATION — device roles and endpoint detection             ║
+# ╚═══════════════════════════════════════════════════════════════════╝
+
+# ═══════════════════════════════════════════════════════════════════
+# §3  DEVICE  INVENTORY  (pointer to separate file)
+# ═══════════════════════════════════════════════════════════════════
+
+inventory_file: "devices.yaml"
+
+
+# ═══════════════════════════════════════════════════════════════════
+# §4a  HOSTNAME  ROLE  CODES
+# ═══════════════════════════════════════════════════════════════════
+# Maps the 2-4 letter code in the hostname to its meaning.
+# The auditor uses these to:
+#   • detect the device role (for role-specific checks)
+#   • classify trunk ports as uplinks or downlinks (via CDP/LLDP neighbor)
+#
+# Each entry needs:
+#   code         – the letters that appear in the hostname (case-insensitive)
+#   role         – internal identifier used throughout the engine
+#   display      – human-friendly name for reports
+#   trunk_signal – how to treat a trunk to a neighbor with this role:
+#                  "uplink"   = the local port faces toward the core
+#                  "downlink" = the local port faces toward the access layer
+#                  "none"     = no automatic trunk classification
+
+hostname_roles:
+  - code: ASW
+    role: access_switch
+    display: "Access Switch"
+    trunk_signal: downlink
+
+  - code: CSW
+    role: core_switch
+    display: "Core Switch"
+    trunk_signal: uplink
+
+  - code: SDW
+    role: sdwan_router
+    display: "SD-WAN Router"
+    trunk_signal: none
+
+  - code: ISW
+    role: industrial_switch
+    display: "Industrial Switch"
+    trunk_signal: downlink
+
+  - code: DSW
+    role: distribution_switch
+    display: "Distribution Switch"
+    trunk_signal: none
+
+  - code: SSW
+    role: server_switch
+    display: "Server Switch"
+    trunk_signal: downlink
+
+
+# ═══════════════════════════════════════════════════════════════════
+# §4b  ENDPOINT  NEIGHBOURS
+# ═══════════════════════════════════════════════════════════════════
+# Trunks to endpoints (e.g. Cisco APs) are detected via CDP / LLDP
+# and classified as TRUNK_ENDPOINT.  Any match below → endpoint.
+
+endpoint_neighbors:
+  enabled: false
+  hostname_patterns:
+    - "^AP[\\d_-]"
+    - "^AP[0-9A-F]{4}"
+    - "-AP\\d{3}$"
+  platform_patterns:
+    - "AIR-"
+    - "C91[2-7]"
+    - "CW91"
+    - "MR[0-9]"
+  capabilities:
+    - "Trans-Bridge"

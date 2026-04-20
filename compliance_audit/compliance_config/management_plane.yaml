@@ -1,0 +1,516 @@
+---
+# ╔═══════════════════════════════════════════════════════════════════╗
+# ║  MANAGEMENT PLANE — global services, SSH, AAA, NTP, logging …    ║
+# ╚═══════════════════════════════════════════════════════════════════╝
+#
+# NEW FIELDS available on every check:
+#
+#   severity         – critical | high | medium | low | info
+#                      Used for --min-severity filtering and report colouring.
+#
+#   tags             – list of arbitrary labels (e.g. [cis, pci, hardening]).
+#                      Use --tags <tag> to surface only checks carrying that label.
+#
+#   applies_to_roles – list of role identifiers; the check is SKIP'd for roles
+#                      not listed here.  Omit (or leave empty) for all roles.
+#                      Valid roles: access_switch core_switch sdwan_router
+#                                   industrial_switch distribution_switch server_switch
+#
+#   exclude_hostnames – list of regex patterns; matching device hostnames skip
+#                       this check.  Useful for known-exception devices.
+#                       Example: [".*-LEGACY-.*", "ZZ-LAB1-.*"]
+#
+#   exclude_interfaces – list of regex patterns for per-interface checks only.
+#                        Matching interface names are SKIP'd for this check.
+#                        Example: ["GigabitEthernet0/0", "Loopback.*"]
+
+compliance:
+  management_plane:
+
+    # ── SERVICES ──────────────────────────────────────────────────
+
+    service_password_encryption:
+      enabled: true
+      severity: high
+      tags: [hardening, encryption, cis]
+      # Expect: service password-encryption
+
+    service_timestamps_debug:
+      enabled: true
+      severity: medium
+      tags: [logging, hardening]
+      expected: "service timestamps debug datetime msec localtime show-timezone"
+
+    service_timestamps_log:
+      enabled: true
+      severity: medium
+      tags: [logging, hardening]
+      expected: "service timestamps log datetime msec localtime show-timezone"
+
+    service_tcp_keepalives_in:
+      enabled: true
+      severity: low
+      tags: [hardening]
+
+    service_tcp_keepalives_out:
+      enabled: true
+      severity: low
+      tags: [hardening]
+
+    no_service_pad:
+      enabled: true
+      severity: low
+      tags: [hardening]
+
+    no_service_finger:
+      enabled: true
+      severity: medium
+      tags: [hardening, cis]
+
+    no_service_config:
+      enabled: true
+      severity: medium
+      tags: [hardening]
+
+    no_service_tcp_small_servers:
+      enabled: true
+      severity: medium
+      tags: [hardening, cis]
+
+    no_service_udp_small_servers:
+      enabled: true
+      severity: medium
+      tags: [hardening, cis]
+
+    # ── IP SETTINGS ───────────────────────────────────────────────
+
+    no_ip_source_route:
+      enabled: true
+      severity: high
+      tags: [hardening, cis, nist]
+
+    no_ip_finger:
+      enabled: true
+      severity: medium
+      tags: [hardening]
+
+    no_ip_bootp_server:
+      enabled: true
+      severity: medium
+      tags: [hardening]
+
+    no_ip_http_server:
+      enabled: true
+      severity: high
+      tags: [hardening, encryption, cis, pci]
+      # Expect: no ip http server  (disable plain HTTP management)
+
+    ip_http_secure_server:
+      enabled: false
+      severity: low
+      tags: [hardening]
+      # Set true if you WANT HTTPS management enabled
+
+    no_ip_http_secure_server:
+      enabled: true
+      severity: medium
+      tags: [hardening]
+      # Set true if you want HTTPS OFF
+
+    ip_http_authentication:
+      enabled: false
+      severity: medium
+      tags: [authentication, hardening]
+      method: "local"                 # local | aaa
+
+    ip_http_access_class:
+      enabled: false
+      severity: medium
+      tags: [access-control, hardening]
+      acl_name: ""
+
+    no_ip_gratuitous_arps:
+      enabled: false
+      severity: medium
+      tags: [hardening]
+
+    ip_cef:
+      enabled: false
+      severity: low
+      tags: [hardening]
+
+    no_ip_domain_lookup:
+      enabled: true
+      severity: low
+      tags: [hardening]
+
+    ip_domain_name:
+      enabled: true
+      severity: low
+      tags: [hardening]
+      expected: "corp.example.com"
+
+    clock_timezone:
+      enabled: false
+      severity: low
+      tags: [logging]
+      timezone: "GMT"
+      offset: 0
+
+    # ── SSH ───────────────────────────────────────────────────────
+
+    ssh_version:
+      enabled: true
+      severity: critical
+      tags: [encryption, authentication, cis, pci, nist]
+      version: 2
+
+    ssh_timeout:
+      enabled: false
+      severity: medium
+      tags: [hardening, access-control]
+      max_seconds: 60
+
+    ssh_authentication_retries:
+      enabled: false
+      severity: medium
+      tags: [hardening, access-control]
+      max_retries: 3
+
+    ssh_source_interface:
+      enabled: false
+      severity: low
+      tags: [hardening]
+      interface: ""                   # e.g. "Loopback0" or "Vlan100"
+
+    ssh_rsa_min_modulus:
+      enabled: true
+      severity: high
+      tags: [encryption, cis, nist]
+      min_bits: 2048
+
+    # ── AAA ───────────────────────────────────────────────────────
+
+    aaa_new_model:
+      enabled: false
+      severity: high
+      tags: [authentication, cis, pci]
+
+    aaa_authentication_login:
+      enabled: false
+      severity: high
+      tags: [authentication, cis, pci]
+      expected: "aaa authentication login default group AAA_NOC local"
+
+    aaa_authentication_enable:
+      enabled: false
+      severity: high
+      tags: [authentication, cis, pci]
+      expected: "aaa authentication enable default group AAA_NOC enable"
+
+    aaa_authorization_console:
+      enabled: false
+      severity: medium
+      tags: [authentication, access-control]
+
+    aaa_authorization_exec:
+      enabled: false
+      severity: medium
+      tags: [authentication, access-control]
+      expected: "aaa authorization exec default group AAA_NOC local"
+
+    aaa_authorization_commands:
+      enabled: false
+      severity: medium
+      tags: [authentication, access-control]
+      levels: [1, 15]
+      expected_prefix: "aaa authorization commands 15 default group AAA_NOC local"
+
+    aaa_accounting_exec:
+      enabled: false
+      severity: medium
+      tags: [logging, authentication]
+      expected: "aaa accounting exec default start-stop group AAA_NOC"
+
+    aaa_accounting_commands:
+      enabled: false
+      severity: medium
+      tags: [logging, authentication]
+      levels: [1, 15]
+      expected_prefix: "aaa accounting commands 15 default start-stop group AAA_NOC"
+
+    aaa_accounting_connection:
+      enabled: false
+      severity: medium
+      tags: [logging, authentication]
+      expected: "aaa accounting connection default start-stop group AAA_NOC"
+
+    aaa_session_id:
+      enabled: false
+      severity: low
+      tags: [logging, authentication]
+      expected: "aaa session-id common"
+
+    tacacs_server:
+      enabled: false
+      severity: high
+      tags: [authentication, cis, pci]
+      min_servers: 1
+
+    tacacs_source_interface:
+      enabled: false
+      severity: low
+      tags: [hardening]
+      interface: ""
+
+    radius_server:
+      enabled: false
+      severity: medium
+      tags: [authentication]
+      min_servers: 0
+
+    # ── NTP ───────────────────────────────────────────────────────
+
+    ntp_servers:
+      enabled: false
+      severity: medium
+      tags: [ntp, logging]
+      expected_servers: ["192.0.2.70", "192.0.2.71"]
+      min_servers: 1
+
+    ntp_authenticate:
+      enabled: false
+      severity: medium
+      tags: [ntp, authentication]
+
+    ntp_source_interface:
+      enabled: false
+      severity: low
+      tags: [ntp]
+      interface: ""
+
+    # ── LOGGING ───────────────────────────────────────────────────
+
+    logging_buffered:
+      enabled: false
+      severity: medium
+      tags: [logging, cis]
+      min_size: 64000
+      level: "informational"
+
+    logging_console:
+      enabled: false
+      severity: low
+      tags: [logging]
+      level: "critical"
+
+    logging_monitor:
+      enabled: false
+      severity: low
+      tags: [logging]
+      level: "warnings"
+
+    logging_trap:
+      enabled: false
+      severity: medium
+      tags: [logging, cis]
+      level: "informational"
+
+    logging_host:
+      enabled: false
+      severity: high
+      tags: [logging, cis, pci, nist]
+      expected_hosts: ["192.0.2.70", "192.0.2.71"]
+      min_hosts: 1
+
+    logging_source_interface:
+      enabled: false
+      severity: low
+      tags: [logging]
+      interface: ""
+
+    logging_origin_id:
+      enabled: false
+      severity: low
+      tags: [logging]
+      type: "hostname"
+
+    no_logging_console:
+      enabled: false
+      severity: low
+      tags: [logging]
+
+    # ── SNMP ──────────────────────────────────────────────────────
+
+    snmp_v3_only:
+      enabled: false
+      severity: high
+      tags: [snmp, encryption, cis, pci]
+
+    snmp_no_community_public:
+      enabled: false
+      severity: critical
+      tags: [snmp, hardening, cis, pci, nist]
+
+    snmp_no_community_private:
+      enabled: false
+      severity: critical
+      tags: [snmp, hardening, cis, pci, nist]
+
+    snmp_community_acl:
+      enabled: false
+      severity: high
+      tags: [snmp, access-control, cis]
+
+    snmp_server_host:
+      enabled: false
+      severity: medium
+      tags: [snmp, logging]
+      expected_hosts: []
+
+    snmp_contact:
+      enabled: false
+      severity: info
+      tags: [snmp]
+      expected: ""
+
+    snmp_location:
+      enabled: false
+      severity: info
+      tags: [snmp]
+      expected: ""
+
+    snmp_ifindex_persist:
+      enabled: false
+      severity: low
+      tags: [snmp]
+
+    # ── BANNERS ───────────────────────────────────────────────────
+
+    banner_login:
+      enabled: false
+      severity: medium
+      tags: [hardening, cis, pci]
+      required_text: ""
+
+    banner_motd:
+      enabled: false
+      severity: medium
+      tags: [hardening]
+      required_text: ""
+
+    banner_exec:
+      enabled: false
+      severity: low
+      tags: [hardening]
+      required_text: ""
+
+    # ── LOCAL USERS ───────────────────────────────────────────────
+
+    enable_secret:
+      enabled: false
+      severity: critical
+      tags: [authentication, hardening, cis, pci]
+
+    no_enable_password:
+      enabled: false
+      severity: high
+      tags: [authentication, hardening, cis]
+
+    username_secret:
+      enabled: true
+      severity: high
+      tags: [authentication, encryption, cis, pci]
+
+    # ── VTY LINES ─────────────────────────────────────────────────
+
+    vty_transport_input_ssh:
+      enabled: true
+      severity: critical
+      tags: [encryption, authentication, cis, pci, nist]
+
+    vty_exec_timeout:
+      enabled: false
+      severity: high
+      tags: [access-control, hardening, cis]
+      minutes: 5
+      seconds: 0
+
+    vty_access_class:
+      enabled: false
+      severity: high
+      tags: [access-control, hardening, cis]
+      acl_name: ""
+
+    vty_logging_synchronous:
+      enabled: true
+      severity: low
+      tags: [logging]
+
+    vty_login_authentication:
+      enabled: false
+      severity: high
+      tags: [authentication, cis, pci]
+      method_list: "default"
+
+    # ── CONSOLE LINE ──────────────────────────────────────────────
+
+    console_exec_timeout:
+      enabled: false
+      severity: medium
+      tags: [access-control, hardening, cis]
+      minutes: 5
+      seconds: 0
+
+    console_logging_synchronous:
+      enabled: false
+      severity: low
+      tags: [logging]
+
+    console_login_authentication:
+      enabled: false
+      severity: medium
+      tags: [authentication, cis]
+      method_list: "default"
+
+    # ── LOGIN SECURITY ────────────────────────────────────────────
+
+    login_block_for:
+      enabled: false
+      severity: high
+      tags: [access-control, hardening, cis, pci]
+      seconds: 120
+      attempts: 3
+      within: 60
+
+    login_on_failure_log:
+      enabled: false
+      severity: medium
+      tags: [logging, access-control]
+
+    login_on_success_log:
+      enabled: false
+      severity: low
+      tags: [logging]
+
+    login_delay:
+      enabled: false
+      severity: medium
+      tags: [access-control, hardening]
+      seconds: 2
+
+    # ── CDP / LLDP ────────────────────────────────────────────────
+    # NOTE: CDP is needed for uplink/downlink detection, so be careful
+    # about disabling it globally when you rely on CDP for the audit.
+
+    cdp_global:
+      enabled: false
+      severity: medium
+      tags: [hardening]
+      state: "enabled"             # "enabled" or "disabled"
+
+    lldp_global:
+      enabled: false
+      severity: low
+      tags: [hardening]
+      state: "enabled"

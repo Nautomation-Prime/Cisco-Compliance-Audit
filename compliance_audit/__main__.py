@@ -78,6 +78,27 @@ def _build_parser() -> argparse.ArgumentParser:
         "(e.g. management_plane control_plane data_plane role_specific).",
     )
     p.add_argument(
+        "--tags",
+        nargs="+",
+        metavar="TAG",
+        default=None,
+        help=(
+            "Only surface findings whose tags include at least one of these values "
+            "(e.g. --tags pci cis).  Non-matching findings are reported as SKIP."
+        ),
+    )
+    p.add_argument(
+        "--min-severity",
+        choices=["critical", "high", "medium", "low", "info"],
+        default=None,
+        metavar="LEVEL",
+        help=(
+            "Hide findings below this severity level "
+            "(critical > high > medium > low > info).  "
+            "Lower-severity findings are reported as SKIP."
+        ),
+    )
+    p.add_argument(
         "-v",
         "--verbose",
         action="count",
@@ -459,6 +480,8 @@ def main() -> None:
         output_dir=args.output_dir,
         csv_report=args.csv_report,
         inventory_path=args.inventory,
+        tags_filter=args.tags,
+        min_severity=args.min_severity,
     )
 
     # Exit code: threshold-based or any-fail

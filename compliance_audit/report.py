@@ -36,6 +36,14 @@ STATUS_STYLE = {
     Status.ERROR: ("ERROR", "bold magenta"),
 }
 
+SEVERITY_STYLE: dict[str, tuple[str, str]] = {
+    "critical": ("CRIT", "bold white on dark_red"),
+    "high":     ("HIGH", "bold red"),
+    "medium":   ("MED",  "bold yellow"),
+    "low":      ("LOW",  "dim cyan"),
+    "info":     ("INFO", "dim"),
+}
+
 # ─── HTML colour constants ─────────────────────────────────────────
 _STATUS_CSS = {
     "PASS": ("#22c55e", "#052e16"),
@@ -43,6 +51,14 @@ _STATUS_CSS = {
     "WARN": ("#eab308", "#422006"),
     "ERROR": ("#c026d3", "#4a044e"),
     "SKIP": ("#64748b", "#1e293b"),
+}
+
+_SEVERITY_CSS: dict[str, tuple[str, str]] = {
+    "critical": ("#ef4444", "#450a0a"),
+    "high":     ("#f97316", "#431407"),
+    "medium":   ("#eab308", "#422006"),
+    "low":      ("#64748b", "#1e293b"),
+    "info":     ("#94a3b8", "#0f172a"),
 }
 
 _PARSER_ENGINE_CSS = {
@@ -102,16 +118,22 @@ def print_report(result: AuditResult, console: Optional[Console] = None) -> None
         )
         table.add_column("Check", style="cyan", min_width=28)
         table.add_column("Status", justify="center", min_width=6)
+        table.add_column("Sev", justify="center", min_width=4)
         table.add_column("Detail", min_width=50)
         table.add_column("Remediation", style="dim", min_width=30)
 
         for f in findings:
             label, style = STATUS_STYLE.get(f.status, ("?", ""))
             status_text = Text(label, style=style)
+            sev_label, sev_style = SEVERITY_STYLE.get(
+                getattr(f, "severity", "medium"), ("MED", "bold yellow")
+            )
+            sev_text = Text(sev_label, style=sev_style)
             intf_prefix = f"[{f.interface}] " if f.interface else ""
             table.add_row(
                 f.check_name,
                 status_text,
+                sev_text,
                 f"{intf_prefix}{f.detail}",
                 f.remediation or "",
             )
@@ -159,6 +181,8 @@ def save_json(result: AuditResult, output_dir: str) -> Path | None:
             {
                 "check": f.check_name,
                 "status": f.status.value,
+                "severity": getattr(f, "severity", "medium"),
+                "tags": getattr(f, "tags", []),
                 "detail": f.detail,
                 "category": f.category,
                 "interface": f.interface,
@@ -326,6 +350,23 @@ def _build_roi_html(roi: dict, title: str = "ROI Estimate") -> str:
     )
 
 
+def _severity_badge(severity: str) -> str:
+    fg, bg = _SEVERITY_CSS.get(severity, ("#94a3b8", "#1e293b"))
+    return (
+        f'<span class="badge badge-sev-{_esc(severity)}" '
+        f'style="color:{fg};background:{bg};">{_esc(severity.upper())}</span>'
+    )
+
+
+def _tag_pills(tags: list[str]) -> str:
+    if not tags:
+        return ""
+    pills = "".join(
+        f'<span class="tag-pill">{_esc(t)}</span>' for t in tags
+    )
+    return f'<div class="tag-pills">{pills}</div>'
+
+
 def _build_findings_table(findings: list[Finding], table_id: str = "") -> str:
     """Return an HTML <table> for a list of findings."""
     rows: list[str] = []
@@ -333,10 +374,15 @@ def _build_findings_table(findings: list[Finding], table_id: str = "") -> str:
         if f.status == Status.SKIP:
             continue
         intf = f"[{_esc(f.interface)}] " if f.interface else ""
+        severity = getattr(f, "severity", "medium")
+        tags = getattr(f, "tags", [])
         rows.append(
-            f'<tr class="finding-row" data-status="{f.status.value}">'
-            f'<td class="check-name">{_esc(f.check_name)}</td>'
+            f'<tr class="finding-row" data-status="{f.status.value}" '
+            f'data-severity="{_esc(severity)}" '
+            f'data-tags="{_esc("|".join(tags))}">'
+            f'<td class="check-name">{_esc(f.check_name)}{_tag_pills(tags)}</td>'
             f'<td class="status-cell">{_status_badge(f.status.value)}</td>'
+            f'<td class="sev-cell">{_severity_badge(severity)}</td>'
             f"<td>{intf}{_esc(f.detail)}</td>"
             f'<td class="remediation">{_esc(f.remediation or "")}</td>'
             f"</tr>"
@@ -345,7 +391,7 @@ def _build_findings_table(findings: list[Finding], table_id: str = "") -> str:
     return (
         f'<table class="findings-table"{id_attr}>'
         "<thead><tr>"
-        "<th>Check</th><th>Status</th><th>Detail</th><th>Remediation</th>"
+        "<th>Check</th><th>Status</th><th>Severity</th><th>Detail</th><th>Remediation</th>"
         "</tr></thead>"
         f"<tbody>{''.join(rows)}</tbody></table>"
     )
@@ -463,9 +509,15 @@ border-bottom:1px solid var(--border);font-size:.78rem;text-transform:uppercase;
 .findings-table .check-name{color:var(--accent);white-space:nowrap;font-weight:500;}
 .findings-table .remediation{color:var(--text-dim);font-size:.8rem;}
 .findings-table .status-cell{white-space:nowrap;}
+.findings-table .sev-cell{white-space:nowrap;}
 
 /* ── Badges ─────────────────────────────────────────────── */
 .badge{padding:2px 8px;border-radius:3px;font-size:.75rem;font-weight:700;letter-spacing:.04em;}
+
+/* ── Tag pills ───────────────────────────────────────────── */
+.tag-pills{display:flex;flex-wrap:wrap;gap:3px;margin-top:3px;}
+.tag-pill{display:inline-block;padding:1px 5px;border-radius:3px;font-size:.65rem;
+  font-weight:600;background:var(--surface2);color:var(--text-dim);letter-spacing:.03em;}
 
 /* ── Back to top ────────────────────────────────────────── */
 .back-top{position:fixed;bottom:24px;right:24px;background:var(--accent);color:var(--bg);
@@ -871,6 +923,8 @@ def save_csv(results: list[AuditResult], output_dir: str) -> Path | None:
                     "category",
                     "check",
                     "status",
+                    "severity",
+                    "tags",
                     "interface",
                     "detail",
                     "remediation",
@@ -888,6 +942,8 @@ def save_csv(results: list[AuditResult], output_dir: str) -> Path | None:
                             f.category,
                             f.check_name,
                             f.status.value,
+                            getattr(f, "severity", "medium"),
+                            "|".join(getattr(f, "tags", [])),
                             f.interface,
                             f.detail,
                             f.remediation,

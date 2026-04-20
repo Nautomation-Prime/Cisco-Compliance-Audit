@@ -34,7 +34,7 @@ from rich.progress import (
 from rich.table import Table
 
 from .collector import DataCollector
-from .compliance_engine import AuditResult, ComplianceEngine, Finding, Status
+from .compliance_engine import AuditResult, ComplianceEngine, Finding, Status, SEVERITY_ORDER
 from .credentials import CredentialHandler
 from .hostname_parser import parse_hostname
 from .jump_manager import JumpManager
@@ -392,7 +392,16 @@ def _summarize_roi(results: list[AuditResult], roi_settings: dict) -> dict:
 
 
 def load_compliance_config(path: str) -> dict:
-    """Load and validate the compliance YAML configuration file."""
+    """Load and validate the compliance YAML configuration file or directory.
+
+    When *path* points to a **directory**, every ``*.yaml`` file inside it is
+    loaded in sorted order and deep-merged into a single config dict.  This
+    allows users to split the monolithic ``compliance_config.yaml`` into one
+    file per section (e.g. ``management_plane.yaml``, ``data_plane.yaml``).
+
+    When *path* points to a **single file**, the existing behaviour is
+    preserved for full backward compatibility.
+    """
     p = Path(path)
     if not p.exists():
         # Try relative to this module's directory
@@ -400,12 +409,21 @@ def load_compliance_config(path: str) -> dict:
     if not p.exists():
         console.print(f"[bold red]Config not found:[/] {path}")
         sys.exit(1)
-    try:
-        with open(p, "r", encoding="utf-8") as fh:
-            cfg = yaml.safe_load(fh) or {}
-    except yaml.YAMLError as exc:
-        console.print(f"[bold red]Malformed YAML in config:[/] {exc}")
-        sys.exit(1)
+
+    # Directory mode — deep-merge all *.yaml files found inside
+    if p.is_dir():
+        try:
+            cfg = _load_config_dir(p)
+        except (OSError, yaml.YAMLError) as exc:
+            console.print(f"[bold red]Error loading config directory {p}:[/] {exc}")
+            sys.exit(1)
+    else:
+        try:
+            with open(p, "r", encoding="utf-8") as fh:
+                cfg = yaml.safe_load(fh) or {}
+        except yaml.YAMLError as exc:
+            console.print(f"[bold red]Malformed YAML in config:[/] {exc}")
+            sys.exit(1)
 
     # Validate required top-level keys exist and have correct types
     expected_keys = {
@@ -429,14 +447,36 @@ def load_compliance_config(path: str) -> dict:
     return cfg
 
 
-def _resolve_config_path(path: str) -> Path:
-    """Return the resolved path to the config file (used for sibling lookups)."""
+def _deep_merge(base: dict, overlay: dict) -> dict:
+    """Recursively merge *overlay* into *base*.  Lists are replaced, not merged."""
+    result = dict(base)
+    for key, val in overlay.items():
+        if key in result and isinstance(result[key], dict) and isinstance(val, dict):
+            result[key] = _deep_merge(result[key], val)
+        else:
+            result[key] = val
+    return result
+
+
+def _load_config_dir(dirpath: Path) -> dict:
+    """Load every ``*.yaml`` file in *dirpath* (sorted) and deep-merge them."""
+    merged: dict = {}
+    yaml_files = sorted(dirpath.glob("*.yaml"))
+    if not yaml_files:
+        log.warning("Config directory %s contains no .yaml files", dirpath)
+    for yaml_file in yaml_files:
+        with open(yaml_file, "r", encoding="utf-8") as fh:
+            data = yaml.safe_load(fh) or {}
+        merged = _deep_merge(merged, data)
+        log.debug("Loaded config fragment: %s", yaml_file.name)
+    return merged
+    """Return the resolved path to the config file or directory (used for sibling lookups)."""
     p = Path(path)
     if p.exists():
-        return p.parent
+        return p.parent if p.is_file() else p
     alt = Path(__file__).parent / path
     if alt.exists():
-        return alt.parent
+        return alt.parent if alt.is_file() else alt
     return Path(__file__).parent
 
 
@@ -797,6 +837,43 @@ def _audit_single_device(job: _DeviceJob) -> Optional[AuditResult]:
                 pass
 
 
+def _apply_result_filters(
+    results: list[AuditResult],
+    tags_filter: Optional[list[str]],
+    min_severity: Optional[str],
+) -> None:
+    """Convert findings that don't match tag/severity filters to SKIP in-place.
+
+    Filtering happens *after* the audit so all checks still run; the full
+    dataset is preserved in reports while the console summary reflects the
+    active filters.
+    """
+    min_level = SEVERITY_ORDER.get(min_severity or "", 0)
+    for result in results:
+        for f in result.findings:
+            if f.status == Status.SKIP:
+                continue
+            # Severity threshold
+            if min_level > 0:
+                finding_level = SEVERITY_ORDER.get(getattr(f, "severity", "medium"), 3)
+                if finding_level < min_level:
+                    f.status = Status.SKIP
+                    f.detail = (
+                        f"[filtered: severity '{getattr(f, 'severity', 'medium')}' "
+                        f"below threshold '{min_severity}']"
+                    )
+                    continue
+            # Tag filter
+            if tags_filter:
+                finding_tags = getattr(f, "tags", [])
+                if not any(t in finding_tags for t in tags_filter):
+                    f.status = Status.SKIP
+                    f.detail = (
+                        f"[filtered: tags {finding_tags!r} do not match "
+                        f"requested {tags_filter!r}]"
+                    )
+
+
 def run_audit(
     config_path: str = "compliance_config.yaml",
     device_overrides: Optional[list[str]] = None,
@@ -805,6 +882,8 @@ def run_audit(
     output_dir: Optional[str] = None,
     csv_report: Optional[bool] = None,
     inventory_path: Optional[str] = None,
+    tags_filter: Optional[list[str]] = None,
+    min_severity: Optional[str] = None,
 ) -> list[AuditResult]:
     """
     Run the full compliance audit pipeline.
@@ -812,7 +891,7 @@ def run_audit(
     Parameters
     ----------
     config_path : str
-        Path to the compliance YAML config.
+        Path to the compliance YAML config file or directory of split configs.
     device_overrides : list[str] | None
         If given, audit only these IPs/hostnames instead of the inventory.
     skip_jump : bool
@@ -823,6 +902,12 @@ def run_audit(
         Override the report output directory from the YAML config.
     csv_report : bool | None
         If True, override YAML to force CSV generation.
+    tags_filter : list[str] | None
+        If given, only surface findings whose ``tags`` list contains at least
+        one of these values.  Unmatched findings become SKIP.
+    min_severity : str | None
+        If given (critical/high/medium/low/info), findings below this severity
+        level become SKIP.
 
     Returns
     -------
@@ -1090,6 +1175,19 @@ def run_audit(
             if roi_warnings:
                 for w in roi_warnings:
                     console.print(f"  [bold yellow]ROI Warning:[/] {w}")
+
+    # ── Apply tag / severity filters ──────────────────────
+    if results and (tags_filter or min_severity):
+        _apply_result_filters(results, tags_filter, min_severity)
+        active = []
+        if min_severity:
+            active.append(f"min-severity={min_severity}")
+        if tags_filter:
+            active.append(f"tags={tags_filter}")
+        console.print(
+            f"[cyan]Filters applied:[/] {', '.join(active)}  "
+            f"(non-matching findings shown as SKIP)"
+        )
 
     # ── CSV export ─────────────────────────────────────────
     if results and audit_settings.get("csv_report", True):

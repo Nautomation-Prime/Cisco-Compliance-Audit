@@ -1,0 +1,65 @@
+---
+# ╔═══════════════════════════════════════════════════════════════════╗
+# ║  AUDIT SETTINGS — how the audit run behaves                       ║
+# ╚═══════════════════════════════════════════════════════════════════╝
+# This file is one of several that make up the split compliance config
+# directory.  All files are deep-merged at load time so you can edit
+# each section independently without touching the others.
+
+# ═══════════════════════════════════════════════════════════════════
+# §1  AUDIT  SETTINGS
+# ═══════════════════════════════════════════════════════════════════
+
+audit_settings:
+  max_workers: 5                  # Max concurrent device audits (1 = sequential)
+  collect_timeout: 30             # Per-command collection timeout (seconds)
+  output_dir: "./reports"         # Where to write reports
+  html_report: true               # Generate an HTML report alongside console output
+  json_report: false              # Also dump raw JSON findings
+  csv_report: false               # Generate a CSV summary of all findings
+  remediation_script: true        # Legacy toggle (kept for backward compatibility)
+  parking_vlan: 99                # VLAN for unused ports
+  native_vlan: 99                 # Expected native VLAN on trunks (for checking)
+
+  roi:
+    enabled: true
+    manual_minutes_per_device: 20.0
+    manual_minutes_per_check: 0.25
+    automation_overhead_minutes_per_device: 2.0
+    validation_minutes_per_device: 0.0
+    min_runtime_seconds: 0.0
+    hourly_rate: 0.0
+    currency: "GBP"
+    profiles:
+      audit:
+        manual_minutes_per_device: 20.0
+        manual_minutes_per_check: 0.25
+        automation_overhead_minutes_per_device: 2.0
+        validation_minutes_per_device: 0.0
+      post_remediation:
+        manual_minutes_per_device: 8.0
+        manual_minutes_per_check: 0.10
+        automation_overhead_minutes_per_device: 0.25
+        validation_minutes_per_device: 0.10
+
+  remediation:
+    enabled: true
+    generate_script: true
+    generate_review_pack: true
+
+    approval:
+      default_expires_hours: 24
+      require_ticket_id: false
+
+    execution:
+      enabled: true
+      linux_only: true
+      block_high_risk_by_default: true
+      enforce_checksum: true
+      preflight_drift_check: true
+      require_hostname_match: true
+      save_config: true
+      command_verify: false
+      generate_post_report: true
+      generate_consolidated_post_report: true
+      post_report_formats: ["json", "html"]
