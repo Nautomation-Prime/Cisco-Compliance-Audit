@@ -392,38 +392,32 @@ def _summarize_roi(results: list[AuditResult], roi_settings: dict) -> dict:
 
 
 def load_compliance_config(path: str) -> dict:
-    """Load and validate the compliance YAML configuration file or directory.
+    """Load and validate the compliance config directory.
 
-    When *path* points to a **directory**, every ``*.yaml`` file inside it is
-    loaded in sorted order and deep-merged into a single config dict.  This
-    allows users to split the monolithic ``compliance_config.yaml`` into one
-    file per section (e.g. ``management_plane.yaml``, ``data_plane.yaml``).
-
-    When *path* points to a **single file**, the existing behaviour is
-    preserved for full backward compatibility.
+    *path* must point to a **directory** containing ``*.yaml`` files.  Every
+    file is loaded in sorted order and deep-merged into a single config dict
+    (one file per section, e.g. ``management_plane.yaml``, ``data_plane.yaml``).
     """
     p = Path(path)
     if not p.exists():
         # Try relative to this module's directory
         p = Path(__file__).parent / path
     if not p.exists():
-        console.print(f"[bold red]Config not found:[/] {path}")
+        console.print(f"[bold red]Config directory not found:[/] {path}")
         sys.exit(1)
 
-    # Directory mode — deep-merge all *.yaml files found inside
-    if p.is_dir():
-        try:
-            cfg = _load_config_dir(p)
-        except (OSError, yaml.YAMLError) as exc:
-            console.print(f"[bold red]Error loading config directory {p}:[/] {exc}")
-            sys.exit(1)
-    else:
-        try:
-            with open(p, "r", encoding="utf-8") as fh:
-                cfg = yaml.safe_load(fh) or {}
-        except yaml.YAMLError as exc:
-            console.print(f"[bold red]Malformed YAML in config:[/] {exc}")
-            sys.exit(1)
+    if not p.is_dir():
+        console.print(
+            f"[bold red]Config path must be a directory, not a single file:[/] {path}\n"
+            "Please use the [cyan]compliance_config/[/] directory format."
+        )
+        sys.exit(1)
+
+    try:
+        cfg = _load_config_dir(p)
+    except (OSError, yaml.YAMLError) as exc:
+        console.print(f"[bold red]Error loading config directory {p}:[/] {exc}")
+        sys.exit(1)
 
     # Validate required top-level keys exist and have correct types
     expected_keys = {
@@ -470,13 +464,16 @@ def _load_config_dir(dirpath: Path) -> dict:
         merged = _deep_merge(merged, data)
         log.debug("Loaded config fragment: %s", yaml_file.name)
     return merged
-    """Return the resolved path to the config file or directory (used for sibling lookups)."""
+
+
+def _resolve_config_path(path: str) -> Path:
+    """Return the resolved config directory path (used for sibling lookups)."""
     p = Path(path)
-    if p.exists():
-        return p.parent if p.is_file() else p
+    if p.is_dir():
+        return p
     alt = Path(__file__).parent / path
-    if alt.exists():
-        return alt.parent if alt.is_file() else alt
+    if alt.is_dir():
+        return alt
     return Path(__file__).parent
 
 
@@ -875,7 +872,7 @@ def _apply_result_filters(
 
 
 def run_audit(
-    config_path: str = "compliance_config.yaml",
+    config_path: str = "compliance_config",
     device_overrides: Optional[list[str]] = None,
     skip_jump: bool = False,
     categories: Optional[list[str]] = None,
@@ -891,7 +888,7 @@ def run_audit(
     Parameters
     ----------
     config_path : str
-        Path to the compliance YAML config file or directory of split configs.
+        Path to the compliance config directory (e.g. ``compliance_config/``).
     device_overrides : list[str] | None
         If given, audit only these IPs/hostnames instead of the inventory.
     skip_jump : bool

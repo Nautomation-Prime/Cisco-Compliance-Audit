@@ -117,7 +117,7 @@ def launch_textual(parser: argparse.ArgumentParser) -> None:
     if choice == "quick-audit":
         console.print("Running quick audit with defaults...")
         results = run_audit(
-            config_path="compliance_config.yaml",
+            config_path="compliance_config",
             device_overrides=None,
             skip_jump=False,
             categories=None,

@@ -56,8 +56,8 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "-c",
         "--config",
-        default="compliance_config.yaml",
-        help="Path to the compliance YAML config (default: compliance_config.yaml)",
+        default="compliance_config",
+        help="Path to the compliance config directory (default: compliance_config/)",
     )
     p.add_argument(
         "-d",

@@ -65,7 +65,7 @@ def _quote(value: str) -> str:
 
 def _build_audit_preview(cfg: AuditWizardConfig) -> str:
     cmd = ["python", "-m", "compliance_audit"]
-    if cfg.config_path != "compliance_config.yaml":
+    if cfg.config_path != "compliance_config":
         cmd.extend(["--config", _quote(cfg.config_path)])
     if cfg.inventory_path:
         cmd.extend(["--inventory", _quote(cfg.inventory_path)])
@@ -120,9 +120,9 @@ def _collect_devices(questionary) -> list[str]:
 def _run_audit_wizard(questionary) -> None:
     config_path = (
         questionary.text(
-            "Compliance config path:", default="compliance_config.yaml"
+            "Compliance config path:", default="compliance_config"
         ).ask()
-        or "compliance_config.yaml"
+        or "compliance_config"
     ).strip()
     inventory_path_raw = questionary.text(
         "Inventory path (blank keeps default behavior):", default=""
@@ -252,9 +252,9 @@ def _resolve_remediation_context(
 def _run_remediation_wizard(questionary) -> None:
     config_path = (
         questionary.text(
-            "Compliance config path:", default="compliance_config.yaml"
+            "Compliance config path:", default="compliance_config"
         ).ask()
-        or "compliance_config.yaml"
+        or "compliance_config"
     ).strip()
     output_dir_raw = questionary.text(
         "Output directory override (blank = config default):", default=""
