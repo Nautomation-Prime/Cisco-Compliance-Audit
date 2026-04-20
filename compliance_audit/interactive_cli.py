@@ -41,7 +41,6 @@ class AuditWizardConfig:
     skip_jump: bool
     categories: Optional[list[str]]
     output_dir: Optional[str]
-    dry_run_dir: Optional[str]
     csv_report: Optional[bool]
     verbose: int
     fail_threshold: Optional[float]
@@ -77,8 +76,6 @@ def _build_audit_preview(cfg: AuditWizardConfig) -> str:
         cmd.extend(cfg.categories)
     if cfg.output_dir:
         cmd.extend(["--output-dir", _quote(cfg.output_dir)])
-    if cfg.dry_run_dir:
-        cmd.extend(["--dry-run", _quote(cfg.dry_run_dir)])
     if cfg.csv_report is True:
         cmd.append("--csv")
     if cfg.csv_report is False:
@@ -140,11 +137,6 @@ def _run_audit_wizard(questionary) -> None:
     ).ask()
     output_dir = (output_dir_raw or "").strip() or None
 
-    dry_run_raw = questionary.text(
-        "Dry-run input directory (blank = live SSH):", default=""
-    ).ask()
-    dry_run_dir = (dry_run_raw or "").strip() or None
-
     csv_mode = questionary.select(
         "CSV report mode:",
         choices=[
@@ -180,7 +172,6 @@ def _run_audit_wizard(questionary) -> None:
         skip_jump=skip_jump,
         categories=categories,
         output_dir=output_dir,
-        dry_run_dir=dry_run_dir,
         csv_report=csv_report,
         verbose=verbose,
         fail_threshold=fail_threshold,
@@ -205,7 +196,6 @@ def _run_audit_wizard(questionary) -> None:
         skip_jump=wizard_cfg.skip_jump,
         categories=wizard_cfg.categories,
         output_dir=wizard_cfg.output_dir,
-        dry_run_dir=wizard_cfg.dry_run_dir,
         csv_report=wizard_cfg.csv_report,
         inventory_path=wizard_cfg.inventory_path,
     )
@@ -378,7 +368,6 @@ def _run_remediation_wizard(questionary) -> None:
             console.print("Cancelled — no pack ID provided.")
             return
         skip_jump = bool(questionary.confirm("Skip jump host?", default=False).ask())
-        dry_run = bool(questionary.confirm("Apply dry-run mode?", default=False).ask())
         allow_high_risk = bool(
             questionary.confirm("Allow high-risk remediation?", default=False).ask()
         )
@@ -387,7 +376,6 @@ def _run_remediation_wizard(questionary) -> None:
             output_dir=output_dir,
             pack_id=pack_id,
             skip_jump=skip_jump,
-            dry_run=dry_run,
             allow_high_risk=(
                 allow_high_risk or not rem.get("execution_block_high_risk", True)
             ),
@@ -456,7 +444,6 @@ def _run_remediation_wizard(questionary) -> None:
                 "Remediation execution is disabled in config (audit_settings.remediation.execution.enabled=false)."
             )
         skip_jump = bool(questionary.confirm("Skip jump host?", default=False).ask())
-        dry_run = bool(questionary.confirm("Apply dry-run mode?", default=False).ask())
         allow_high_risk = bool(
             questionary.confirm("Allow high-risk remediation?", default=False).ask()
         )
@@ -464,7 +451,6 @@ def _run_remediation_wizard(questionary) -> None:
             config_path=config_path,
             output_dir=output_dir,
             skip_jump=skip_jump,
-            dry_run=dry_run,
             allow_high_risk=(
                 allow_high_risk or not rem.get("execution_block_high_risk", True)
             ),

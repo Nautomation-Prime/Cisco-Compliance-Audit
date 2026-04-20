@@ -122,7 +122,6 @@ def launch_textual(parser: argparse.ArgumentParser) -> None:
             skip_jump=False,
             categories=None,
             output_dir=None,
-            dry_run_dir=None,
             csv_report=None,
             inventory_path=None,
         )

@@ -805,7 +805,6 @@ def apply_approved_pack(
     output_dir: str,
     pack_id: str,
     skip_jump: bool = False,
-    dry_run: bool = False,
     allow_high_risk: bool = False,
     remediation_settings: Optional[dict] = None,
     post_report_callback: Optional[Callable[[AuditResult], None]] = None,
@@ -972,28 +971,6 @@ def apply_approved_pack(
             if not plan_commands:
                 raise RuntimeError("No commands available in approved pack.")
 
-            if dry_run:
-                summary = {
-                    "pack_id": pack_id,
-                    "hostname": hostname,
-                    "ip": ip,
-                    "planned_command_count": len(plan_commands),
-                    "preflight_still_failing": len(still_failing),
-                    "status": "dry-run",
-                }
-                pack["execution"]["status"] = "dry-run"
-                pack["execution"]["summary"] = (
-                    "Dry-run preflight passed; no commands applied."
-                )
-                pack["execution"]["preflight_still_failing"] = len(still_failing)
-                _write_json(pack_path, pack)
-                store.upsert_from_pack(pack, pack_path)
-                progress.console.print(
-                    "[green]✓ Dry-run complete - "
-                    f"{len(plan_commands)} commands ready to apply"
-                )
-                return summary
-
             task = progress.add_task(
                 f"[cyan]Applying {len(plan_commands)} commands...", total=None
             )
@@ -1150,7 +1127,6 @@ def apply_all_approved_packs(
     config_path: str,
     output_dir: str,
     skip_jump: bool = False,
-    dry_run: bool = False,
     allow_high_risk: bool = False,
     remediation_settings: Optional[dict] = None,
 ) -> list[dict]:
@@ -1185,7 +1161,6 @@ def apply_all_approved_packs(
                 output_dir=output_dir,
                 pack_id=entry.pack_id,
                 skip_jump=skip_jump,
-                dry_run=dry_run,
                 allow_high_risk=allow_high_risk,
                 remediation_settings=remediation_settings,
                 post_report_callback=post_report_results.append,

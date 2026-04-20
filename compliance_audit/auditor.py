@@ -33,7 +33,7 @@ from rich.progress import (
 )
 from rich.table import Table
 
-from .collector import DataCollector, OfflineCollector
+from .collector import DataCollector
 from .compliance_engine import AuditResult, ComplianceEngine, Finding, Status
 from .credentials import CredentialHandler
 from .hostname_parser import parse_hostname
@@ -597,7 +597,6 @@ def _audit_single_device(job: _DeviceJob) -> Optional[AuditResult]:
     Audit one device end-to-end (connect → collect → classify → check).
 
     Designed to run inside a thread. Returns None on connection failure.
-    In dry-run mode, loads data from files instead of SSH.
     """
     hostname, ip = job.hostname, job.ip
     log.info("Starting audit of %s (%s)", hostname, ip)
@@ -608,95 +607,84 @@ def _audit_single_device(job: _DeviceJob) -> Optional[AuditResult]:
         hostname, role_config=job.role_config, explicit_role=job.explicit_role
     )
 
-    dry_run_dir = job.audit_settings.get("_dry_run_dir")
+    # ── Live SSH connection ────────────────────────────
+    connector_kwargs = {
+        "ip": ip,
+        "username": job.username,
+        "password": job.password,
+        "device_type": job.device_type,
+        "jump": job.jump,
+        "retries": job.audit_settings.get(
+            "retries",
+            job.audit_settings.get("_connection", {}).get("retries", 3),
+        ),
+    }
+    if job.enable_secret:
+        connector_kwargs["secret"] = job.enable_secret
+    connector = DeviceConnector(**connector_kwargs)
+    try:
+        conn = connector.connect()
+    except (
+        NetmikoBaseException,
+        OSError,
+        RuntimeError,
+        SSHException,
+        TimeoutError,
+        TypeError,
+        ValueError,
+    ) as exc:
+        # Detect DNS resolution failures and give a clear message
+        if isinstance(exc.__cause__, socket.gaierror) or (
+            isinstance(exc, OSError) and "getaddrinfo" in str(exc).lower()
+        ):
+            log.error(
+                "DNS resolution failed for %s (%s) — check that the "
+                "hostname resolves or provide an explicit IP.",
+                hostname,
+                ip,
+            )
+        else:
+            log.error("Connection to %s (%s) failed: %s", hostname, ip, exc)
+        return None
 
-    if dry_run_dir:
-        # ── Dry-run / offline mode ─────────────────────────
-        offline = OfflineCollector(dry_run_dir)
-        data = offline.collect(hostname, ip=ip)
-        if data is None:
-            log.error("Dry-run: no data found for %s", hostname)
-            return None
-        conn = None
-    else:
-        # ── Live SSH connection ────────────────────────────
-        connector_kwargs = {
-            "ip": ip,
-            "username": job.username,
-            "password": job.password,
-            "device_type": job.device_type,
-            "jump": job.jump,
-            "retries": job.audit_settings.get(
-                "retries",
-                job.audit_settings.get("_connection", {}).get("retries", 3),
-            ),
-        }
-        if job.enable_secret:
-            connector_kwargs["secret"] = job.enable_secret
-        connector = DeviceConnector(**connector_kwargs)
+    try:
+        collector = DataCollector(timeout=job.timeout)
+        data = collector.collect(conn, ip=ip)
+        # Only overwrite the discovered hostname when the user
+        # explicitly provided one (not just an IP echo).
+        if job.hostname and job.hostname != job.ip:
+            data.hostname = job.hostname
+        else:
+            # Hostname was discovered from the device prompt.
+            # Update local variable and re-parse for role detection.
+            hostname = data.hostname
+            host_info = parse_hostname(
+                hostname,
+                role_config=job.role_config,
+                explicit_role=job.explicit_role,
+            )
+    except (
+        AttributeError,
+        NetmikoBaseException,
+        OSError,
+        RuntimeError,
+        SSHException,
+        TimeoutError,
+        TypeError,
+        ValueError,
+    ) as exc:
+        log.error("Data collection from %s (%s) failed: %s", hostname, ip, exc)
         try:
-            conn = connector.connect()
-        except (
-            NetmikoBaseException,
-            OSError,
-            RuntimeError,
-            SSHException,
-            TimeoutError,
-            TypeError,
-            ValueError,
-        ) as exc:
-            # Detect DNS resolution failures and give a clear message
-            if isinstance(exc.__cause__, socket.gaierror) or (
-                isinstance(exc, OSError) and "getaddrinfo" in str(exc).lower()
-            ):
-                log.error(
-                    "DNS resolution failed for %s (%s) — check that the "
-                    "hostname resolves or provide an explicit IP.",
-                    hostname,
-                    ip,
-                )
-            else:
-                log.error("Connection to %s (%s) failed: %s", hostname, ip, exc)
-            return None
-
-        try:
-            collector = DataCollector(timeout=job.timeout)
-            data = collector.collect(conn, ip=ip)
-            # Only overwrite the discovered hostname when the user
-            # explicitly provided one (not just an IP echo).
-            if job.hostname and job.hostname != job.ip:
-                data.hostname = job.hostname
-            else:
-                # Hostname was discovered from the device prompt.
-                # Update local variable and re-parse for role detection.
-                hostname = data.hostname
-                host_info = parse_hostname(
-                    hostname,
-                    role_config=job.role_config,
-                    explicit_role=job.explicit_role,
-                )
+            conn.disconnect()
         except (
             AttributeError,
             NetmikoBaseException,
             OSError,
             RuntimeError,
             SSHException,
-            TimeoutError,
-            TypeError,
-            ValueError,
-        ) as exc:
-            log.error("Data collection from %s (%s) failed: %s", hostname, ip, exc)
-            try:
-                conn.disconnect()
-            except (
-                AttributeError,
-                NetmikoBaseException,
-                OSError,
-                RuntimeError,
-                SSHException,
-            ):
-                pass
-            return None
+        ):
+            pass
+        return None
 
     try:
         # Classify ports
@@ -815,7 +803,6 @@ def run_audit(
     skip_jump: bool = False,
     categories: Optional[list[str]] = None,
     output_dir: Optional[str] = None,
-    dry_run_dir: Optional[str] = None,
     csv_report: Optional[bool] = None,
     inventory_path: Optional[str] = None,
 ) -> list[AuditResult]:
@@ -834,8 +821,6 @@ def run_audit(
         If given, only run checks in these categories.
     output_dir : str | None
         Override the report output directory from the YAML config.
-    dry_run_dir : str | None
-        If set, load command outputs from this directory instead of SSH.
     csv_report : bool | None
         If True, override YAML to force CSV generation.
 
@@ -859,8 +844,6 @@ def run_audit(
         audit_settings["output_dir"] = output_dir
     if csv_report is not None:
         audit_settings["csv_report"] = csv_report
-    if dry_run_dir:
-        audit_settings["_dry_run_dir"] = dry_run_dir
 
     # Inject connection retries into audit_settings so workers can access it
     audit_settings["_connection"] = conn_cfg
@@ -918,39 +901,22 @@ def run_audit(
     username, password, enable_secret = "", "", None
     jump: Optional[JumpManager] = None
 
-    if not dry_run_dir:
-        cred_store = conn_cfg.get("credential_store", "none")
-        keyring_svc = conn_cfg.get("keyring_service", "cisco-compliance-audit")
-        cred_handler = CredentialHandler(
-            credential_store=cred_store,
-            keyring_service=keyring_svc,
-        )
-        username, password = cred_handler.get_secret_with_fallback()
-        enable_secret = cred_handler.get_enable_secret()
+    cred_store = conn_cfg.get("credential_store", "none")
+    keyring_svc = conn_cfg.get("keyring_service", "cisco-compliance-audit")
+    cred_handler = CredentialHandler(
+        credential_store=cred_store,
+        keyring_service=keyring_svc,
+    )
+    username, password = cred_handler.get_secret_with_fallback()
+    enable_secret = cred_handler.get_enable_secret()
 
-        # ── Jump host (optional) ───────────────────────────
-        jump_host = conn_cfg.get("jump_host")
-        use_jump = conn_cfg.get("use_jump_host", True)
-        if jump_host and use_jump and not skip_jump:
-            console.print(f"[cyan]Connecting to jump host {jump_host} ...[/]")
-            jump = JumpManager(jump_host, username, password)
-            jump.connect()
-    else:
-        console.print(
-            "[bold yellow]DRY-RUN MODE[/] — loading saved outputs "
-            f"from [cyan]{dry_run_dir}[/]"
-        )
-        # In dry-run mode, also auto-discover device folders if no devices given
-        if not devices:
-            dr_path = Path(dry_run_dir)
-            if dr_path.is_dir():
-                for child in sorted(dr_path.iterdir()):
-                    if child.is_dir():
-                        devices.append({"hostname": child.name, "ip": child.name})
-                if devices:
-                    console.print(
-                        f"  Discovered {len(devices)} device(s) from dry-run directory"
-                    )
+    # ── Jump host (optional) ───────────────────────────
+    jump_host = conn_cfg.get("jump_host")
+    use_jump = conn_cfg.get("use_jump_host", True)
+    if jump_host and use_jump and not skip_jump:
+        console.print(f"[cyan]Connecting to jump host {jump_host} ...[/]")
+        jump = JumpManager(jump_host, username, password)
+        jump.connect()
 
     if not devices:
         console.print(
@@ -965,7 +931,7 @@ def run_audit(
     timeout = audit_settings.get("collect_timeout", 30)
     roi_settings = _get_roi_settings(audit_settings)
 
-    mode_label = "offline" if dry_run_dir else "live"
+    mode_label = "live"
     console.print(
         f"[cyan]Auditing {len(devices)} device(s) ({mode_label}) with up to "
         f"{max_workers} concurrent worker(s) ...[/]"

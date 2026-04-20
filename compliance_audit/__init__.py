@@ -9,7 +9,7 @@ policy checks → reporting.
 __version__ = "4.0"
 
 from .auditor import run_audit
-from .collector import DataCollector, DeviceData, OfflineCollector
+from .collector import DataCollector, DeviceData
 from .compliance_engine import AuditResult, ComplianceEngine, Finding, Status
 from .config_loader import Config
 from .credentials import CredentialHandler
@@ -47,7 +47,6 @@ __all__ = [
     "parse_hostname",
     "HostnameInfo",
     "DataCollector",
-    "OfflineCollector",
     "DeviceData",
     "classify_ports",
     "PortRole",

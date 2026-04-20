@@ -221,7 +221,6 @@ def apply_remediation_to_device(
 def apply_remediation_scripts(
     script_paths: list[Path],
     device_connector_factory,
-    dry_run: bool = False,
 ) -> list[RemediationResult]:
     """
     Apply remediation scripts to multiple devices with progress indicators.
@@ -229,7 +228,6 @@ def apply_remediation_scripts(
     Args:
         script_paths: List of paths to remediation script files
         device_connector_factory: Callable that creates DeviceConnector instances
-        dry_run: If True, parse and validate scripts without applying
 
     Returns:
         List of RemediationResult objects
@@ -265,10 +263,6 @@ def apply_remediation_scripts(
         f"  • Devices: {len(parsed_scripts)}\n"
         f"  • Total commands: {total_commands}\n"
     )
-
-    if dry_run:
-        console.print("[yellow]Dry run mode - no changes will be made[/]")
-        return []
 
     # Ask for confirmation
     if not Confirm.ask(

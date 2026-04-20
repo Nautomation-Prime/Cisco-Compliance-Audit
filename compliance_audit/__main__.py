@@ -11,7 +11,7 @@ Usage examples
     python -m compliance_audit --categories management_plane control_plane
     python -m compliance_audit --remediation-list
     python -m compliance_audit --remediation-apply-all
-    python -m compliance_audit --remediation-apply-all --apply-dry-run
+    python -m compliance_audit --remediation-apply-all
     python -m compliance_audit --interactive
     python -m compliance_audit --tui
     python -m compliance_audit --list-options
@@ -103,15 +103,6 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help=(
             "Path to the device inventory YAML (default: devices.yaml next to config)."
-        ),
-    )
-    p.add_argument(
-        "--dry-run",
-        default=None,
-        metavar="DIR",
-        help=(
-            "Offline mode — read previously saved command outputs "
-            "from DIR instead of SSH."
         ),
     )
     p.add_argument(
@@ -211,14 +202,6 @@ def _build_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         help="Approval expiry in hours (default: from config, fallback 24).",
-    )
-    p.add_argument(
-        "--apply-dry-run",
-        action="store_true",
-        help=(
-            "Run preflight for remediation apply operations "
-            "without sending configuration."
-        ),
     )
     p.add_argument(
         "--allow-high-risk",
@@ -406,7 +389,6 @@ def _handle_remediation_mode(args: argparse.Namespace) -> bool:
             output_dir=out_dir,
             pack_id=args.remediation_apply,
             skip_jump=args.no_jump,
-            dry_run=args.apply_dry_run,
             allow_high_risk=(
                 args.allow_high_risk or not rem.get("execution_block_high_risk", True)
             ),
@@ -425,7 +407,6 @@ def _handle_remediation_mode(args: argparse.Namespace) -> bool:
             config_path=args.config,
             output_dir=out_dir,
             skip_jump=args.no_jump,
-            dry_run=args.apply_dry_run,
             allow_high_risk=(
                 args.allow_high_risk or not rem.get("execution_block_high_risk", True)
             ),
@@ -476,7 +457,6 @@ def main() -> None:
         skip_jump=args.no_jump,
         categories=args.categories,
         output_dir=args.output_dir,
-        dry_run_dir=args.dry_run,
         csv_report=args.csv_report,
         inventory_path=args.inventory,
     )
