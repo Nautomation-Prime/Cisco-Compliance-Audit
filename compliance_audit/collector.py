@@ -37,11 +37,13 @@ try:
         SchemaEmptyParserError,
         SchemaMissingKeyError,
     )
+    from genie.libs.parser.utils.common import ParserNotFound
 
     _genie_local = threading.local()
     GENIE_PARSE_ERRORS = (
         AttributeError,
         LookupError,
+        ParserNotFound,
         SchemaEmptyParserError,
         SchemaMissingKeyError,
         TypeError,
