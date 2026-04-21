@@ -520,11 +520,9 @@ def _normalise_device_entry(entry, *, location: str = "devices") -> dict:
 
 
 def _flatten_inventory(data: dict) -> list[dict]:
-    """Merge flat ``devices:`` list and Ansible-style ``groups:`` into one list.
+    """Merge flat ``devices:`` list and ``groups:`` into one list.
 
-    Group-level keys (currently only ``role``) are inherited by every device
-    in that group unless the device specifies its own value.
-
+    Groups are organisational only — they have no role inheritance.
     Validates every entry and deduplicates by connection target (``ip``).
     """
     flat: list[dict] = []
@@ -542,10 +540,9 @@ def _flatten_inventory(data: dict) -> list[dict]:
         if not isinstance(group_body, dict):
             errors.append(
                 f"Group '{group_name}' is not a mapping — expected "
-                "keys like 'role' and 'devices'."
+                "a 'devices' key."
             )
             continue
-        group_role = group_body.get("role")
         for idx, raw in enumerate(group_body.get("devices") or []):
             try:
                 entry = _normalise_device_entry(
@@ -554,8 +551,6 @@ def _flatten_inventory(data: dict) -> list[dict]:
             except ValueError as exc:
                 errors.append(str(exc))
                 continue
-            if group_role and "role" not in entry:
-                entry["role"] = group_role
             entry.setdefault("_group", group_name)
             flat.append(entry)
 
@@ -581,15 +576,23 @@ def _flatten_inventory(data: dict) -> list[dict]:
     return unique
 
 
-def load_device_inventory(inventory_path: str | None, config_path: str) -> list[dict]:
+def load_device_inventory(
+    inventory_path: str | None,
+    config_path: str,
+    site_filter: Optional[list[str]] = None,
+) -> list[dict]:
     """Load the device inventory from a dedicated YAML file.
 
     Resolution order for *inventory_path*:
     1. Explicit CLI value (--inventory).
     2. ``inventory_file`` key inside the main config YAML.
-    3. ``devices.yaml`` next to the config file.
+    3. ``devices/devices.yaml`` next to the config file.
 
-    Supports both a flat ``devices:`` list and Ansible-style ``groups:``.
+    If *site_filter* is given, only devices whose ``_group`` matches one of
+    the supplied site names are returned.  Devices from the flat list (no
+    group) are excluded unless explicitly named via ``--device``.
+
+    Supports both a flat ``devices:`` list and ``groups:``.
     """
     cfg_dir = _resolve_config_path(config_path)
 
@@ -607,7 +610,13 @@ def load_device_inventory(inventory_path: str | None, config_path: str) -> list[
 
     with open(p, "r", encoding="utf-8") as fh:
         data = yaml.safe_load(fh) or {}
-    return _flatten_inventory(data)
+    devices = _flatten_inventory(data)
+
+    if site_filter:
+        normalised = [s.lower() for s in site_filter]
+        devices = [d for d in devices if (d.get("_group") or "").lower() in normalised]
+
+    return devices
 
 
 @dataclass
@@ -626,7 +635,8 @@ class _DeviceJob:
     role_config: Optional[list]
     endpoint_config: Optional[dict]
     audit_settings: dict
-    explicit_role: Optional[str] = None  # NEW: explicit role from devices.yaml
+    explicit_role: Optional[str] = None  # explicit role from devices.yaml
+    group: str = ""                       # site group from inventory (_group key)
 
 
 def _audit_single_device(job: _DeviceJob) -> Optional[AuditResult]:
@@ -733,7 +743,7 @@ def _audit_single_device(job: _DeviceJob) -> Optional[AuditResult]:
 
         # Audit
         engine = ComplianceEngine(job.compliance_policy)
-        result = engine.audit(data, host_info, ports)
+        result = engine.audit(data, host_info, ports, group=job.group)
     except (
         AttributeError,
         LookupError,
@@ -786,7 +796,12 @@ def _audit_single_device(job: _DeviceJob) -> Optional[AuditResult]:
         if job.audit_settings.get("json_report", True):
             save_json(result, out_dir)
         if job.audit_settings.get("html_report", True):
-            save_html(result, out_dir)
+            save_html(
+                result,
+                out_dir,
+                report_title=job.audit_settings.get("report_title", ""),
+                report_subtitle=job.audit_settings.get("report_subtitle", ""),
+            )
         if rem.get("enabled") and rem.get("generate_script"):
             script_path = save_remediation_script(result, out_dir)
             if script_path and rem.get("generate_review_pack"):
@@ -881,6 +896,7 @@ def run_audit(
     inventory_path: Optional[str] = None,
     tags_filter: Optional[list[str]] = None,
     min_severity: Optional[str] = None,
+    site_filter: Optional[list[str]] = None,
 ) -> list[AuditResult]:
     """
     Run the full compliance audit pipeline.
@@ -905,6 +921,8 @@ def run_audit(
     min_severity : str | None
         If given (critical/high/medium/low/info), findings below this severity
         level become SKIP.
+    site_filter : list[str] | None
+        If given, only audit devices belonging to these site/group names.
 
     Returns
     -------
@@ -926,6 +944,16 @@ def run_audit(
         audit_settings["output_dir"] = output_dir
     if csv_report is not None:
         audit_settings["csv_report"] = csv_report
+
+    # Fall back to config-level defaults when not specified via CLI
+    if min_severity is None:
+        _cfg_sev = audit_settings.get("default_min_severity")
+        if _cfg_sev and isinstance(_cfg_sev, str):
+            min_severity = _cfg_sev
+    if tags_filter is None:
+        _cfg_tags = audit_settings.get("default_tags")
+        if _cfg_tags and isinstance(_cfg_tags, list):
+            tags_filter = list(_cfg_tags)
 
     # Inject connection retries into audit_settings so workers can access it
     audit_settings["_connection"] = conn_cfg
@@ -958,7 +986,7 @@ def run_audit(
             else:
                 devices.append({"hostname": entry, "ip": entry})
     else:
-        devices = load_device_inventory(inventory_path, config_path)
+        devices = load_device_inventory(inventory_path, config_path, site_filter)
 
     # ── Inventory summary ──────────────────────────────────
     if devices:
@@ -1001,10 +1029,16 @@ def run_audit(
         jump.connect()
 
     if not devices:
-        console.print(
-            "[bold yellow]No devices to audit.[/] "
-            "Add devices to devices/devices.yaml or use --device."
-        )
+        if site_filter:
+            console.print(
+                f"[bold yellow]No devices found for site(s): {', '.join(site_filter)}.[/] "
+                "Check that the group names in devices/devices.yaml match."
+            )
+        else:
+            console.print(
+                "[bold yellow]No devices to audit.[/] "
+                "Add devices to devices/devices.yaml or use --device."
+            )
         return []
 
     # ── Concurrency settings ───────────────────────────────
@@ -1042,7 +1076,8 @@ def run_audit(
                 role_config=role_config,
                 endpoint_config=endpoint_config,
                 audit_settings=audit_settings,
-                explicit_role=explicit_role,  # NEW: pass explicit role to job
+                explicit_role=explicit_role,  # explicit role from devices.yaml
+                group=dev_entry.get("_group", ""),
             )
         )
 
@@ -1193,7 +1228,12 @@ def run_audit(
 
     # ── Consolidated HTML report ───────────────────────────
     if results and audit_settings.get("html_report", True):
-        p = save_consolidated_html(results, out_dir)
+        p = save_consolidated_html(
+            results,
+            out_dir,
+            report_title=audit_settings.get("report_title", ""),
+            report_subtitle=audit_settings.get("report_subtitle", ""),
+        )
         console.print(f"  [bold cyan]HTML report:[/] {p}")
         console.print()
 

@@ -77,7 +77,7 @@ class Config:
 
     @classmethod
     def _flatten_inventory(cls, data: dict) -> list:
-        """Merge flat ``devices:`` list and Ansible-style ``groups:``."""
+        """Merge flat ``devices:`` list and ``groups:`` into one list."""
         flat: list = []
         errors: list = []
 
@@ -93,10 +93,9 @@ class Config:
             if not isinstance(group_body, dict):
                 errors.append(
                     f"Group '{group_name}' is not a mapping — expected "
-                    "keys like 'role' and 'devices'."
+                    "a 'devices' key."
                 )
                 continue
-            group_role = group_body.get("role")
             for idx, raw in enumerate(group_body.get("devices") or []):
                 try:
                     entry = cls._normalise_device_entry(
@@ -105,8 +104,6 @@ class Config:
                 except ValueError as exc:
                     errors.append(str(exc))
                     continue
-                if group_role and "role" not in entry:
-                    entry["role"] = group_role
                 entry.setdefault("_group", group_name)
                 flat.append(entry)
 

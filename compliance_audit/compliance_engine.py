@@ -180,6 +180,7 @@ def _annotate_findings(
     check_map: dict[str, dict],
     role: str,
     hostname: str,
+    group: str = "",
 ) -> None:
     """Annotate findings with ``severity``/``tags`` and apply YAML-level filters in-place.
 
@@ -191,6 +192,12 @@ def _annotate_findings(
                                are converted to SKIP
     * ``exclude_hostnames``  – list of hostname regex patterns; matching devices
                                have the check converted to SKIP
+    * ``include_hostnames``  – list of hostname regex patterns; only matching
+                               devices run this check (others become SKIP)
+    * ``exclude_groups``     – list of site group names; matching devices skip
+                               this check
+    * ``include_groups``     – list of site group names; only devices in these
+                               groups run this check (ungrouped devices also SKIP)
     * ``exclude_interfaces`` – list of interface regex patterns; per-interface
                                findings for matching interfaces are SKIP'd
     """
@@ -226,6 +233,38 @@ def _annotate_findings(
             if f.status == Status.SKIP:
                 continue
 
+        # include_hostnames
+        includes_h = node.get("include_hostnames")
+        if includes_h and isinstance(includes_h, list):
+            matched = False
+            for pattern in includes_h:
+                try:
+                    if re.match(pattern, hostname, re.IGNORECASE):
+                        matched = True
+                        break
+                except re.error:
+                    pass
+            if not matched:
+                f.status = Status.SKIP
+                f.detail = "Not in hostname include list"
+                continue
+
+        # exclude_groups
+        excl_groups = node.get("exclude_groups")
+        if excl_groups and isinstance(excl_groups, list) and group:
+            if group.lower() in [g.lower() for g in excl_groups]:
+                f.status = Status.SKIP
+                f.detail = f"Excluded by group policy (group: '{group}')"
+                continue
+
+        # include_groups
+        incl_groups = node.get("include_groups")
+        if incl_groups and isinstance(incl_groups, list):
+            if not group or group.lower() not in [g.lower() for g in incl_groups]:
+                f.status = Status.SKIP
+                f.detail = f"Not in group include list (group: '{group or 'ungrouped'}')"
+                continue
+
         # exclude_interfaces (only for per-interface findings)
         if f.interface:
             excl_intfs = node.get("exclude_interfaces")
@@ -256,6 +295,7 @@ class ComplianceEngine:
         data: DeviceData,
         host_info: HostnameInfo,
         ports: dict[str, PortInfo],
+        group: str = "",
     ) -> AuditResult:
         result = AuditResult(
             hostname=data.hostname or host_info.raw,
@@ -323,6 +363,7 @@ class ComplianceEngine:
             check_map,
             role=host_info.role or "unknown",
             hostname=result.hostname,
+            group=group,
         )
 
         return result

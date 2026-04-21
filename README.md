@@ -219,6 +219,12 @@ python -m compliance_audit --device 192.0.2.61
 # Audit all devices listed in devices/devices.yaml
 python -m compliance_audit
 
+# Audit only devices in a specific site group
+python -m compliance_audit --site site_lab
+
+# Audit devices across multiple site groups
+python -m compliance_audit --site site_lab site_brn
+
 # Use a different device inventory file
 python -m compliance_audit -i inventories/site_alpha_devices.yaml
 
@@ -280,7 +286,8 @@ python -m compliance_audit --remediation-apply-all
 
 ```text
 python -m compliance_audit [-h] [-c CONFIG] [-d DEVICES] [-i INVENTORY]
-                           [--no-jump] [--categories CAT [CAT ...]]
+                           [--site SITE [SITE ...]] [--no-jump]
+                           [--categories CAT [CAT ...]]
                            [--tags TAG [TAG ...]] [--min-severity LEVEL]
                            [-o OUTPUT_DIR] [--fail-threshold PCT]
                            [--csv] [--no-csv] [-v]
@@ -300,6 +307,7 @@ Options:
   -c, --config CONFIG           Path to compliance config directory (default: compliance_config/)
   -d, --device DEVICES          Device to audit — IP or hostname:IP (repeatable)
   -i, --inventory FILE          Path to device inventory YAML (default: devices/devices.yaml)
+  --site SITE ...               Only audit devices from these site group(s) (e.g. --site site_lab)
   --no-jump                     Connect directly without jump host
   --categories CAT ...          Only run checks in named categories
   --tags TAG ...                Surface only findings whose tags include at least one of these values
@@ -437,35 +445,69 @@ The inventory file format:
 
 ```yaml
 # devices/devices.yaml
+
+# ── Flat list ────────────────────────────────────────────────────────
 devices:
-  - hostname: ZZ-LAB1-001ASW001
-    ip: 192.0.2.61
-  - hostname: ZZ-LAB1-001ASW002
+  - ZZ-LAB1-001ASW001                    # bare hostname (DNS)
+  - hostname: ZZ-LAB1-001ASW002          # hostname + IP
     ip: 192.0.2.62
-  - hostname: non-standard-hostname
+  - hostname: legacy-sw-01               # non-standard hostname
     ip: 203.0.113.10
-    role: access_switch  # Optional: explicitly override device role detection
+    role: access_switch                  # needed if hostname doesn't match ASW pattern
+
+# ── Groups (organise by site or location) ────────────────────────────
+groups:
+  site_lab:
+    devices:
+      - ZZ-LAB1-001ASW001
+      - ZZ-LAB1-001ASW002
+  site_brn:
+    devices:
+      - ZZ-BRN1-001ASW001
+      - ZZ-BRN1-001ASW002
 ```
 
-**Optional Role Override:**
+Groups are organisational only — they do not set a role. Use a flat `devices:` list, groups, or both.
 
-If a device hostname doesn't follow the standard naming convention, you can explicitly specify its role using the optional `role` field:
+**Non-standard hostnames:**
+
+If a device hostname doesn't follow the `ASW` naming convention, add `role: access_switch` so role-specific checks still apply:
 
 ```yaml
 devices:
   - hostname: legacy-switch-01
     ip: 203.0.113.10
-    role: access_switch  # Bypasses hostname-based role detection
+    role: access_switch  # bypasses hostname-based role detection
 ```
-
-Valid role values: `access_switch`
-
-When `role` is not specified, the device role is automatically detected from the hostname as usual.
 
 You can also:
 
 - Override the inventory file with `-i` / `--inventory` on the command line
 - Skip the inventory entirely and pass devices with `--device` (overrides the file)
+- Filter to a specific site group with `--site` without switching files
+
+**Multiple inventory files:**
+
+You can keep separate inventory files per site alongside the default:
+
+```
+compliance_audit/devices/
+    devices.yaml        ← default (all sites in groups)
+    site_brn.yaml       ← branch site only
+    site_lab.yaml       ← lab only
+```
+
+Point to any of them at runtime:
+
+```bash
+# Use a site-specific inventory file
+python -m compliance_audit -i devices/site_brn.yaml
+
+# Or filter the default file to one site group
+python -m compliance_audit --site site_brn
+```
+
+The two approaches are interchangeable — separate files give hard isolation per site; a single grouped file with `--site` is easier to maintain when devices change.
 
 ### Compliance Checks
 

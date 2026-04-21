@@ -18,6 +18,13 @@ audit_settings:
   json_report: false              # Also dump raw JSON findings
   csv_report: false               # Generate a CSV summary of all findings
   remediation_script: true        # Legacy toggle (kept for backward compatibility)
+
+  # ── Reporting customisation ──────────────────────────────────────
+  report_title: ""              # Custom title on HTML reports (blank = default)
+  report_subtitle: ""           # Site name / subtitle shown under the report title
+  default_min_severity: ""      # Persist --min-severity: critical | high | medium | low | info
+  default_tags: []              # Persist --tags filter, e.g. [cis, pci] (empty = all)
+
   parking_vlan: 99                # VLAN for unused ports
   native_vlan: 99                 # Expected native VLAN on trunks (for checking)
 

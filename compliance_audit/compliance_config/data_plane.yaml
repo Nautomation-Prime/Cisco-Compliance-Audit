@@ -17,7 +17,6 @@ compliance:
       enabled: false
       severity: medium
       tags: [layer2-security, availability]
-      applies_to_roles: [access_switch, core_switch, distribution_switch, server_switch, industrial_switch]
       check_thresholds: true
       check_action: false
       action: "shutdown"           # shutdown | trap
@@ -73,7 +72,6 @@ compliance:
       enabled: true
       severity: high
       tags: [layer2-security, stp, cis, pci]
-      applies_to_roles: [access_switch, core_switch, distribution_switch, server_switch, industrial_switch]
       # exclude_interfaces:        # Uncomment to exempt specific ports:
       #   - "GigabitEthernet0/48"  # e.g. a known uplink that shows access mode
       on_endpoint_trunks: false
@@ -84,7 +82,7 @@ compliance:
       enabled: false
       severity: high
       tags: [layer2-security, stp]
-      applies_to_roles: [access_switch, core_switch, distribution_switch, server_switch, industrial_switch]
+
 
     # ── PORTFAST ──────────────────────────────────────────────────
 
@@ -92,7 +90,6 @@ compliance:
       enabled: true
       severity: medium
       tags: [stp, availability]
-      applies_to_roles: [access_switch, core_switch, distribution_switch, server_switch, industrial_switch]
 
     # ── SWITCHPORT NONEGOTIATE ────────────────────────────────────
 
@@ -100,7 +97,6 @@ compliance:
       enabled: false
       severity: medium
       tags: [layer2-security, hardening]
-      applies_to_roles: [access_switch, core_switch, distribution_switch, server_switch, industrial_switch]
 
     # ── PORT SECURITY ─────────────────────────────────────────────
 
@@ -108,7 +104,6 @@ compliance:
       enabled: false
       severity: medium
       tags: [layer2-security, access-control, pci]
-      applies_to_roles: [access_switch, distribution_switch, server_switch, industrial_switch]
       max_mac: 2
       violation: "restrict"        # restrict | shutdown | protect
       aging_type: "inactivity"
@@ -120,7 +115,6 @@ compliance:
       enabled: false
       severity: medium
       tags: [layer2-security, hardening]
-      applies_to_roles: [access_switch, core_switch, distribution_switch, server_switch, industrial_switch]
 
     # ── SWITCHPORT MODE EXPLICIT ──────────────────────────────────
 
@@ -128,7 +122,6 @@ compliance:
       enabled: false
       severity: medium
       tags: [layer2-security, hardening]
-      applies_to_roles: [access_switch, core_switch, distribution_switch, server_switch, industrial_switch]
 
     # ── ACCESS VLAN ───────────────────────────────────────────────
 
@@ -136,7 +129,6 @@ compliance:
       enabled: false
       severity: medium
       tags: [layer2-security]
-      applies_to_roles: [access_switch, distribution_switch, server_switch, industrial_switch]
       disallowed_vlans: [1]
 
     # ── INTERFACE DESCRIPTION ─────────────────────────────────────
@@ -152,7 +144,6 @@ compliance:
       enabled: false
       severity: medium
       tags: [layer2-security]
-      applies_to_roles: [access_switch, core_switch, distribution_switch, server_switch, industrial_switch]
       on_uplinks: true
       on_downlinks: false
 
@@ -162,7 +153,6 @@ compliance:
       enabled: false
       severity: medium
       tags: [layer2-security, availability]
-      applies_to_roles: [access_switch, distribution_switch, server_switch, industrial_switch]
       rate: 15                     # packets per second on access ports
 
     # ── IP SOURCE GUARD ───────────────────────────────────────────
@@ -171,7 +161,6 @@ compliance:
       enabled: false
       severity: medium
       tags: [layer2-security, cis, pci]
-      applies_to_roles: [access_switch, distribution_switch, server_switch, industrial_switch]
 
     # ── ARP INSPECTION TRUST ──────────────────────────────────────
 
@@ -179,7 +168,6 @@ compliance:
       enabled: false
       severity: medium
       tags: [layer2-security]
-      applies_to_roles: [access_switch, core_switch, distribution_switch, server_switch, industrial_switch]
       on_uplinks: true
       on_downlinks: true
       on_endpoint_trunks: false
@@ -190,7 +178,6 @@ compliance:
       enabled: false
       severity: medium
       tags: [hardening, layer2-security, cis]
-      applies_to_roles: [access_switch, distribution_switch, server_switch, industrial_switch]
       must_be_shutdown: true
       must_be_access_mode: false
       must_be_in_parking_vlan: false
@@ -207,7 +194,6 @@ compliance:
       enabled: false
       severity: low
       tags: [hardening]
-      applies_to_roles: [access_switch, distribution_switch, server_switch, industrial_switch]
 
     # ── IP PROXY-ARP ──────────────────────────────────────────────
 
@@ -222,7 +208,6 @@ compliance:
       enabled: false
       severity: high
       tags: [layer2-security, hardening, cis, pci]
-      applies_to_roles: [access_switch, core_switch, distribution_switch, server_switch, industrial_switch]
       on_uplinks: true
       on_downlinks: true
       on_endpoint_trunks: true

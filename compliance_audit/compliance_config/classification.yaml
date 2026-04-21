@@ -7,7 +7,7 @@
 # §3  DEVICE  INVENTORY  (pointer to separate file)
 # ═══════════════════════════════════════════════════════════════════
 
-inventory_file: "devices.yaml"
+inventory_file: "devices/devices.yaml"
 
 
 # ═══════════════════════════════════════════════════════════════════

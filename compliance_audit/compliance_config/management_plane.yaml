@@ -20,6 +20,18 @@
 #                       this check.  Useful for known-exception devices.
 #                       Example: [".*-LEGACY-.*", "ZZ-LAB1-.*"]
 #
+#   include_hostnames – list of regex patterns; ONLY matching hostnames run this
+#                       check.  Non-matching devices have the check skipped.
+#                       Example: ["ZZ-LAB.*", "ZZ-BRN.*"]
+#
+#   exclude_groups    – list of site group names from devices.yaml; matching
+#                       devices skip this check.
+#                       Example: [site_lab]
+#
+#   include_groups    – list of site group names; ONLY devices in these groups
+#                       run this check.  Ungrouped devices are also skipped.
+#                       Example: [site_lab, site_brn]
+#
 #   exclude_interfaces – list of regex patterns for per-interface checks only.
 #                        Matching interface names are SKIP'd for this check.
 #                        Example: ["GigabitEthernet0/0", "Loopback.*"]

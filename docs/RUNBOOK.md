@@ -74,6 +74,15 @@ python -m compliance_audit -c configs/site_alpha
 # Run audit for a single device
 python -m compliance_audit --device ZZ-LAB1-001ASW001:192.0.2.61
 
+# Audit only devices in a specific site group (from the grouped inventory)
+python -m compliance_audit --site site_lab
+
+# Audit devices across multiple site groups
+python -m compliance_audit --site site_lab site_brn
+
+# Use a separate per-site inventory file instead
+python -m compliance_audit -i devices/site_brn.yaml
+
 # Surface only high-severity findings
 python -m compliance_audit --min-severity high
 

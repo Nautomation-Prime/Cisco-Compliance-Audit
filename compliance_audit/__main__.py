@@ -127,6 +127,18 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     p.add_argument(
+        "--site",
+        nargs="+",
+        metavar="SITE",
+        default=None,
+        help=(
+            "Only audit devices belonging to these site group(s) from the inventory "
+            "(e.g. --site site_lab or --site site_lab site_brn).  "
+            "Group names are matched case-insensitively against the 'groups:' keys "
+            "in devices/devices.yaml."
+        ),
+    )
+    p.add_argument(
         "--csv",
         action="store_true",
         default=None,
@@ -482,6 +494,7 @@ def main() -> None:
         inventory_path=args.inventory,
         tags_filter=args.tags,
         min_severity=args.min_severity,
+        site_filter=args.site,
     )
 
     # Exit code: threshold-based or any-fail

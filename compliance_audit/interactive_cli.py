@@ -46,6 +46,7 @@ class AuditWizardConfig:
     csv_report: Optional[bool]
     verbose: int
     fail_threshold: Optional[float]
+    site_filter: Optional[list[str]] = None
 
 
 def _load_questionary():
@@ -69,6 +70,9 @@ def _build_audit_preview(cfg: AuditWizardConfig) -> str:
         cmd.extend(["--config", _quote(cfg.config_path)])
     if cfg.inventory_path:
         cmd.extend(["--inventory", _quote(cfg.inventory_path)])
+    if cfg.site_filter:
+        cmd.append("--site")
+        cmd.extend(cfg.site_filter)
     for dev in cfg.devices:
         cmd.extend(["--device", _quote(dev)])
     if cfg.skip_jump:
@@ -128,6 +132,14 @@ def _run_audit_wizard(questionary) -> None:
         "Inventory path (blank keeps default behavior):", default=""
     ).ask()
     inventory_path = (inventory_path_raw or "").strip() or None
+
+    site_raw = questionary.text(
+        "Limit to specific site(s) (space-separated group names, blank = all sites):",
+        default="",
+    ).ask()
+    site_filter: Optional[list[str]] = (
+        [s.strip() for s in site_raw.split() if s.strip()] if site_raw and site_raw.strip() else None
+    )
 
     categories = questionary.checkbox(
         "Optional category filter:",
@@ -201,6 +213,7 @@ def _run_audit_wizard(questionary) -> None:
         csv_report=csv_report,
         verbose=verbose,
         fail_threshold=fail_threshold,
+        site_filter=site_filter,
     )
 
     console.print(
@@ -226,6 +239,7 @@ def _run_audit_wizard(questionary) -> None:
         output_dir=wizard_cfg.output_dir,
         csv_report=wizard_cfg.csv_report,
         inventory_path=wizard_cfg.inventory_path,
+        site_filter=wizard_cfg.site_filter,
     )
 
     if wizard_cfg.fail_threshold is not None and any(

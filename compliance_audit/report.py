@@ -417,6 +417,7 @@ padding:12px 24px;position:sticky;top:0;z-index:100;
 display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;}
 .top-bar h1{font-size:1.1rem;color:var(--accent);white-space:nowrap;}
 .top-bar .meta{font-size:.85rem;color:var(--text-dim);}
+.top-bar-subtitle{font-size:.8rem;color:var(--text-dim);margin-top:2px;}
 
 /* ── Stat cards ─────────────────────────────────────────── */
 .stats{display:flex;gap:12px;padding:20px 24px;flex-wrap:wrap;}
@@ -615,7 +616,7 @@ document.addEventListener('DOMContentLoaded',function(){
 # ═══════════════════════════════════════════════════════════════════
 
 
-def save_html(result: AuditResult, output_dir: str) -> Path | None:
+def save_html(result: AuditResult, output_dir: str, *, report_title: str = "", report_subtitle: str = "") -> Path | None:
     """Save a standalone HTML report for a single device."""
     outdir = Path(output_dir)
     outdir.mkdir(parents=True, exist_ok=True)
@@ -650,9 +651,11 @@ def save_html(result: AuditResult, output_dir: str) -> Path | None:
             f"{tbl}</div>"
         )
 
+    _title = _esc(report_title) if report_title else "Compliance Audit Report"
+    _subtitle_html = f'<div class="top-bar-subtitle">{_esc(report_subtitle)}</div>' if report_subtitle else ""
     body = f"""\
 <div class="top-bar">
-  <h1>Compliance Audit Report</h1>
+  <div><h1>{_title}</h1>{_subtitle_html}</div>
   <span class="meta">{_esc(ts_str)}</span>
 </div>
 <div class="stats">
@@ -699,7 +702,7 @@ def save_html(result: AuditResult, output_dir: str) -> Path | None:
 # ═══════════════════════════════════════════════════════════════════
 
 
-def save_consolidated_html(results: list[AuditResult], output_dir: str) -> Path | None:
+def save_consolidated_html(results: list[AuditResult], output_dir: str, *, report_title: str = "", report_subtitle: str = "") -> Path | None:
     """Save a consolidated HTML report with dashboard, filtering, and collapsible devices."""
     if not results:
         raise ValueError("No results to generate consolidated report")
@@ -842,9 +845,11 @@ def save_consolidated_html(results: list[AuditResult], output_dir: str) -> Path 
             f"</div>"
         )
 
+    _title = _esc(report_title) if report_title else "Consolidated Compliance Audit"
+    _subtitle_html = f'<div class="top-bar-subtitle">{_esc(report_subtitle)}</div>' if report_subtitle else ""
     body = f"""\
 <div class="top-bar">
-  <h1>Consolidated Compliance Audit</h1>
+  <div><h1>{_title}</h1>{_subtitle_html}</div>
   <span class="meta">{_esc(ts_str)} &mdash; {len(results)} device(s)</span>
 </div>
 <div class="stats">
