@@ -29,24 +29,6 @@ DEFAULT_ROLES: list[dict] = [
         "display": "Access Switch",
         "trunk_signal": "downlink",
     },
-    {
-        "code": "CSW",
-        "role": "core_switch",
-        "display": "Core Switch",
-        "trunk_signal": "uplink",
-    },
-    {
-        "code": "SDW",
-        "role": "sdwan_router",
-        "display": "SD-WAN Router",
-        "trunk_signal": "none",
-    },
-    {
-        "code": "ISW",
-        "role": "industrial_switch",
-        "display": "Industrial Switch",
-        "trunk_signal": "downlink",
-    },
 ]
 
 
@@ -93,18 +75,6 @@ class HostnameInfo:
     @property
     def is_access(self) -> bool:
         return self.role == "access_switch"
-
-    @property
-    def is_core(self) -> bool:
-        return self.role == "core_switch"
-
-    @property
-    def is_sdwan(self) -> bool:
-        return self.role == "sdwan_router"
-
-    @property
-    def is_industrial(self) -> bool:
-        return self.role == "industrial_switch"
 
 
 # ---------------------------------------------------------------------------

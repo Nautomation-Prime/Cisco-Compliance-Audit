@@ -595,13 +595,13 @@ def load_device_inventory(inventory_path: str | None, config_path: str) -> list[
 
     if inventory_path is None:
         cfg = load_compliance_config(config_path)
-        inventory_path = cfg.get("inventory_file", "devices.yaml")
+        inventory_path = cfg.get("inventory_file", "devices/devices.yaml")
 
-    p = Path(inventory_path or "devices.yaml")
+    p = Path(inventory_path or "devices/devices.yaml")
     if not p.is_absolute():
         p = cfg_dir / p
     if not p.exists():
-        p = Path(__file__).parent / (inventory_path or "devices.yaml")
+        p = Path(__file__).parent / (inventory_path or "devices/devices.yaml")
     if not p.exists():
         return []
 
@@ -1003,7 +1003,7 @@ def run_audit(
     if not devices:
         console.print(
             "[bold yellow]No devices to audit.[/] "
-            "Add devices to devices.yaml or use --device."
+            "Add devices to devices/devices.yaml or use --device."
         )
         return []
 

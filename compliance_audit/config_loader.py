@@ -132,7 +132,7 @@ class Config:
 
         Supports both a flat ``devices:`` list and Ansible-style ``groups:``.
         """
-        inv_file = self._config.get("inventory_file", "devices.yaml")
+        inv_file = self._config.get("inventory_file", "devices/devices.yaml")
         inv_path = self._config_file.parent / inv_file
         if not inv_path.exists():
             # Fallback: check for inline devices (backwards compat)

@@ -123,7 +123,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--inventory",
         default=None,
         help=(
-            "Path to the device inventory YAML (default: devices.yaml next to config)."
+            "Path to the device inventory YAML (default: devices/devices.yaml next to config)."
         ),
     )
     p.add_argument(

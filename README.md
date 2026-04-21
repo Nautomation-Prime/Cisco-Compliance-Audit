@@ -53,8 +53,8 @@ Built on **PyATS/Genie** for structured parsing, **Netmiko** for transport, and 
 | **90+ compliance checks** | Every check toggleable via `enabled: true/false` in YAML |
 | **Concurrent auditing** | Audit multiple devices in parallel — configurable worker count via `max_workers` |
 | **Split config directory** | Policy split across `audit_settings.yaml`, `connection.yaml`, `management_plane.yaml` etc. — per-site directories via `-c configs/site_alpha/` |
-| **Separate device inventory** | Devices listed in their own `devices.yaml` — swap inventories without touching compliance policy |
-| **Role-aware** | Automatically detects device role (Access / Core / SD-WAN / Industrial) from the hostname naming convention |
+| **Separate device inventory** | Devices listed in their own `devices/devices.yaml` — swap inventories without touching compliance policy |
+| **Role-aware** | Automatically detects device role (Access Switch) from the hostname naming convention |
 | **Port classification** | Every interface is classified as ACCESS, TRUNK_UPLINK, TRUNK_DOWNLINK, UNUSED, ROUTED, SVI, etc. |
 | **Port-channel awareness** | Detects EtherChannel membership via `show etherchannel summary`; runs checks against the Port-channel interface, not individual members |
 | **Uplink/downlink detection** | Uses STP root-port election + CDP/LLDP neighbor hostname to reliably determine trunk direction |
@@ -160,7 +160,7 @@ pip install -r requirements.txt
 
 ```bash
 # 1. Add your devices to the inventory file
-#    compliance_audit/devices.yaml
+#    compliance_audit/devices/devices.yaml
 
 # 2. Customise compliance policy (optional)
 #    compliance_audit/compliance_config/management_plane.yaml  (or any section file)
@@ -216,7 +216,7 @@ python -m compliance_audit --device ZZ-LAB1-001ASW001:192.0.2.61 --device ZZ-HUB
 # Audit by IP only (hostname won't be parsed for role)
 python -m compliance_audit --device 192.0.2.61
 
-# Audit all devices listed in devices.yaml
+# Audit all devices listed in devices/devices.yaml
 python -m compliance_audit
 
 # Use a different device inventory file
@@ -299,7 +299,7 @@ Options:
   -h, --help                    Show help and exit
   -c, --config CONFIG           Path to compliance config directory (default: compliance_config/)
   -d, --device DEVICES          Device to audit — IP or hostname:IP (repeatable)
-  -i, --inventory FILE          Path to device inventory YAML (default: devices.yaml)
+  -i, --inventory FILE          Path to device inventory YAML (default: devices/devices.yaml)
   --no-jump                     Connect directly without jump host
   --categories CAT ...          Only run checks in named categories
   --tags TAG ...                Surface only findings whose tags include at least one of these values
@@ -337,14 +337,14 @@ Premium Interactive Modes:
 
 ## Configuration Guide
 
-All configuration lives in a **directory of YAML files** (default: `compliance_audit/compliance_config/`). Each section of the policy has its own file — edit only what you need without touching the rest. Device inventory is in a separate file (`compliance_audit/devices.yaml`).
+All configuration lives in a **directory of YAML files** (default: `compliance_audit/compliance_config/`). Each section of the policy has its own file — edit only what you need without touching the rest. Device inventory is in a separate file (`compliance_audit/devices/devices.yaml`).
 
 | File | What it controls | How often you edit it |
 | ------ | ------------------ | ---------------------- |
 | `audit_settings.yaml` | Concurrency, reports, timeouts, ROI, reference VLANs | Every run |
 | `connection.yaml` | SSH, jump host, credentials | Per environment |
 | `classification.yaml` | Inventory path, hostname role codes, endpoint detection | Set once per org |
-| `devices.yaml` | List of devices to audit | Per run |
+| `devices/devices.yaml` | List of devices to audit | Per run |
 | `management_plane.yaml` | SSH, AAA, NTP, logging, SNMP, VTY, banner checks | When policy changes |
 | `control_plane.yaml` | STP, VTP, DHCP snooping, DAI checks | When policy changes |
 | `data_plane.yaml` | Per-interface checks (BPDU guard, storm control, port security…) | When policy changes |
@@ -426,27 +426,25 @@ connection:
 
 ### Device Inventory (§3)
 
-Device inventory lives in its own file (default: `compliance_audit/devices.yaml`), keeping it separate from the compliance policy. The config file references it with:
+Device inventory lives in its own file (default: `compliance_audit/devices/devices.yaml`), keeping it separate from the compliance policy. The config file references it with:
 
 ```yaml
 # In compliance_audit/compliance_config/classification.yaml
-inventory_file: "devices.yaml"
+inventory_file: "devices/devices.yaml"
 ```
 
 The inventory file format:
 
 ```yaml
-# devices.yaml
+# devices/devices.yaml
 devices:
   - hostname: ZZ-LAB1-001ASW001
     ip: 192.0.2.61
-  - hostname: ZZ-HUB1-001CSW001
+  - hostname: ZZ-LAB1-001ASW002
     ip: 192.0.2.62
-  - hostname: ZZ-PLT1-001ISW001
-    ip: 198.51.100.14
   - hostname: non-standard-hostname
     ip: 203.0.113.10
-    role: core_switch  # Optional: explicitly override device role detection
+    role: access_switch  # Optional: explicitly override device role detection
 ```
 
 **Optional Role Override:**
@@ -460,7 +458,7 @@ devices:
     role: access_switch  # Bypasses hostname-based role detection
 ```
 
-Valid role values: `access_switch`, `core_switch`, `sdwan_router`, `industrial_switch`
+Valid role values: `access_switch`
 
 When `role` is not specified, the device role is automatically detected from the hostname as usual.
 
@@ -488,8 +486,6 @@ check_name:
 
   applies_to_roles:       # Only run this check for these device roles.
     - access_switch       # Omit (or leave empty) to apply to all roles.
-    - core_switch         # Valid: access_switch core_switch distribution_switch
-                          #        server_switch sdwan_router industrial_switch
 
   exclude_hostnames:      # Regex patterns — matching device hostnames skip this check.
     - ".*-LEGACY-.*"
@@ -514,7 +510,7 @@ The tool automatically detects device roles by parsing hostnames against a confi
 ZZ-LAB1-005ASW001
 ││  │││  │││││ │││
 ││  │││  │││││ └── Device number (001 = 1st switch in cabinet)
-││  │││  ││└──── Role code (ASW/CSW/SDW/ISW)
+││  │││  ││└──── Role code (ASW)
 ││  │││  └────── Comms room / cabinet number (005)
 ││  ││└───────── Site instance (1 = first branch for that site code)
 ││  └─────────── Site code (LAB = sample site code)
@@ -526,9 +522,6 @@ ZZ-LAB1-005ASW001
 | Code | Meaning | Description |
 | ------ | --------- | ------------- |
 | **ASW** | Access Switch | End-user access layer switch |
-| **CSW** | Core Switch | Core/distribution layer switch |
-| **SDW** | SD-WAN Router | SD-WAN edge router |
-| **ISW** | Industrial Switch | Industrial/OT environment switch |
 
 ### Site Code
 
@@ -548,11 +541,9 @@ The digit after the site code is the site instance (e.g. `LAB1` = first instance
 | Hostname | Prefix | Site | Branch | Cabinet | Role | Device # |
 | ---------- | -------- | ------ | -------- | --------- | ------ | ---------- |
 | `ZZ-LAB1-001ASW001` | ZZ | LAB | 1 | 001 | Access Switch | 001 |
-| `ZZ-HUB1-001CSW001` | ZZ | HUB | 1 | 001 | Core Switch | 001 |
-| `ZZ-BRN2-003SDW001` | ZZ | BRN | 2 | 003 | SD-WAN Router | 001 |
-| `ZZ-PLT1-001ISW001` | ZZ | PLT | 1 | 001 | Industrial Switch | 001 |
+| `ZZ-BRN1-001ASW001` | ZZ | BRN | 1 | 001 | Access Switch | 001 |
 
-> **What if the hostname doesn't match?** The audit still runs — it just skips role-specific checks and logs a warning. To enable role-specific checks for non-standard hostnames, you can explicitly specify the device role in `devices.yaml` using the optional `role` field (see [Device Inventory](#device-inventory-3)).
+> **What if the hostname doesn't match?** The audit still runs — it just skips role-specific checks and logs a warning. To enable role-specific checks for non-standard hostnames, you can explicitly specify the device role in `devices/devices.yaml` using the optional `role` field (see [Device Inventory](#device-inventory-3)).
 
 ---
 

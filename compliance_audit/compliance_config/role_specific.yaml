@@ -9,26 +9,6 @@
 compliance:
   role_specific:
 
-    core_switch:
-
-      stp_root_check:
-        enabled: false
-        severity: medium
-        tags: [stp, availability]
-        # Verifies this CSW is the STP root bridge for VLAN 1
-
-      hsrp_vrrp:
-        enabled: false
-        severity: medium
-        tags: [availability, routing-security]
-        # Checks that HSRP or VRRP is configured on SVIs
-
-      routing_protocol_auth:
-        enabled: false
-        severity: high
-        tags: [authentication, routing-security, cis, nist]
-        # Checks EIGRP/OSPF/BGP neighbour authentication
-
     access_switch:
 
       stp_not_root:
@@ -42,15 +22,3 @@ compliance:
         severity: medium
         tags: [availability]
         # Check that the ASW has a port-channel uplink (link aggregation)
-
-    sdwan_router:
-      placeholder:
-        enabled: false
-        severity: info
-        tags: []
-
-    industrial_switch:
-      placeholder:
-        enabled: false
-        severity: info
-        tags: []

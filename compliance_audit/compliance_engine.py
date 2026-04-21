@@ -1880,17 +1880,12 @@ class ComplianceEngine:
                 )
             )
 
-        # STP priority (role-dependent)
+        # STP priority (access switch)
         if _enabled(cp, "stp_priority") and host.parsed:
             node = cp.get("stp_priority", {})
-            if host.is_core:
-                exp = node.get("core_priority", 4096)
-                if exp:
-                    self._check_stp_priority(cfg, data, exp, "core", f)
-            elif host.is_access or host.is_industrial:
-                exp = node.get("access_priority", 32768)
-                if exp:
-                    self._check_stp_priority(cfg, data, exp, "access", f)
+            exp = node.get("access_priority", 32768)
+            if exp:
+                self._check_stp_priority(cfg, data, exp, "access", f)
 
         return f
 
@@ -3431,9 +3426,7 @@ class ComplianceEngine:
             return f
         rs = self.policy.get("role_specific", {})
 
-        if host.is_core:
-            f.extend(self._check_core_role(cfg, data, host, ports, rs))
-        elif host.is_access:
+        if host.is_access:
             f.extend(self._check_access_role(cfg, data, host, ports, rs))
 
         return f
@@ -3460,44 +3453,6 @@ class ComplianceEngine:
                     non_root_vlans.append(vlan_id)
 
         return root_vlans, non_root_vlans
-
-    def _check_core_role(
-        self,
-        _cfg: ParsedConfig,
-        data: DeviceData,
-        _host: HostnameInfo,
-        _ports: dict[str, PortInfo],
-        rs: dict,
-    ) -> list[Finding]:
-        f: list[Finding] = []
-        core_pol = rs.get("core_switch", {})
-
-        if _enabled(core_pol, "stp_root_check") and data.stp:
-            root_vlans, non_root_vlans = self._stp_root_status(data)
-
-            # Report each VLAN where this core switch IS the root (PASS)
-            for vid in root_vlans:
-                f.append(
-                    Finding(
-                        "core_stp_root",
-                        Status.PASS,
-                        f"Core switch IS the STP root bridge for VLAN {vid}",
-                        "role_specific",
-                    )
-                )
-
-            # Report each VLAN where this core switch is NOT the root (WARN)
-            for vid in non_root_vlans:
-                f.append(
-                    Finding(
-                        "core_stp_root",
-                        Status.WARN,
-                        f"Core switch is NOT the STP root bridge for VLAN {vid} — verify",
-                        "role_specific",
-                    )
-                )
-
-        return f
 
     def _check_access_role(
         self,

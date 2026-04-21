@@ -628,7 +628,7 @@ def _highest_risk(findings: list[dict]) -> str:
 
 
 def _default_db_path(output_dir: str) -> Path:
-    return Path(output_dir) / "remediation_reviews.db"
+    return Path(output_dir) / "db" / "remediation_reviews.db"
 
 
 def generate_review_pack(result, script_path: Path, output_dir: str) -> Path:
