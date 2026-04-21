@@ -5,7 +5,7 @@ site information, and cabinet/instance numbers.
 Convention:  ZZ-LAB1-005ASW001
              ││  │││  │││││ │││
              ││  │││  │││││ └── device number (001)
-             ││  │││  ││└──── role code (ASW/CSW/SDW/ISW — configurable)
+             ││  │││  ││└──── role code (ASW — configurable via hostname_roles config)
              ││  │││  └────── comms room / cabinet (005)
              ││  ││└───────── site instance (1)
              ││  └─────────── site code (LAB = sample site code)
@@ -101,7 +101,7 @@ def parse_hostname(
     role_config : list[dict] | None
         The ``hostname_roles`` list from compliance_config.yaml.
         Each dict must have at least ``code``, ``role``, ``display``.
-        If None, built-in defaults (ASW/CSW/SDW/ISW) are used.
+        If None, built-in defaults (ASW only) are used.
     explicit_role : str | None
         If set, override the role derived from the hostname.
         Accepts a role code (e.g. ``ASW``) or a role name
@@ -153,15 +153,6 @@ def parse_hostname(
                 info.role_display = explicit_role
 
     return info
-
-
-def extract_role_from_hostname(
-    hostname: str,
-    role_config: Optional[list[dict]] = None,
-) -> Optional[str]:
-    """Quick helper: return role code (e.g. ASW/CSW) or None."""
-    info = parse_hostname(hostname, role_config=role_config)
-    return info.role_code if info.parsed else None
 
 
 def get_trunk_signal_map(role_config: Optional[list[dict]] = None) -> dict[str, str]:

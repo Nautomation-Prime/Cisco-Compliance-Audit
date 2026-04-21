@@ -57,14 +57,11 @@ WORKFLOW_ERRORS = DEVICE_OPERATION_ERRORS + (LookupError, sqlite3.Error, yaml.YA
 
 
 def get_remediation_settings(audit_settings: Optional[dict]) -> dict:
-    """Resolve remediation settings with legacy compatibility defaults."""
+    """Resolve remediation settings from audit_settings.remediation config node."""
     settings = audit_settings or {}
     remediation_node = settings.get("remediation", {})
     if not isinstance(remediation_node, dict):
         remediation_node = {}
-
-    legacy_script = bool(settings.get("remediation_script", True))
-    legacy_review = bool(settings.get("remediation_review_pack", True))
 
     approval = remediation_node.get("approval", {})
     if not isinstance(approval, dict):
@@ -73,13 +70,13 @@ def get_remediation_settings(audit_settings: Optional[dict]) -> dict:
     if not isinstance(execution, dict):
         execution = {}
 
-    enabled = bool(remediation_node.get("enabled", legacy_script))
+    enabled = bool(remediation_node.get("enabled", True))
 
     return {
         "enabled": enabled,
         "generate_script": bool(remediation_node.get("generate_script", enabled)),
         "generate_review_pack": bool(
-            remediation_node.get("generate_review_pack", legacy_review)
+            remediation_node.get("generate_review_pack", enabled)
         ),
         "approval_default_expires_hours": int(
             approval.get("default_expires_hours", 24)

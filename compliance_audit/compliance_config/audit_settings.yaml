@@ -17,7 +17,6 @@ audit_settings:
   html_report: true               # Generate an HTML report alongside console output
   json_report: false              # Also dump raw JSON findings
   csv_report: false               # Generate a CSV summary of all findings
-  remediation_script: true        # Legacy toggle (kept for backward compatibility)
 
   # ── Reporting customisation ──────────────────────────────────────
   report_title: ""              # Custom title on HTML reports (blank = default)

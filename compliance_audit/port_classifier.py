@@ -6,7 +6,7 @@ Roles
 -----
 - ACCESS          : switchport mode access
 - TRUNK_UPLINK    : trunk going toward the core / root bridge
-- TRUNK_DOWNLINK  : trunk going to a downstream switch (ASW/ISW daisy-chain)
+- TRUNK_DOWNLINK  : trunk going to a downstream switch (daisy-chain)
 - TRUNK_ENDPOINT  : trunk to an endpoint device (wireless AP, etc.)
 - TRUNK_UNKNOWN   : trunk whose direction could not be determined
 - UNUSED          : admin-down with no operational link
@@ -66,7 +66,7 @@ class PortInfo:
     description: str = ""
     is_stp_root_port: bool = False
     cdp_neighbor: str = ""
-    cdp_neighbor_role: str = ""  # ASW / CSW / SDW / ISW / ""
+    cdp_neighbor_role: str = ""  # role code from hostname (e.g. ASW)
     cdp_neighbor_platform: str = ""  # CDP platform string
     cdp_neighbor_capabilities: str = ""  # CDP capabilities string
     is_endpoint_neighbor: bool = False  # True if CDP/LLDP says AP/endpoint

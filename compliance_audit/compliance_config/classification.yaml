@@ -33,30 +33,14 @@ hostname_roles:
     display: "Access Switch"
     trunk_signal: downlink
 
-  - code: CSW
-    role: core_switch
-    display: "Core Switch"
-    trunk_signal: uplink
-
-  - code: SDW
-    role: sdwan_router
-    display: "SD-WAN Router"
-    trunk_signal: none
-
-  - code: ISW
-    role: industrial_switch
-    display: "Industrial Switch"
-    trunk_signal: downlink
-
-  - code: DSW
-    role: distribution_switch
-    display: "Distribution Switch"
-    trunk_signal: none
-
-  - code: SSW
-    role: server_switch
-    display: "Server Switch"
-    trunk_signal: downlink
+  # ── Additional role codes can be added here if your naming convention
+  # includes other device types that need CDP/LLDP trunk classification.
+  # Example:
+  #
+  #   - code: CSW
+  #     role: core_switch
+  #     display: "Core Switch"
+  #     trunk_signal: uplink   # trunks toward a CSW = uplinks on this ASW
 
 
 # ═══════════════════════════════════════════════════════════════════
