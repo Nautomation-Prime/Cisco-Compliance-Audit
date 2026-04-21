@@ -13,8 +13,8 @@
 #
 #   applies_to_roles – list of role identifiers; the check is SKIP'd for roles
 #                      not listed here.  Omit (or leave empty) for all roles.
-#                      Valid roles: access_switch core_switch sdwan_router
-#                                   industrial_switch distribution_switch server_switch
+#                      Built-in role: access_switch
+#                      Additional roles are defined in classification.yaml → hostname_roles.
 #
 #   exclude_hostnames – list of regex patterns; matching device hostnames skip
 #                       this check.  Useful for known-exception devices.
