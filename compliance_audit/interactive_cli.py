@@ -143,7 +143,7 @@ def _run_audit_wizard(questionary) -> None:
 
     categories = questionary.checkbox(
         "Optional category filter:",
-        choices=["management_plane", "control_plane", "data_plane", "role_specific"],
+        choices=["management_plane", "control_plane", "data_plane"],
     ).ask()
     if categories == []:
         categories = None

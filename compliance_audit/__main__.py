@@ -82,7 +82,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--categories",
         nargs="+",
         help="Only run checks in these categories "
-        "(e.g. management_plane control_plane data_plane role_specific).",
+        "(e.g. management_plane control_plane data_plane).",
     )
     p.add_argument(
         "--tags",
