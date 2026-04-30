@@ -1,0 +1,215 @@
+---
+# ╔═══════════════════════════════════════════════════════════════════╗
+# ║  DATA PLANE — interface-level checks by port role                 ║
+# ╚═══════════════════════════════════════════════════════════════════╝
+#
+# severity / tags / applies_to_roles / exclude_hostnames are supported
+# on every check.  exclude_interfaces lets you exempt specific port
+# names from a check without disabling it globally.
+# See management_plane.yaml for full field descriptions.
+
+compliance:
+  data_plane:
+
+    # ── STORM CONTROL ─────────────────────────────────────────────
+
+    storm_control:
+      enabled: false
+      severity: medium
+      tags: [layer2-security, availability]
+      check_thresholds: true
+      check_action: false
+      action: "shutdown"           # shutdown | trap
+      types:
+        - broadcast
+        - multicast
+        # - unicast               # Uncomment to require unicast storm control
+      thresholds_by_speed:
+        10000:                     # 10 Gbps
+          broadcast:
+            rising: 0.10
+            falling: 0.07
+          multicast:
+            rising: 0.10
+            falling: 0.07
+          unicast:
+            rising: 0.10
+            falling: 0.07
+        1000:                      # 1 Gbps
+          broadcast:
+            rising: 1.00
+            falling: 0.70
+          multicast:
+            rising: 1.00
+            falling: 0.70
+          unicast:
+            rising: 1.00
+            falling: 0.70
+        100:                       # 100 Mbps
+          broadcast:
+            rising: 10.00
+            falling: 7.00
+          multicast:
+            rising: 10.00
+            falling: 7.00
+          unicast:
+            rising: 10.00
+            falling: 7.00
+      default_thresholds:
+        broadcast:
+          rising: 1.00
+          falling: 0.70
+        multicast:
+          rising: 1.00
+          falling: 0.70
+        unicast:
+          rising: 1.00
+          falling: 0.70
+
+    # ── BPDU GUARD ────────────────────────────────────────────────
+
+    bpdu_guard:
+      enabled: true
+      severity: high
+      tags: [layer2-security, stp, cis, pci]
+      # exclude_interfaces:        # Uncomment to exempt specific ports:
+      #   - "GigabitEthernet0/48"  # e.g. a known uplink that shows access mode
+      on_endpoint_trunks: false
+
+    # ── ROOT GUARD ────────────────────────────────────────────────
+
+    root_guard:
+      enabled: false
+      severity: high
+      tags: [layer2-security, stp]
+
+
+    # ── PORTFAST ──────────────────────────────────────────────────
+
+    portfast:
+      enabled: true
+      severity: medium
+      tags: [stp, availability]
+
+    # ── SWITCHPORT NONEGOTIATE ────────────────────────────────────
+
+    switchport_nonegotiate:
+      enabled: false
+      severity: medium
+      tags: [layer2-security, hardening]
+
+    # ── PORT SECURITY ─────────────────────────────────────────────
+
+    port_security:
+      enabled: false
+      severity: medium
+      tags: [layer2-security, access-control, pci]
+      max_mac: 2
+      violation: "restrict"        # restrict | shutdown | protect
+      aging_type: "inactivity"
+      aging_time: 60               # minutes
+
+    # ── TRUNK ALLOWED VLANs ───────────────────────────────────────
+
+    trunk_allowed_vlans:
+      enabled: false
+      severity: medium
+      tags: [layer2-security, hardening]
+
+    # ── SWITCHPORT MODE EXPLICIT ──────────────────────────────────
+
+    switchport_mode_explicit:
+      enabled: false
+      severity: medium
+      tags: [layer2-security, hardening]
+
+    # ── ACCESS VLAN ───────────────────────────────────────────────
+
+    access_vlan_set:
+      enabled: false
+      severity: medium
+      tags: [layer2-security]
+      disallowed_vlans: [1]
+
+    # ── INTERFACE DESCRIPTION ─────────────────────────────────────
+
+    interface_description:
+      enabled: false
+      severity: low
+      tags: [hardening]
+
+    # ── DHCP SNOOPING TRUST ───────────────────────────────────────
+
+    dhcp_snooping_trust:
+      enabled: false
+      severity: medium
+      tags: [layer2-security]
+      on_uplinks: true
+      on_downlinks: false
+
+    # ── DHCP SNOOPING RATE LIMIT ──────────────────────────────────
+
+    dhcp_snooping_limit_rate:
+      enabled: false
+      severity: medium
+      tags: [layer2-security, availability]
+      rate: 15                     # packets per second on access ports
+
+    # ── IP SOURCE GUARD ───────────────────────────────────────────
+
+    ip_source_guard:
+      enabled: false
+      severity: medium
+      tags: [layer2-security, cis, pci]
+
+    # ── ARP INSPECTION TRUST ──────────────────────────────────────
+
+    arp_inspection_trust:
+      enabled: false
+      severity: medium
+      tags: [layer2-security]
+      on_uplinks: true
+      on_downlinks: true
+      on_endpoint_trunks: false
+
+    # ── UNUSED PORT HARDENING ─────────────────────────────────────
+
+    unused_ports:
+      enabled: false
+      severity: medium
+      tags: [hardening, layer2-security, cis]
+      must_be_shutdown: true
+      must_be_access_mode: false
+      must_be_in_parking_vlan: false
+      must_have_nonegotiate: false
+      must_have_bpduguard: false
+      must_have_no_cdp: false
+      must_have_no_lldp: false
+      must_have_description: true
+      expected_description: "* unused *"
+
+    # ── CDP PER-INTERFACE ─────────────────────────────────────────
+
+    no_cdp_on_access_ports:
+      enabled: false
+      severity: low
+      tags: [hardening]
+
+    # ── IP PROXY-ARP ──────────────────────────────────────────────
+
+    no_ip_proxy_arp:
+      enabled: false
+      severity: medium
+      tags: [hardening, routing-security]
+
+    # ── NATIVE VLAN ON TRUNKS ─────────────────────────────────────
+
+    trunk_native_vlan:
+      enabled: false
+      severity: high
+      tags: [layer2-security, hardening, cis, pci]
+      on_uplinks: true
+      on_downlinks: true
+      on_endpoint_trunks: true
+      expected_vlan: 99
+      expected_vlan_endpoint: 99

@@ -5,13 +5,13 @@ Usage examples
 --------------
     python -m compliance_audit
     python -m compliance_audit --config custom.yaml
-    python -m compliance_audit --device 10.1.1.1
-    python -m compliance_audit --device GB-MKD1-005ASW001:10.1.1.1
+    python -m compliance_audit --device 192.0.2.61
+    python -m compliance_audit --device ZZ-LAB1-005ASW001:192.0.2.61
     python -m compliance_audit --no-jump
     python -m compliance_audit --categories management_plane control_plane
     python -m compliance_audit --remediation-list
     python -m compliance_audit --remediation-apply-all
-    python -m compliance_audit --remediation-apply-all --apply-dry-run
+    python -m compliance_audit --remediation-apply-all
     python -m compliance_audit --interactive
     python -m compliance_audit --tui
     python -m compliance_audit --list-options
@@ -63,8 +63,8 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "-c",
         "--config",
-        default="compliance_config.yaml",
-        help="Path to the compliance YAML config (default: compliance_config.yaml)",
+        default="compliance_config",
+        help="Path to the compliance config directory (default: compliance_config/)",
     )
     p.add_argument(
         "-d",
@@ -83,6 +83,27 @@ def _build_parser() -> argparse.ArgumentParser:
         nargs="+",
         help="Only run checks in these categories "
         "(e.g. management_plane control_plane data_plane role_specific).",
+    )
+    p.add_argument(
+        "--tags",
+        nargs="+",
+        metavar="TAG",
+        default=None,
+        help=(
+            "Only surface findings whose tags include at least one of these values "
+            "(e.g. --tags pci cis).  Non-matching findings are reported as SKIP."
+        ),
+    )
+    p.add_argument(
+        "--min-severity",
+        choices=["critical", "high", "medium", "low", "info"],
+        default=None,
+        metavar="LEVEL",
+        help=(
+            "Hide findings below this severity level "
+            "(critical > high > medium > low > info).  "
+            "Lower-severity findings are reported as SKIP."
+        ),
     )
     p.add_argument(
         "-v",
@@ -109,17 +130,19 @@ def _build_parser() -> argparse.ArgumentParser:
         "--inventory",
         default=None,
         help=(
-            "Path to the device inventory YAML "
-            "(default: devices.yaml next to config)."
+            "Path to the device inventory YAML (default: devices/devices.yaml next to config)."
         ),
     )
     p.add_argument(
-        "--dry-run",
+        "--site",
+        nargs="+",
+        metavar="SITE",
         default=None,
-        metavar="DIR",
         help=(
-            "Offline mode — read previously saved command outputs "
-            "from DIR instead of SSH."
+            "Only audit devices belonging to these site group(s) from the inventory "
+            "(e.g. --site site_lab or --site site_lab site_brn).  "
+            "Group names are matched case-insensitively against the 'groups:' keys "
+            "in devices/devices.yaml."
         ),
     )
     p.add_argument(
@@ -221,14 +244,6 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Approval expiry in hours (default: from config, fallback 24).",
     )
     p.add_argument(
-        "--apply-dry-run",
-        action="store_true",
-        help=(
-            "Run preflight for remediation apply operations "
-            "without sending configuration."
-        ),
-    )
-    p.add_argument(
         "--allow-high-risk",
         action="store_true",
         help="Allow applying approved packs containing high-risk commands.",
@@ -284,9 +299,7 @@ def _handle_remediation_mode(args: argparse.Namespace) -> bool:
         if args.remediation_limit is not None and args.remediation_limit <= 0:
             raise RuntimeError("--remediation-limit must be greater than 0")
 
-        status = (
-            None if args.remediation_list == "all" else args.remediation_list
-        )
+        status = None if args.remediation_list == "all" else args.remediation_list
         rows = list_review_packs(out_dir, status=status)
         if not rows:
             print("No remediation review packs found.")
@@ -320,13 +333,9 @@ def _handle_remediation_mode(args: argparse.Namespace) -> bool:
 
     if args.remediation_approve:
         if not args.approver:
-            raise RuntimeError(
-                "--approver is required for --remediation-approve"
-            )
+            raise RuntimeError("--approver is required for --remediation-approve")
         if rem.get("approval_require_ticket_id", True) and not args.ticket_id:
-            raise RuntimeError(
-                "--ticket-id is required for --remediation-approve"
-            )
+            raise RuntimeError("--ticket-id is required for --remediation-approve")
         expires_hours = args.expires_hours
         if expires_hours is None:
             expires_hours = rem.get("approval_default_expires_hours", 24)
@@ -343,13 +352,9 @@ def _handle_remediation_mode(args: argparse.Namespace) -> bool:
 
     if args.remediation_approve_all:
         if not args.approver:
-            raise RuntimeError(
-                "--approver is required for --remediation-approve-all"
-            )
+            raise RuntimeError("--approver is required for --remediation-approve-all")
         if rem.get("approval_require_ticket_id", True) and not args.ticket_id:
-            raise RuntimeError(
-                "--ticket-id is required for --remediation-approve-all"
-            )
+            raise RuntimeError("--ticket-id is required for --remediation-approve-all")
         expires_hours = args.expires_hours
         if expires_hours is None:
             expires_hours = rem.get("approval_default_expires_hours", 24)
@@ -385,16 +390,12 @@ def _handle_remediation_mode(args: argparse.Namespace) -> bool:
                     approver=args.approver,
                     ticket_id=args.ticket_id,
                     expires_hours=expires_hours,
-                    require_ticket_id=rem.get(
-                        "approval_require_ticket_id", True
-                    ),
+                    require_ticket_id=rem.get("approval_require_ticket_id", True),
                 )
                 print(f"✓ Approved: {row.pack_id} ({row.hostname})")
                 approved_count += 1
             except RuntimeError as exc:
-                print(
-                    f"✗ Failed to approve {row.pack_id} ({row.hostname}): {exc}"
-                )
+                print(f"✗ Failed to approve {row.pack_id} ({row.hostname}): {exc}")
                 failed_count += 1
 
         print(
@@ -405,9 +406,7 @@ def _handle_remediation_mode(args: argparse.Namespace) -> bool:
 
     if args.remediation_reject:
         if not args.approver:
-            raise RuntimeError(
-                "--approver is required for --remediation-reject"
-            )
+            raise RuntimeError("--approver is required for --remediation-reject")
         if not args.reason:
             raise RuntimeError("--reason is required for --remediation-reject")
         path = reject_review_pack(
@@ -430,10 +429,8 @@ def _handle_remediation_mode(args: argparse.Namespace) -> bool:
             output_dir=out_dir,
             pack_id=args.remediation_apply,
             skip_jump=args.no_jump,
-            dry_run=args.apply_dry_run,
             allow_high_risk=(
-                args.allow_high_risk
-                or not rem.get("execution_block_high_risk", True)
+                args.allow_high_risk or not rem.get("execution_block_high_risk", True)
             ),
             remediation_settings=rem,
         )
@@ -450,10 +447,8 @@ def _handle_remediation_mode(args: argparse.Namespace) -> bool:
             config_path=args.config,
             output_dir=out_dir,
             skip_jump=args.no_jump,
-            dry_run=args.apply_dry_run,
             allow_high_risk=(
-                args.allow_high_risk
-                or not rem.get("execution_block_high_risk", True)
+                args.allow_high_risk or not rem.get("execution_block_high_risk", True)
             ),
             remediation_settings=rem,
         )
@@ -506,9 +501,11 @@ def main() -> None:
         skip_jump=args.no_jump,
         categories=args.categories,
         output_dir=args.output_dir,
-        dry_run_dir=args.dry_run,
         csv_report=args.csv_report,
         inventory_path=args.inventory,
+        tags_filter=args.tags,
+        min_severity=args.min_severity,
+        site_filter=args.site,
     )
 
     # Exit code: threshold-based or any-fail

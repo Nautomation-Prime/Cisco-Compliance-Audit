@@ -15,9 +15,8 @@ except Exception:
     pass  # Falls back to the literal above if VERSION.txt is missing
 
 from .auditor import run_audit
-from .collector import DataCollector, DeviceData, OfflineCollector
+from .collector import DataCollector, DeviceData
 from .compliance_engine import AuditResult, ComplianceEngine, Finding, Status
-from .config_loader import Config
 from .credentials import CredentialHandler
 from .hostname_parser import HostnameInfo, parse_hostname
 from .jump_manager import JumpManager
@@ -44,16 +43,14 @@ from .report import (
 )
 
 __all__ = [
-    # Existing
+    # Core infrastructure
     "CredentialHandler",
     "JumpManager",
-    "Config",
     "DeviceConnector",
     # Compliance audit
     "parse_hostname",
     "HostnameInfo",
     "DataCollector",
-    "OfflineCollector",
     "DeviceData",
     "classify_ports",
     "PortRole",

@@ -18,11 +18,11 @@ Built on **PyATS/Genie** for structured parsing, **Netmiko** for transport, and 
   - [Basic Examples](#basic-examples)
   - [CLI Reference](#cli-reference)
 - [Configuration Guide](#configuration-guide)
-  - [Multiple Config Files](#multiple-config-files)
+  - [Multiple Config Directories](#multiple-config-directories)
   - [Audit Settings](#audit-settings-1)
   - [Connection Settings](#connection-settings-2)
   - [Device Inventory](#device-inventory-3)
-  - [Compliance Checks](#compliance-checks-5)
+  - [Compliance Checks](#compliance-checks)
 - [Hostname Naming Convention](#hostname-naming-convention)
 - [How Port Classification Works](#how-port-classification-works)
   - [Uplink vs Downlink Detection](#uplink-vs-downlink-detection)
@@ -52,9 +52,9 @@ Built on **PyATS/Genie** for structured parsing, **Netmiko** for transport, and 
 | ------ | ----------- |
 | **90+ compliance checks** | Every check toggleable via `enabled: true/false` in YAML |
 | **Concurrent auditing** | Audit multiple devices in parallel — configurable worker count via `max_workers` |
-| **Multiple config files** | Run different YAML configs per site or purpose with `-c site_london.yaml` |
-| **Separate device inventory** | Devices listed in their own `devices.yaml` — swap inventories without touching compliance policy |
-| **Role-aware** | Automatically detects device role (Access / Core / SD-WAN / Industrial) from the hostname naming convention |
+| **Split config directory** | Policy split across `audit_settings.yaml`, `connection.yaml`, `management_plane.yaml` etc. — per-site directories via `-c configs/site_alpha/` |
+| **Separate device inventory** | Devices listed in their own `devices/devices.yaml` — swap inventories without touching compliance policy |
+| **Role-aware** | Automatically detects device role (Access Switch) from the hostname naming convention |
 | **Port classification** | Every interface is classified as ACCESS, TRUNK_UPLINK, TRUNK_DOWNLINK, UNUSED, ROUTED, SVI, etc. |
 | **Port-channel awareness** | Detects EtherChannel membership via `show etherchannel summary`; runs checks against the Port-channel interface, not individual members |
 | **Uplink/downlink detection** | Uses STP root-port election + CDP/LLDP neighbor hostname to reliably determine trunk direction |
@@ -70,9 +70,11 @@ Built on **PyATS/Genie** for structured parsing, **Netmiko** for transport, and 
 | **Remediation scripts** | Auto-generated per-device IOS-XE config snippets to fix FAILs — port-channel aware |
 | **Bulk approved-pack apply** | Apply all approved remediation packs in one run with `--remediation-apply-all` |
 | **Remediation lifecycle workflow** | Enterprise-grade workflow with approval tracking, change tickets, expiry times, and risk controls |
-| **Dry-run / offline mode** | Audit saved command outputs without live SSH — useful for testing and CI |
 | **Credential flexibility** | OS keyring (optional) → environment variables → interactive prompt |
 | **Category filtering** | Audit only management plane, or only data plane, etc. |
+| **Severity filtering** | `--min-severity critical/high/medium/low/info` — surface only findings at or above the chosen level |
+| **Tag filtering** | `--tags cis pci hardening` — filter findings by compliance framework or custom label |
+| **Per-check metadata** | Every check carries `severity`, `tags`, `applies_to_roles`, `exclude_hostnames`, `exclude_interfaces` for fine-grained control |
 | **Fail threshold** | Exit with code 1 if any device scores below a configurable percentage |
 
 ---
@@ -158,24 +160,30 @@ pip install -r requirements.txt
 
 ```bash
 # 1. Add your devices to the inventory file
-#    compliance_audit/devices.yaml
+#    compliance_audit/devices/devices.yaml
 
 # 2. Customise compliance policy (optional)
-#    compliance_audit/compliance_config.yaml
+#    compliance_audit/compliance_config/management_plane.yaml  (or any section file)
 
 # 3. Run the audit against a single device
-python -m compliance_audit --device GB-SITE1-001ASW001:10.1.1.1
+python -m compliance_audit --device ZZ-LAB1-001ASW001:192.0.2.61
 
 # 4. Or audit all devices in the inventory (concurrently)
 python -m compliance_audit
 
-# 5. Use a site-specific config file
-python -m compliance_audit -c configs/site_london.yaml
+# 5. Use a site-specific config directory
+python -m compliance_audit -c configs/site_alpha
 
 # 6. Use a different device inventory
-python -m compliance_audit -i inventories/site_london_devices.yaml
+python -m compliance_audit -i inventories/site_alpha_devices.yaml
 
-# 7. View the reports in ./reports/
+# 7. Surface only high-severity findings
+python -m compliance_audit --min-severity high
+
+# 8. Surface only CIS or PCI-tagged findings
+python -m compliance_audit --tags cis pci
+
+# 9. View the reports in ./reports/
 ```
 
 The tool will prompt for credentials if they are not found in environment variables.
@@ -200,26 +208,32 @@ The runbook is command-first and covers audit, approval, apply, apply-all, and t
 
 ```bash
 # Audit a single device (hostname:ip format)
-python -m compliance_audit --device GB-SITE1-001ASW001:10.1.1.1
+python -m compliance_audit --device ZZ-LAB1-001ASW001:192.0.2.61
 
 # Audit multiple devices
-python -m compliance_audit --device GB-SITE1-001ASW001:10.1.1.1 --device GB-SITE1-001CSW001:10.1.1.2
+python -m compliance_audit --device ZZ-LAB1-001ASW001:192.0.2.61 --device ZZ-HUB1-001CSW001:192.0.2.62
 
 # Audit by IP only (hostname won't be parsed for role)
-python -m compliance_audit --device 10.1.1.1
+python -m compliance_audit --device 192.0.2.61
 
-# Audit all devices listed in devices.yaml
+# Audit all devices listed in devices/devices.yaml
 python -m compliance_audit
 
+# Audit only devices in a specific site group
+python -m compliance_audit --site site_lab
+
+# Audit devices across multiple site groups
+python -m compliance_audit --site site_lab site_brn
+
 # Use a different device inventory file
-python -m compliance_audit -i inventories/site_london_devices.yaml
+python -m compliance_audit -i inventories/site_alpha_devices.yaml
 
 # Use a different config file (e.g. per-site configs)
-python -m compliance_audit -c configs/site_london.yaml
-python -m compliance_audit -c configs/site_manchester.yaml
+python -m compliance_audit -c configs/site_alpha.yaml
+python -m compliance_audit -c configs/site_beta.yaml
 
 # Skip the jump host (connect directly)
-python -m compliance_audit --device 10.1.1.1 --no-jump
+python -m compliance_audit --device 192.0.2.61 --no-jump
 
 # Only run management plane checks
 python -m compliance_audit --categories management_plane
@@ -227,14 +241,20 @@ python -m compliance_audit --categories management_plane
 # Only run data plane and control plane checks
 python -m compliance_audit --categories data_plane control_plane
 
+# Surface only high-severity and above findings
+python -m compliance_audit --min-severity high
+
+# Surface only CIS-tagged findings
+python -m compliance_audit --tags cis
+
+# Combine tag and severity filters
+python -m compliance_audit --min-severity high --tags cis pci
+
 # Override the report output directory
 python -m compliance_audit -o ./my-reports
 
 # Fail if any device scores below 80%
 python -m compliance_audit --fail-threshold 80
-
-# Dry-run mode — audit saved command outputs (no SSH)
-python -m compliance_audit --dry-run ./saved_outputs
 
 # Force CSV report generation
 python -m compliance_audit --csv
@@ -266,9 +286,11 @@ python -m compliance_audit --remediation-apply-all
 
 ```text
 python -m compliance_audit [-h] [-c CONFIG] [-d DEVICES] [-i INVENTORY]
-                           [--no-jump] [--categories CAT [CAT ...]]
+                           [--site SITE [SITE ...]] [--no-jump]
+                           [--categories CAT [CAT ...]]
+                           [--tags TAG [TAG ...]] [--min-severity LEVEL]
                            [-o OUTPUT_DIR] [--fail-threshold PCT]
-                           [--dry-run DIR] [--csv] [--no-csv] [-v]
+                           [--csv] [--no-csv] [-v]
                            [--remediation-list [STATUS]]
                            [--remediation-approve PACK_ID]
                            [--remediation-approve-all]
@@ -276,20 +298,22 @@ python -m compliance_audit [-h] [-c CONFIG] [-d DEVICES] [-i INVENTORY]
                            [--remediation-apply PACK_ID]
                            [--remediation-apply-all]
                            [--approver NAME] [--ticket-id ID] [--reason TEXT]
-                           [--expires-hours HOURS] [--apply-dry-run]
+                           [--expires-hours HOURS]
                            [--allow-high-risk] [--interactive] [--tui]
                            [--list-options]
 
 Options:
   -h, --help                    Show help and exit
-  -c, --config CONFIG           Path to YAML config (default: compliance_config.yaml)
+  -c, --config CONFIG           Path to compliance config directory (default: compliance_config/)
   -d, --device DEVICES          Device to audit — IP or hostname:IP (repeatable)
-  -i, --inventory FILE          Path to device inventory YAML (default: devices.yaml)
+  -i, --inventory FILE          Path to device inventory YAML (default: devices/devices.yaml)
+  --site SITE ...               Only audit devices from these site group(s) (e.g. --site site_lab)
   --no-jump                     Connect directly without jump host
   --categories CAT ...          Only run checks in named categories
+  --tags TAG ...                Surface only findings whose tags include at least one of these values
+  --min-severity LEVEL          Hide findings below this severity (critical > high > medium > low > info)
   -o, --output-dir DIR          Override the report output directory from config
   --fail-threshold PCT          Exit code 1 if any device scores below this %
-  --dry-run DIR                 Offline mode — read saved command outputs from DIR
   --csv / --no-csv              Force-enable or disable CSV report generation
   -v, --verbose                 Increase verbosity (-v = INFO, -vv = DEBUG)
 
@@ -307,7 +331,6 @@ Remediation Lifecycle Operations:
                                 can be disabled in config)
   --reason TEXT                 Reason required when rejecting
   --expires-hours HOURS         Approval expiry in hours (default: from config, fallback 24)
-  --apply-dry-run               Run preflight for remediation apply operations without sending config
   --allow-high-risk             Allow applying approved packs containing high-risk commands
 
 Premium Interactive Modes:
@@ -322,41 +345,48 @@ Premium Interactive Modes:
 
 ## Configuration Guide
 
-All configuration lives in a YAML file (default: `compliance_audit/compliance_config.yaml`). Device inventory is in a separate file (`compliance_audit/devices.yaml`). Both files are heavily commented.
+All configuration lives in a **directory of YAML files** (default: `compliance_audit/compliance_config/`). Each section of the policy has its own file — edit only what you need without touching the rest. Device inventory is in a separate file (`compliance_audit/devices/devices.yaml`).
 
-| Section | File | What it controls | How often you edit it |
-| --------- | ------ | ------------------ | ---------------------- |
-| **§1 Audit Settings** | `compliance_config.yaml` | Concurrency, reports, timeouts, reference VLANs | Every run |
-| **§2 Connection** | `compliance_config.yaml` | SSH, jump host, credentials | Per environment |
-| **§3 Device Inventory** | `devices.yaml` | List of devices to audit | Per run |
-| **§4 Classification** | `compliance_config.yaml` | Hostname role codes, endpoint neighbour detection | Set once per org |
-| **§5 Compliance Checks** | `compliance_config.yaml` | All 90+ policy checks | When policy changes |
+| File | What it controls | How often you edit it |
+| ------ | ------------------ | ---------------------- |
+| `audit_settings.yaml` | Concurrency, reports, timeouts, ROI, reference VLANs | Every run |
+| `connection.yaml` | SSH, jump host, credentials | Per environment |
+| `classification.yaml` | Inventory path, hostname role codes, endpoint detection | Set once per org |
+| `devices/devices.yaml` | List of devices to audit | Per run |
+| `management_plane.yaml` | SSH, AAA, NTP, logging, SNMP, VTY, banner checks | When policy changes |
+| `control_plane.yaml` | STP, VTP, DHCP snooping, DAI checks | When policy changes |
+| `data_plane.yaml` | Per-interface checks (BPDU guard, storm control, port security…) | When policy changes |
+| `role_specific.yaml` | Checks that apply only to specific device roles | When policy changes |
 
-### Multiple Config Files
+### Multiple Config Directories
 
-To manage different sites, environments, or audit scopes, copy the default config and run with `-c`:
+To manage different sites, environments, or audit scopes, copy the default config directory and run with `-c`:
 
 ```bash
-# Copy the default config for a new site
-cp compliance_audit/compliance_config.yaml configs/site_london.yaml
-cp compliance_audit/compliance_config.yaml configs/site_manchester.yaml
+# Copy the default config directory for a new site
+cp -r compliance_audit/compliance_config configs/site_alpha
+cp -r compliance_audit/compliance_config configs/site_beta
+
+# Edit only the files that differ per site
+# e.g. update the jump host for site_alpha:
+# configs/site_alpha/connection.yaml
 
 # Run each site independently
-python -m compliance_audit -c configs/site_london.yaml
-python -m compliance_audit -c configs/site_manchester.yaml
+python -m compliance_audit -c configs/site_alpha
+python -m compliance_audit -c configs/site_beta
 ```
 
-Each config file is self-contained for policy — connection settings and compliance checks are all in one file. The device inventory is referenced via `inventory_file` in the config, so different sites can point to their own inventory:
+Each config directory is self-contained — connection settings, compliance policy, and classification are in separate files. Edit only the files that differ between sites. The device inventory is referenced via `inventory_file` in `classification.yaml`, so different sites can point to their own inventory:
 
 ```yaml
-# In configs/site_london.yaml
-inventory_file: "../inventories/london_devices.yaml"
+# In configs/site_alpha/classification.yaml
+inventory_file: "../inventories/site_alpha_devices.yaml"
 ```
 
 Or override on the command line:
 
 ```bash
-python -m compliance_audit -c configs/site_london.yaml -i inventories/london_devices.yaml
+python -m compliance_audit -c configs/site_alpha -i inventories/site_alpha_devices.yaml
 ```
 
 ### Audit Settings (§1)
@@ -404,78 +434,129 @@ connection:
 
 ### Device Inventory (§3)
 
-Device inventory lives in its own file (default: `compliance_audit/devices.yaml`), keeping it separate from the compliance policy. The config file references it with:
+Device inventory lives in its own file (default: `compliance_audit/devices/devices.yaml`), keeping it separate from the compliance policy. The config file references it with:
 
 ```yaml
-# In compliance_config.yaml
-inventory_file: "devices.yaml"
+# In compliance_audit/compliance_config/classification.yaml
+inventory_file: "devices/devices.yaml"
 ```
 
 The inventory file format:
 
 ```yaml
-# devices.yaml
+# devices/devices.yaml
+
+# ── Flat list ────────────────────────────────────────────────────────
 devices:
-  - hostname: GB-SITE1-001ASW001
-    ip: 10.1.1.1
-  - hostname: GB-SITE1-001CSW001
-    ip: 10.1.1.2
-  - hostname: GB-SEV1-001ISW001
-    ip: 10.2.3.4
-  - hostname: non-standard-hostname
-    ip: 10.1.2.3
-    role: core_switch  # Optional: explicitly override device role detection
+  - ZZ-LAB1-001ASW001                    # bare hostname (DNS)
+  - hostname: ZZ-LAB1-001ASW002          # hostname + IP
+    ip: 192.0.2.62
+  - hostname: legacy-sw-01               # non-standard hostname
+    ip: 203.0.113.10
+    role: access_switch                  # needed if hostname doesn't match ASW pattern
+
+# ── Groups (organise by site or location) ────────────────────────────
+groups:
+  site_lab:
+    devices:
+      - ZZ-LAB1-001ASW001
+      - ZZ-LAB1-001ASW002
+  site_brn:
+    devices:
+      - ZZ-BRN1-001ASW001
+      - ZZ-BRN1-001ASW002
 ```
 
-**Optional Role Override:**
+Groups are organisational only — they do not set a role. Use a flat `devices:` list, groups, or both.
 
-If a device hostname doesn't follow the standard naming convention, you can explicitly specify its role using the optional `role` field:
+**Non-standard hostnames:**
+
+If a device hostname doesn't follow the `ASW` naming convention, add `role: access_switch` so role-specific checks still apply:
 
 ```yaml
 devices:
   - hostname: legacy-switch-01
-    ip: 192.168.1.10
-    role: access_switch  # Bypasses hostname-based role detection
+    ip: 203.0.113.10
+    role: access_switch  # bypasses hostname-based role detection
 ```
-
-Valid role values: `access_switch`, `core_switch`, `sdwan_router`, `industrial_switch`
-
-When `role` is not specified, the device role is automatically detected from the hostname as usual.
 
 You can also:
 
 - Override the inventory file with `-i` / `--inventory` on the command line
 - Skip the inventory entirely and pass devices with `--device` (overrides the file)
+- Filter to a specific site group with `--site` without switching files
 
-### Compliance Checks (§5)
+**Multiple inventory files:**
+
+You can keep separate inventory files per site alongside the default:
+
+```
+compliance_audit/devices/
+    devices.yaml        ← default (all sites in groups)
+    site_brn.yaml       ← branch site only
+    site_lab.yaml       ← lab only
+```
+
+Point to any of them at runtime:
+
+```bash
+# Use a site-specific inventory file
+python -m compliance_audit -i devices/site_brn.yaml
+
+# Or filter the default file to one site group
+python -m compliance_audit --site site_brn
+```
+
+The two approaches are interchangeable — separate files give hard isolation per site; a single grouped file with `--site` is easier to maintain when devices change.
+
+### Compliance Checks
 
 Every check follows the same pattern:
 
 ```yaml
 check_name:
-  enabled: true       # Toggle this check on/off
+  enabled: true           # Toggle this check on/off
+
+  # ── Optional metadata fields ──────────────────────────────────────
+  severity: high          # critical | high | medium | low | info
+                          # Used for --min-severity filtering and report colouring.
+
+  tags: [cis, pci]        # Arbitrary labels — use --tags to filter by framework.
+                          # Common values: hardening, encryption, authentication,
+                          #   cis, pci, nist, logging, snmp, stp, layer2-security,
+                          #   availability, access-control, routing-security
+
+  applies_to_roles:       # Only run this check for these device roles.
+    - access_switch       # Omit (or leave empty) to apply to all roles.
+
+  exclude_hostnames:      # Regex patterns — matching device hostnames skip this check.
+    - ".*-LEGACY-.*"
+
+  exclude_interfaces:     # Regex patterns (per-interface checks only).
+    - "GigabitEthernet0/0"
+
   # ... check-specific parameters
 ```
 
-Set `enabled: false` to skip any check your organisation doesn't need.
+Set `enabled: false` to skip any check your organisation doesn't need. All metadata fields are optional — checks without them default to `severity: medium` and `tags: []`.
 
 ---
 
 ## Hostname Naming Convention
 
-The tool automatically detects device roles by parsing hostnames against a specific naming convention. This drives role-specific compliance checks and per-interface policies.
+The tool automatically detects device roles by parsing hostnames against a configurable naming convention. The format below is only a neutral example; the site codes and prefixes can be adapted to whatever standard your environment uses.
 
 ### Format
 
 ```text
-GB-SITE1-001ASW001
-│   │││  │││││ │││
-│   │││  │││││ └── Device number (001 = 1st switch in cabinet)
-│   │││  ││└──── Role code (ASW/CSW/SDW/ISW)
-│   │││  └────── Comms room / cabinet number (005)
-│   ││└───────── Site instance (1 = first branch in city)
-│   └─────────── Site code (MKD = government standard code)
-└──────────────── Country code (GB)
+ZZ-LAB1-005ASW001
+││  │││  │││││ │││
+││  │││  │││││ └── Device number (001 = 1st switch in cabinet)
+││  │││  ││└──── Role code (ASW)
+││  │││  └────── Comms room / cabinet number (005)
+││  ││└───────── Site instance (1 = first branch for that site code)
+││  └─────────── Site code (LAB = sample site code)
+└──────────────── Prefix / country code (ZZ placeholder)
 ```
 
 ### Role Codes
@@ -483,32 +564,28 @@ GB-SITE1-001ASW001
 | Code | Meaning | Description |
 | ------ | --------- | ------------- |
 | **ASW** | Access Switch | End-user access layer switch |
-| **CSW** | Core Switch | Core/distribution layer switch |
-| **SDW** | SD-WAN Router | SD-WAN edge router |
-| **ISW** | Industrial Switch | Industrial/OT environment switch |
 
 ### Site Code
 
-The 2-4 letter site code follows UK government location standards:
+The 2-4 letter site code is fully configurable. Example placeholders:
 
-| Example | Location |
+| Example | Meaning |
 | --------- | ---------- |
-| MKD | Maidenhead |
-| SEV | Severnside |
-| MNC | Manchester |
+| LAB | Example lab or staging site |
+| HUB | Example shared services site |
+| BRN | Example branch site |
+| PLT | Example plant / industrial site |
 
-The digit after the site code is the branch instance (e.g. `MKD1` = first branch in Maidenhead).
+The digit after the site code is the site instance (e.g. `LAB1` = first instance of the sample site code).
 
 ### Examples
 
-| Hostname | Country | Site | Branch | Cabinet | Role | Device # |
-| ---------- | --------- | ------ | -------- | --------- | ------ | ---------- |
-| `GB-MKD1-001ASW001` | GB | MKD | 1 | 005 | Access Switch | 001 |
-| `GB-SEV1-001CSW001` | GB | SEV | 1 | 001 | Core Switch | 001 |
-| `GB-MNC2-003SDW001` | GB | MNC | 2 | 003 | SD-WAN Router | 001 |
-| `GB-MKD1-001ISW001` | GB | MKD | 1 | 005 | Industrial Switch | 001 |
+| Hostname | Prefix | Site | Branch | Cabinet | Role | Device # |
+| ---------- | -------- | ------ | -------- | --------- | ------ | ---------- |
+| `ZZ-LAB1-001ASW001` | ZZ | LAB | 1 | 001 | Access Switch | 001 |
+| `ZZ-BRN1-001ASW001` | ZZ | BRN | 1 | 001 | Access Switch | 001 |
 
-> **What if the hostname doesn't match?** The audit still runs — it just skips role-specific checks and logs a warning. To enable role-specific checks for non-standard hostnames, you can explicitly specify the device role in `devices.yaml` using the optional `role` field (see [Device Inventory](#device-inventory-3)).
+> **What if the hostname doesn't match?** The audit still runs — it just skips role-specific checks and logs a warning. To enable role-specific checks for non-standard hostnames, you can explicitly specify the device role in `devices/devices.yaml` using the optional `role` field (see [Device Inventory](#device-inventory-3)).
 
 ---
 
@@ -784,15 +861,15 @@ The tool generates several types of output:
 
 ### Console Summary (always)
 
-A compact summary table is printed to the terminal showing device scores at a glance — detailed per-check findings are in the HTML and CSV reports, keeping the console output clean and readable.
+A compact summary table is printed to the terminal showing device scores at a glance. When drilling into per-device findings, each row includes a **Sev** (severity) column colour-coded by level (critical → red, high → yellow, medium → cyan, etc.). Detailed findings are in the HTML and CSV reports.
 
 ```text
 ─────────────────────── AUDIT SUMMARY ────────────────────────
 ╭────────────────────────┬─────────────┬──────────────┬───────┬──────┬──────┬──────┬───────╮
 │ Device                 │ IP          │ Role         │ Score │ Pass │ Fail │ Warn │ Error │
 ├────────────────────────┼─────────────┼──────────────┼───────┼──────┼──────┼──────┼───────┤
-│ GB-SITE1-001ASW001     │ 10.1.1.1    │ Access Switch│  87%  │  55  │   8  │   2  │   0   │
-│ GB-SITE1-001CSW001     │ 10.1.1.2    │ Core Switch  │  94%  │  62  │   4  │   1  │   0   │
+│ ZZ-LAB1-001ASW001      │ 192.0.2.61  │ Access Switch│  87%  │  55  │   8  │   2  │   0   │
+│ ZZ-HUB1-001CSW001      │ 192.0.2.62  │ Core Switch  │  94%  │  62  │   4  │   1  │   0   │
 ╰────────────────────────┴─────────────┴──────────────┴───────┴──────┴──────┴──────┴───────╯
 ```
 
@@ -800,14 +877,14 @@ When ROI is enabled, the console also shows an ROI estimate line (hours/minutes 
 
 ### CSV Report
 
-Tabular summary of all findings across all devices, suitable for spreadsheet analysis or integration with other tools. Enable with `csv_report: true` in the config or `--csv` on the CLI.
+Tabular summary of all findings across all devices, suitable for spreadsheet analysis or integration with other tools. Includes `severity` and `tags` columns for each finding. Enable with `csv_report: true` in the config or `--csv` on the CLI.
 
 ### JSON Report
 
 ```json
 {
-  "hostname": "GB-SITE1-001ASW001",
-  "ip": "10.1.1.1",
+  "hostname": "ZZ-LAB1-001ASW001",
+  "ip": "192.0.2.61",
   "score_pct": 87.3,
   "pass": 55,
   "fail": 8,
@@ -822,6 +899,8 @@ Tabular summary of all findings across all devices, suitable for spreadsheet ana
       "check": "bpdu_guard",
       "status": "FAIL",
       "detail": "GigabitEthernet1/0/5: BPDU guard missing (access port)",
+      "severity": "high",
+      "tags": ["layer2-security", "stp", "cis", "pci"],
       "remediation": "spanning-tree bpduguard enable"
     }
   ]
@@ -843,16 +922,17 @@ When ROI is enabled, additional stat cards show estimated minutes saved and valu
 - Clickable device grid with score bars — click a device to jump to its section
 - Collapsible per-device sections (expand/collapse all)
 - Global status filter buttons (show only failures, warnings, etc.)
+- Severity badges and tag pills on every finding row
 - Search box that filters across all devices and hides empty sections
 - Back-to-top button for quick navigation
 
 All reports are saved to the `output_dir` (default `./reports/`) with filenames like:
 
 ```text
-reports/GB-SITE1-001ASW001_20260308_143025.json
-reports/GB-SITE1-001ASW001_20260308_143025.html
-reports/GB-SITE1-001ASW001_remediation_20260308_143025.txt
-reports/GB-SITE1-001ASW002_20260308_143025.html
+reports/ZZ-LAB1-001ASW001_20260308_143025.json
+reports/ZZ-LAB1-001ASW001_20260308_143025.html
+reports/ZZ-LAB1-001ASW001_remediation_20260308_143025.txt
+reports/ZZ-LAB1-001ASW002_20260308_143025.html
 reports/consolidated_report_20260308_143025.html
 reports/compliance_audit_20260308_143025.csv
 ```
@@ -866,7 +946,7 @@ For each device with FAIL findings, a ready-to-paste IOS-XE config snippet is ge
 - Deduplicates commands and ends with `write memory`
 
 ```text
-! Remediation script for GB-SITE1-001ASW001 (10.1.1.1)
+! Remediation script for ZZ-LAB1-001ASW001 (192.0.2.61)
 ! Generated: 2026-03-08 14:30 UTC
 ! Findings to fix: 8
 !
@@ -906,8 +986,8 @@ python -m compliance_audit --remediation-list approved
 **Example output:**
 
 ```text
-baea5533a7f61a24 | pending  | GB-SITE1-001ASW001       | 10.1.1.1        | risk=medium | findings=8   | created=2026-03-23T14:30:25Z
-220f8b3b0ce7a91e | approved | GB-SITE1-001CSW001       | 10.1.1.2        | risk=low    | findings=4   | created=2026-03-23T14:30:28Z
+baea5533a7f61a24 | pending  | ZZ-LAB1-001ASW001        | 192.0.2.61      | risk=medium | findings=8   | created=2026-03-23T14:30:25Z
+220f8b3b0ce7a91e | approved | ZZ-HUB1-001CSW001        | 192.0.2.62      | risk=low    | findings=4   | created=2026-03-23T14:30:28Z
 ```
 
 ##### 2. Approve a Review Pack
@@ -973,14 +1053,14 @@ python -m compliance_audit --remediation-approve-all \
 
 ```text
 Found 15 pending remediation pack(s):
-  baea5533... | GB-MKD1-022ASW001        | 10.112.224.99   | risk=medium | findings= 72
-  220f8b3b... | GB-MKD1-023ASW001        | 10.112.224.97   | risk=medium | findings= 32
+  baea5533... | ZZ-BRN2-022ASW001        | 198.51.100.99   | risk=medium | findings= 72
+  220f8b3b... | ZZ-BRN2-023ASW001        | 198.51.100.97   | risk=medium | findings= 32
   ...
 
 Approve all 15 pack(s)? [y/n]: y
 
-✓ Approved: baea5533... (GB-MKD1-022ASW001)
-✓ Approved: 220f8b3b... (GB-MKD1-023ASW001)
+✓ Approved: baea5533... (ZZ-BRN2-022ASW001)
+✓ Approved: 220f8b3b... (ZZ-BRN2-023ASW001)
 ...
 
 Bulk approval complete: 15 approved, 0 failed
@@ -1015,10 +1095,6 @@ python -m compliance_audit --remediation-apply baea5533a7f61a24
 # Apply all approved packs in sequence
 python -m compliance_audit --remediation-apply-all
 
-# Dry-run mode: preflight checks only, no configuration sent
-python -m compliance_audit --remediation-apply baea5533a7f61a24 --apply-dry-run
-python -m compliance_audit --remediation-apply-all --apply-dry-run
-
 # Allow high-risk commands (normally blocked by default)
 python -m compliance_audit --remediation-apply baea5533a7f61a24 --allow-high-risk
 python -m compliance_audit --remediation-apply-all --allow-high-risk
@@ -1032,7 +1108,6 @@ python -m compliance_audit --remediation-apply-all --allow-high-risk
 - **Checksum enforcement**: Script hash must match the approved review pack
 - **Preflight drift check**: Only findings still failing are applied
 - **Device identity validation**: Device prompt must match approved hostname when enabled
-- **Preflight validation**: Dry-run mode validates connectivity and prerequisites without sending configuration
 
 **Application Output:**
 The tool provides real-time progress indicators and detailed output including:
@@ -1054,8 +1129,8 @@ The tool provides real-time progress indicators and detailed output including:
 ```json
 {
   "pack_id": "baea5533a7f61a24",
-  "hostname": "GB-SITE1-001ASW001",
-  "ip": "10.1.1.1",
+  "hostname": "ZZ-LAB1-001ASW001",
+  "ip": "192.0.2.61",
   "status": "success",
   "preflight_still_failing": 8,
   "resolved": 8,
@@ -1115,24 +1190,6 @@ audit_settings:
 └─────────────┘
 ```
 
-### Dry-Run / Offline Mode
-
-Test the auditor against saved command outputs without live SSH access:
-
-```bash
-# Save outputs first (directory per device, one file per command)
-saved_outputs/
-  GB-SITE1-001ASW001/
-    show_running-config.txt
-    show_version.txt
-    show_interfaces.txt
-    show_etherchannel_summary.txt
-    ...
-
-# Run the audit offline
-python -m compliance_audit --dry-run ./saved_outputs
-```
-
 ---
 
 ## Credentials
@@ -1183,7 +1240,14 @@ Cisco-Compliance-Audit/
 ├── compliance_audit/
 │   ├── __init__.py             # Package exports and version
 │   ├── __main__.py             # CLI entry point (python -m compliance_audit)
-│   ├── compliance_config.yaml  # ★ Compliance policy — all checks and settings
+│   ├── compliance_config/          # ★ Compliance policy (directory of split files)
+│   │   ├── audit_settings.yaml     # Concurrency, timeouts, ROI, output paths
+│   │   ├── connection.yaml         # SSH, jump host, credential store
+│   │   ├── classification.yaml     # Inventory path, hostname roles, endpoint detection
+│   │   ├── management_plane.yaml   # SSH, AAA, NTP, logging, SNMP, VTY checks
+│   │   ├── control_plane.yaml      # STP, VTP, DHCP snooping, DAI checks
+│   │   ├── data_plane.yaml         # Per-interface checks (BPDU guard, storm control…)
+│   │   └── role_specific.yaml      # Checks that apply only to specific device roles
 │   ├── devices.yaml            # ★ Device inventory — hostnames and IPs
 │   ├── config_loader.py        # YAML config loader (supports separate inventory)
 │   ├── credentials.py          # Credential handler (keyring / env / prompt)
@@ -1196,11 +1260,11 @@ Cisco-Compliance-Audit/
 │   ├── report.py               # Rich console + interactive HTML + JSON + CSV reports
 │   └── auditor.py              # Orchestrator (concurrent via ThreadPoolExecutor)
 ├── configs/                    # (optional) Per-site config files
-│   ├── site_london.yaml
-│   └── site_manchester.yaml
+│   ├── site_alpha.yaml
+│   └── site_beta.yaml
 ├── inventories/                # (optional) Per-site device inventories
-│   ├── london_devices.yaml
-│   └── manchester_devices.yaml
+│   ├── site_alpha_devices.yaml
+│   └── site_beta_devices.yaml
 ├── requirements.txt            # Python dependencies
 ├── README.md                   # This file
 └── LICENSE
@@ -1212,12 +1276,14 @@ Cisco-Compliance-Audit/
 
 ### Adding a New Global Check
 
-1. **Add the check to `compliance_config.yaml`:**
+1. **Add the check to the appropriate file in `compliance_audit/compliance_config/`** (e.g. `management_plane.yaml`):
 
     ```yaml
     management_plane:
-    my_new_check:
+      my_new_check:
         enabled: true
+        severity: medium
+        tags: [hardening]
         expected: "some expected config line"
     ```
 
@@ -1242,7 +1308,7 @@ The `_present()` helper checks that a regex matches at least one global config l
 
 Role codes are configured in the YAML — no code changes needed:
 
-1. **Add the role** to `hostname_roles` in `compliance_config.yaml`:
+1. **Add the role** to `hostname_roles` in `compliance_audit/compliance_config/classification.yaml`:
 
     ```yaml
     hostname_roles:
@@ -1267,11 +1333,11 @@ Role codes are configured in the YAML — no code changes needed:
 | `Hostname did not match naming convention` | Role-specific checks are skipped. Use the `hostname:ip` format on the CLI to provide a parseable hostname. |
 | `TRUNK_UNKNOWN` ports in report | Uplink/downlink direction could not be determined. Check that CDP is enabled and the neighbor's hostname follows the naming convention. |
 | Port-channel members showing as individual findings | Ensure `show etherchannel summary` is collected (requires Genie). Fallback uses `channel-group` from running-config. |
-| `Config file not found` | The tool looks for `compliance_config.yaml` in the current directory, then in the `compliance_audit/` directory. Use `--config` for a custom path. |
+| `Config directory not found` | The tool looks for the `compliance_config` directory in the current directory, then in `compliance_audit/`. Use `--config` for a custom path. |
 | Timeout on `show` commands | Increase `collect_timeout` in `audit_settings` or check device responsiveness. |
 | Large devices with many interfaces slow to audit | This is expected — every interface is checked individually. Consider using `--categories` to focus on specific check groups. |
 | Concurrent audits too slow / too fast | Adjust `max_workers` in `audit_settings`. Use `1` for sequential, or increase for more parallelism. |
-| Want different policies per site | Copy `compliance_config.yaml`, edit each copy, and run with `-c configs/site_name.yaml`. Use `-i` for site-specific inventories. |
+| Want different policies per site | Copy the `compliance_config/` directory, edit per-site files, and run with `-c configs/site_name`. Use `-i` for site-specific inventories. |
 
 ---
 

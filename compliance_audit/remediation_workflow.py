@@ -20,6 +20,8 @@ from pathlib import Path
 from typing import Callable, Optional
 
 import yaml
+from netmiko.exceptions import NetmikoBaseException
+from paramiko.ssh_exception import SSHException
 from rich.console import Console
 from rich.progress import (
     BarColumn,
@@ -41,16 +43,25 @@ from .report import save_consolidated_html, save_csv, save_html, save_json
 log = logging.getLogger(__name__)
 console = Console()
 
+DEVICE_OPERATION_ERRORS = (
+    AttributeError,
+    NetmikoBaseException,
+    OSError,
+    RuntimeError,
+    SSHException,
+    TimeoutError,
+    TypeError,
+    ValueError,
+)
+WORKFLOW_ERRORS = DEVICE_OPERATION_ERRORS + (LookupError, sqlite3.Error, yaml.YAMLError)
+
 
 def get_remediation_settings(audit_settings: Optional[dict]) -> dict:
-    """Resolve remediation settings with legacy compatibility defaults."""
+    """Resolve remediation settings from audit_settings.remediation config node."""
     settings = audit_settings or {}
     remediation_node = settings.get("remediation", {})
     if not isinstance(remediation_node, dict):
         remediation_node = {}
-
-    legacy_script = bool(settings.get("remediation_script", True))
-    legacy_review = bool(settings.get("remediation_review_pack", True))
 
     approval = remediation_node.get("approval", {})
     if not isinstance(approval, dict):
@@ -59,30 +70,24 @@ def get_remediation_settings(audit_settings: Optional[dict]) -> dict:
     if not isinstance(execution, dict):
         execution = {}
 
-    enabled = bool(remediation_node.get("enabled", legacy_script))
+    enabled = bool(remediation_node.get("enabled", True))
 
     return {
         "enabled": enabled,
-        "generate_script": bool(
-            remediation_node.get("generate_script", enabled)
-        ),
+        "generate_script": bool(remediation_node.get("generate_script", enabled)),
         "generate_review_pack": bool(
-            remediation_node.get("generate_review_pack", legacy_review)
+            remediation_node.get("generate_review_pack", enabled)
         ),
         "approval_default_expires_hours": int(
             approval.get("default_expires_hours", 24)
         ),
-        "approval_require_ticket_id": bool(
-            approval.get("require_ticket_id", True)
-        ),
+        "approval_require_ticket_id": bool(approval.get("require_ticket_id", True)),
         "execution_enabled": bool(execution.get("enabled", False)),
         "execution_linux_only": bool(execution.get("linux_only", True)),
         "execution_block_high_risk": bool(
             execution.get("block_high_risk_by_default", True)
         ),
-        "execution_enforce_checksum": bool(
-            execution.get("enforce_checksum", True)
-        ),
+        "execution_enforce_checksum": bool(execution.get("enforce_checksum", True)),
         "execution_preflight_drift_check": bool(
             execution.get("preflight_drift_check", True)
         ),
@@ -155,9 +160,7 @@ def _risk_for_command(command: str, category: str, check_name: str) -> str:
         return "high"
     if any(tok in cmd for tok in medium_tokens):
         return "medium"
-    if cat in {"management_plane", "control_plane"} and (
-        "aaa" in chk or "snmp" in chk
-    ):
+    if cat in {"management_plane", "control_plane"} and ("aaa" in chk or "snmp" in chk):
         return "high"
     if cat in {"control_plane", "data_plane"}:
         return "medium"
@@ -339,9 +342,7 @@ def _build_command_groups(findings: list[dict]) -> dict:
 
         if interface:
             context = (
-                interface
-                if interface.startswith("line ")
-                else f"interface {interface}"
+                interface if interface.startswith("line ") else f"interface {interface}"
             )
             section_map.setdefault(context, []).append(cmd)
         else:
@@ -471,13 +472,9 @@ def _generate_post_remediation_report(
         report_formats: List of report formats to generate (json, html, csv, txt)
         progress: Rich Progress instance for status updates
     """
-    from datetime import datetime, timezone
-
     from . import __version__
 
-    task = progress.add_task(
-        "[cyan]Generating post-remediation report...", total=None
-    )
+    task = progress.add_task("[cyan]Generating post-remediation report...", total=None)
     start_time = time.monotonic()
 
     try:
@@ -502,9 +499,7 @@ def _generate_post_remediation_report(
 
         # Populate metadata (must come before ROI so duration_secs is available)
         result.duration_secs = round(time.monotonic() - start_time, 1)
-        result.audit_ts = datetime.now(timezone.utc).strftime(
-            "%Y-%m-%d %H:%M UTC"
-        )
+        result.audit_ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
         result.tool_version = __version__
 
         # Attach ROI data so reports can show savings information
@@ -515,15 +510,13 @@ def _generate_post_remediation_report(
                 roi_settings,
                 context="post_remediation",
             )
-            result._roi = roi
+            setattr(result, "_roi", roi)
             result.roi = roi
 
         # Extract IOS-XE version from Genie data
         if data.version:
             ver = data.version.get("version", {})
-            result.ios_version = ver.get("version", "") or ver.get(
-                "xe_version", ""
-            )
+            result.ios_version = ver.get("version", "") or ver.get("xe_version", "")
 
         # Create subdirectory for post-remediation reports
         post_report_dir = Path(output_dir) / "post_remediation"
@@ -546,9 +539,7 @@ def _generate_post_remediation_report(
             if path:
                 report_paths.append(path)
 
-        progress.update(
-            task, description="[green]✓ Post-remediation report generated"
-        )
+        progress.update(task, description="[green]✓ Post-remediation report generated")
         progress.stop_task(task)
 
         # Show report paths
@@ -559,10 +550,8 @@ def _generate_post_remediation_report(
 
         return result
 
-    except Exception as exc:
-        progress.update(
-            task, description=f"[yellow]⚠ Report generation failed: {exc}"
-        )
+    except WORKFLOW_ERRORS as exc:
+        progress.update(task, description=f"[yellow]⚠ Report generation failed: {exc}")
         progress.stop_task(task)
         log.warning("Post-remediation report generation failed: %s", exc)
         return None
@@ -636,7 +625,7 @@ def _highest_risk(findings: list[dict]) -> str:
 
 
 def _default_db_path(output_dir: str) -> Path:
-    return Path(output_dir) / "remediation_reviews.db"
+    return Path(output_dir) / "db" / "remediation_reviews.db"
 
 
 def generate_review_pack(result, script_path: Path, output_dir: str) -> Path:
@@ -644,9 +633,7 @@ def generate_review_pack(result, script_path: Path, output_dir: str) -> Path:
     outdir = Path(output_dir)
     outdir.mkdir(parents=True, exist_ok=True)
 
-    fails = [
-        f for f in result.findings if f.status == Status.FAIL and f.remediation
-    ]
+    fails = [f for f in result.findings if f.status == Status.FAIL and f.remediation]
     findings: list[dict] = []
     for idx, finding in enumerate(fails, start=1):
         command = finding.remediation.strip()
@@ -666,9 +653,7 @@ def generate_review_pack(result, script_path: Path, output_dir: str) -> Path:
             }
         )
 
-    pack_id_seed = (
-        f"{result.hostname}|{result.ip}|{result.audit_ts}|{script_path.name}"
-    )
+    pack_id_seed = f"{result.hostname}|{result.ip}|{result.audit_ts}|{script_path.name}"
     pack_id = hashlib.sha256(pack_id_seed.encode("utf-8")).hexdigest()[:16]
 
     risk_counts = {
@@ -817,7 +802,6 @@ def apply_approved_pack(
     output_dir: str,
     pack_id: str,
     skip_jump: bool = False,
-    dry_run: bool = False,
     allow_high_risk: bool = False,
     remediation_settings: Optional[dict] = None,
     post_report_callback: Optional[Callable[[AuditResult], None]] = None,
@@ -840,9 +824,7 @@ def apply_approved_pack(
             pack["lifecycle"]["status"] = "expired"
             _write_json(pack_path, pack)
             store.upsert_from_pack(pack, pack_path)
-            raise RuntimeError(
-                "Approval has expired. Re-approve before apply."
-            )
+            raise RuntimeError("Approval has expired. Re-approve before apply.")
 
     script_path = Path(pack["script"]["path"])
     if not script_path.exists():
@@ -922,18 +904,12 @@ def apply_approved_pack(
             connection, jump = _open_device_connection_with_creds(
                 cfg, ip, username, password, enable_secret, skip_jump=skip_jump
             )
-            progress.update(
-                task, description=f"[green]✓ Connected to {hostname}"
-            )
+            progress.update(task, description=f"[green]✓ Connected to {hostname}")
             progress.stop_task(task)
 
             if rem.get("execution_require_hostname_match", True):
                 prompt = connection.find_prompt().strip().rstrip("#>")
-                if (
-                    prompt
-                    and hostname
-                    and hostname.lower() not in prompt.lower()
-                ):
+                if prompt and hostname and hostname.lower() not in prompt.lower():
                     raise RuntimeError(
                         "Device identity mismatch. Expected hostname "
                         f"containing '{hostname}', got prompt '{prompt}'."
@@ -982,42 +958,15 @@ def apply_approved_pack(
                 active_findings = [
                     item
                     for item in pack.get("findings", [])
-                    if (item["check_name"], item.get("interface", ""))
-                    in still_failing
+                    if (item["check_name"], item.get("interface", "")) in still_failing
                 ]
                 plan_commands = _flatten_apply_commands(
                     _build_command_groups(active_findings)
                 )
             else:
-                plan_commands = _flatten_apply_commands(
-                    pack.get("command_groups", {})
-                )
+                plan_commands = _flatten_apply_commands(pack.get("command_groups", {}))
             if not plan_commands:
                 raise RuntimeError("No commands available in approved pack.")
-
-            if dry_run:
-                summary = {
-                    "pack_id": pack_id,
-                    "hostname": hostname,
-                    "ip": ip,
-                    "planned_command_count": len(plan_commands),
-                    "preflight_still_failing": len(still_failing),
-                    "status": "dry-run",
-                }
-                pack["execution"]["status"] = "dry-run"
-                pack["execution"]["summary"] = (
-                    "Dry-run preflight passed; no commands applied."
-                )
-                pack["execution"]["preflight_still_failing"] = len(
-                    still_failing
-                )
-                _write_json(pack_path, pack)
-                store.upsert_from_pack(pack, pack_path)
-                progress.console.print(
-                    "[green]✓ Dry-run complete - "
-                    f"{len(plan_commands)} commands ready to apply"
-                )
-                return summary
 
             task = progress.add_task(
                 f"[cyan]Applying {len(plan_commands)} commands...", total=None
@@ -1031,16 +980,12 @@ def apply_approved_pack(
             progress.stop_task(task)
 
             if rem.get("execution_save_config", True):
-                task = progress.add_task(
-                    "[cyan]Saving configuration...", total=None
-                )
+                task = progress.add_task("[cyan]Saving configuration...", total=None)
                 try:
                     connection.save_config()
-                except Exception:
+                except DEVICE_OPERATION_ERRORS:
                     connection.send_command_timing("write memory")
-                progress.update(
-                    task, description="[green]✓ Configuration saved"
-                )
+                progress.update(task, description="[green]✓ Configuration saved")
                 progress.stop_task(task)
 
             task = progress.add_task(
@@ -1060,8 +1005,7 @@ def apply_approved_pack(
             progress.update(
                 task,
                 description=(
-                    "[green]✓ Post-check complete "
-                    f"({resolved} findings resolved)"
+                    f"[green]✓ Post-check complete ({resolved} findings resolved)"
                 ),
             )
             progress.stop_task(task)
@@ -1126,9 +1070,7 @@ def apply_approved_pack(
                     + "\n"
                 )
 
-            progress.console.print(
-                "[bold green]✓ Remediation applied successfully![/]"
-            )
+            progress.console.print("[bold green]✓ Remediation applied successfully![/]")
             progress.console.print(f"  Commands applied: {len(plan_commands)}")
             progress.console.print(
                 f"  Findings resolved: {resolved}/{len(still_failing)}"
@@ -1145,7 +1087,7 @@ def apply_approved_pack(
                 "device_output_preview": output[-1000:],
             }
 
-        except Exception as exc:
+        except WORKFLOW_ERRORS as exc:
             pack["execution"]["status"] = "failed"
             pack["execution"]["applied_at"] = _utc_now_str()
             pack["execution"]["summary"] = str(exc)
@@ -1172,7 +1114,7 @@ def apply_approved_pack(
             if connection is not None:
                 try:
                     connection.disconnect()
-                except Exception:
+                except DEVICE_OPERATION_ERRORS:
                     pass
             if jump is not None:
                 jump.close()
@@ -1182,7 +1124,6 @@ def apply_all_approved_packs(
     config_path: str,
     output_dir: str,
     skip_jump: bool = False,
-    dry_run: bool = False,
     allow_high_risk: bool = False,
     remediation_settings: Optional[dict] = None,
 ) -> list[dict]:
@@ -1217,13 +1158,12 @@ def apply_all_approved_packs(
                 output_dir=output_dir,
                 pack_id=entry.pack_id,
                 skip_jump=skip_jump,
-                dry_run=dry_run,
                 allow_high_risk=allow_high_risk,
                 remediation_settings=remediation_settings,
                 post_report_callback=post_report_results.append,
             )
             summaries.append(summary)
-        except Exception as exc:
+        except WORKFLOW_ERRORS as exc:
             console.print(f"[red]✗ Failed: {exc}[/]")
             summaries.append(
                 {
@@ -1237,9 +1177,7 @@ def apply_all_approved_packs(
 
     if (
         rem_effective.get("execution_generate_post_report", False)
-        and rem_effective.get(
-            "execution_generate_consolidated_post_report", True
-        )
+        and rem_effective.get("execution_generate_consolidated_post_report", True)
         and post_report_results
     ):
         requested_formats = rem_effective.get(
@@ -1254,15 +1192,11 @@ def apply_all_approved_packs(
             report_formats=requested_formats,
         )
         if consolidated_paths:
-            console.print(
-                "[dim]Consolidated post-remediation reports saved:[/]"
-            )
+            console.print("[dim]Consolidated post-remediation reports saved:[/]")
             for path in consolidated_paths:
                 console.print(f"  [dim]• {path}[/]")
 
-    success = sum(
-        1 for s in summaries if s.get("status") in {"success", "dry-run"}
-    )
+    success = sum(1 for s in summaries if s.get("status") in {"success", "dry-run"})
     failed = len(summaries) - success
     console.print(
         f"\n[bold]Apply-all complete: {success} succeeded, {failed} failed[/]"

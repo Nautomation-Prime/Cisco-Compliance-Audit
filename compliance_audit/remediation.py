@@ -12,6 +12,8 @@ from pathlib import Path
 from typing import Optional
 
 from netmiko.base_connection import BaseConnection
+from netmiko.exceptions import NetmikoBaseException
+from paramiko.ssh_exception import SSHException
 from rich.console import Console
 from rich.progress import (
     BarColumn,
@@ -25,6 +27,25 @@ from rich.prompt import Confirm
 
 log = logging.getLogger(__name__)
 console = Console()
+
+REMEDIATION_ERRORS = (
+    AttributeError,
+    NetmikoBaseException,
+    OSError,
+    RuntimeError,
+    SSHException,
+    TimeoutError,
+    TypeError,
+    ValueError,
+)
+SCRIPT_PARSE_ERRORS = (OSError, UnicodeError, ValueError)
+DISCONNECT_ERRORS = (
+    AttributeError,
+    NetmikoBaseException,
+    OSError,
+    RuntimeError,
+    SSHException,
+)
 
 
 @dataclass
@@ -140,9 +161,7 @@ def apply_remediation_to_device(
 
     try:
         # Update progress description
-        progress.update(
-            task_id, description=f"[cyan]Applying config to {hostname}"
-        )
+        progress.update(task_id, description=f"[cyan]Applying config to {hostname}")
 
         # Use send_config_set to apply all commands in one go
         # This is more robust than applying commands one by one
@@ -176,9 +195,7 @@ def apply_remediation_to_device(
         progress.update(task_id, completed=len(commands))
 
         # Save configuration
-        progress.update(
-            task_id, description=f"[cyan]Saving config on {hostname}"
-        )
+        progress.update(task_id, description=f"[cyan]Saving config on {hostname}")
         save_output = connection.send_command(
             "write memory",
             expect_string=r"#",
@@ -193,7 +210,7 @@ def apply_remediation_to_device(
         result.success = True
         result.duration_secs = round(time.monotonic() - start_time, 1)
 
-    except Exception as exc:
+    except REMEDIATION_ERRORS as exc:
         log.exception("Remediation failed on %s", hostname)
         result.error_message = str(exc)
         result.duration_secs = round(time.monotonic() - start_time, 1)
@@ -204,7 +221,6 @@ def apply_remediation_to_device(
 def apply_remediation_scripts(
     script_paths: list[Path],
     device_connector_factory,
-    dry_run: bool = False,
 ) -> list[RemediationResult]:
     """
     Apply remediation scripts to multiple devices with progress indicators.
@@ -212,7 +228,6 @@ def apply_remediation_scripts(
     Args:
         script_paths: List of paths to remediation script files
         device_connector_factory: Callable that creates DeviceConnector instances
-        dry_run: If True, parse and validate scripts without applying
 
     Returns:
         List of RemediationResult objects
@@ -222,9 +237,7 @@ def apply_remediation_scripts(
         return []
 
     # Parse all scripts first to validate
-    console.print(
-        f"\n[bold]Parsing {len(script_paths)} remediation script(s)...[/]"
-    )
+    console.print(f"\n[bold]Parsing {len(script_paths)} remediation script(s)...[/]")
 
     parsed_scripts = []
     for script_path in script_paths:
@@ -235,7 +248,7 @@ def apply_remediation_scripts(
                 f"  [green]✓[/] {script_path.name}: "
                 f"{len(commands)} commands for {hostname} ({ip})"
             )
-        except Exception as exc:
+        except SCRIPT_PARSE_ERRORS as exc:
             console.print(f"  [red]✗[/] {script_path.name}: {exc}")
             log.error("Failed to parse %s: %s", script_path, exc)
 
@@ -250,10 +263,6 @@ def apply_remediation_scripts(
         f"  • Devices: {len(parsed_scripts)}\n"
         f"  • Total commands: {total_commands}\n"
     )
-
-    if dry_run:
-        console.print("[yellow]Dry run mode - no changes will be made[/]")
-        return []
 
     # Ask for confirmation
     if not Confirm.ask(
@@ -287,9 +296,7 @@ def apply_remediation_scripts(
             connection = None
             try:
                 # Create connection
-                progress.update(
-                    task_id, description=f"[cyan]Connecting to {hostname}"
-                )
+                progress.update(task_id, description=f"[cyan]Connecting to {hostname}")
                 connector = device_connector_factory(ip, hostname)
                 connection = connector.connect()
                 log.info("Connected to %s (%s)", hostname, ip)
@@ -319,7 +326,7 @@ def apply_remediation_scripts(
                         f"{result.error_message or 'Unknown error'}"
                     )
 
-            except Exception as exc:
+            except REMEDIATION_ERRORS as exc:
                 log.exception("Failed to apply remediation to %s", hostname)
                 result = RemediationResult(
                     hostname=hostname,
@@ -340,7 +347,7 @@ def apply_remediation_scripts(
                     try:
                         connection.disconnect()
                         log.debug("Disconnected from %s", hostname)
-                    except Exception:
+                    except DISCONNECT_ERRORS:
                         pass
 
                 # Mark task as complete

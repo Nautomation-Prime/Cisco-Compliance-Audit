@@ -35,7 +35,7 @@ from a shell (for example Linux, WSL, or Windows PowerShell).
 4. If you track automation value, enable ROI settings in audit_settings.roi.
 
 Example config path:
-- compliance_audit/compliance_config.yaml
+- compliance_audit/compliance_config/
 
 ## Optional ROI Setup
 
@@ -68,11 +68,29 @@ ROI appears in:
 # Run full audit from default config
 python -m compliance_audit
 
-# Run audit with specific config
-python -m compliance_audit -c configs/site_london.yaml
+# Run audit with specific config directory
+python -m compliance_audit -c configs/site_alpha
 
 # Run audit for a single device
-python -m compliance_audit --device GB-SITE1-001ASW001:10.1.1.1
+python -m compliance_audit --device ZZ-LAB1-001ASW001:192.0.2.61
+
+# Audit only devices in a specific site group (from the grouped inventory)
+python -m compliance_audit --site site_lab
+
+# Audit devices across multiple site groups
+python -m compliance_audit --site site_lab site_brn
+
+# Use a separate per-site inventory file instead
+python -m compliance_audit -i devices/site_brn.yaml
+
+# Surface only high-severity findings
+python -m compliance_audit --min-severity high
+
+# Surface only CIS or PCI-tagged findings
+python -m compliance_audit --tags cis pci
+
+# Combine severity and tag filters
+python -m compliance_audit --min-severity high --tags cis pci
 
 # Launch guided interactive wizard
 python -m compliance_audit --interactive
@@ -150,7 +168,13 @@ Tip:
 ### 1) Run Audit
 
 ```bash
-python -m compliance_audit -c compliance_audit/compliance_config.yaml
+# Full audit using default config directory
+python -m compliance_audit
+
+# Audit with optional filters
+python -m compliance_audit --min-severity high
+python -m compliance_audit --tags cis pci
+python -m compliance_audit --categories management_plane
 ```
 
 Expected outcome:
@@ -190,21 +214,7 @@ Notes:
   audit_settings.remediation.approval.require_ticket_id
 - Use --expires-hours to override default expiry.
 
-### 4) Dry-Run Before Apply (Recommended)
-
-Single pack preflight:
-
-```bash
-python -m compliance_audit --remediation-apply <PACK_ID> --apply-dry-run
-```
-
-Apply-all preflight:
-
-```bash
-python -m compliance_audit --remediation-apply-all --apply-dry-run
-```
-
-### 5) Apply Changes
+### 4) Apply Changes
 
 Apply one approved pack:
 
@@ -225,7 +235,7 @@ python -m compliance_audit --remediation-apply <PACK_ID> --allow-high-risk
 python -m compliance_audit --remediation-apply-all --allow-high-risk
 ```
 
-### 6) Post-Apply Verification
+### 5) Post-Apply Verification
 
 ```bash
 python -m compliance_audit --remediation-list applied
@@ -235,16 +245,15 @@ python -m compliance_audit --remediation-list failed
 Optional: rerun audit for confirmation.
 
 ```bash
-python -m compliance_audit -c compliance_audit/compliance_config.yaml
+python -m compliance_audit
 ```
 
 ## Safety Rules
 
 1. Do not use remediation apply during unauthorized change windows.
-2. Always use --apply-dry-run before production apply.
-3. Do not approve packs without reviewing risk and ticket alignment.
-4. Treat --allow-high-risk as exception-only with explicit approval.
-5. Prefer --remediation-apply-all only after queue review.
+2. Do not approve packs without reviewing risk and ticket alignment.
+3. Treat --allow-high-risk as exception-only with explicit approval.
+4. Prefer --remediation-apply-all only after queue review.
 
 ## Troubleshooting Quick Table
 
@@ -271,7 +280,6 @@ If apply fails or behavior is unexpected:
 1. Run audit.
 2. Review pending queue.
 3. Approve/reject with ticket mapping.
-4. Preflight dry-run.
-5. Apply (single or all).
-6. Verify applied/failed status.
-7. Rerun audit for closure evidence.
+4. Apply (single or all).
+5. Verify applied/failed status.
+6. Rerun audit for closure evidence.

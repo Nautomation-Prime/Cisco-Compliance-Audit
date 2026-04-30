@@ -102,8 +102,8 @@ class SetupScreen(Screen):
                 yield Label("─── Audit Configuration", classes="section-label")
                 yield Label("Config File", classes="field-label")
                 yield Input(
-                    value="compliance_config.yaml",
-                    placeholder="Path to compliance YAML config",
+                    value="compliance_config",
+                    placeholder="Path to compliance config directory",
                     id="config-path",
                 )
                 yield Label(
@@ -182,7 +182,7 @@ class SetupScreen(Screen):
         """Validate form inputs and transition to the audit screen."""
         config_path = (
             self.query_one("#config-path", Input).value.strip()
-            or "compliance_config.yaml"
+            or "compliance_config"
         )
         inventory_path = self.query_one("#inventory-path", Input).value.strip() or None
         devices_raw = self.query_one("#devices", Input).value.strip()
@@ -371,6 +371,10 @@ class AuditScreen(Screen):
                 categories=self._categories,
                 output_dir=self._output_dir,
                 inventory_path=self._inventory_path,
+                tags_filter=None,
+                min_severity=None,
+                site_filter=None,
+                csv_report=None,
             )
 
             self._update_stats(results)

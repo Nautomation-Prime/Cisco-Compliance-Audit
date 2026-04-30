@@ -1,32 +1,34 @@
 """
-Parse the corporate hostname naming convention to extract device role,
+Parse the configurable hostname naming convention to extract device role,
 site information, and cabinet/instance numbers.
 
-Convention:  GB-MKD1-005ASW001
+Convention:  ZZ-LAB1-005ASW001
              ││  │││  │││││ │││
              ││  │││  │││││ └── device number (001)
-             ││  │││  ││└──── role code (ASW/CSW/SDW/ISW — configurable)
+             ││  │││  ││└──── role code (ASW — configurable via hostname_roles config)
              ││  │││  └────── comms room / cabinet (005)
              ││  ││└───────── site instance (1)
-             ││  └─────────── site code (MKD)
-             └──────────────── country code (GB)
+             ││  └─────────── site code (LAB = sample site code)
+             └──────────────── prefix / country code (ZZ placeholder)
 
 Role codes are loaded from 'hostname_roles' in compliance_config.yaml
 so they can be added/changed/removed without touching this file.
 """
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional
 
 # ---------------------------------------------------------------------------
 # Defaults — used when no config is supplied
 # ---------------------------------------------------------------------------
 DEFAULT_ROLES: list[dict] = [
-    {"code": "ASW", "role": "access_switch",     "display": "Access Switch",     "trunk_signal": "downlink"},
-    {"code": "CSW", "role": "core_switch",       "display": "Core Switch",       "trunk_signal": "uplink"},
-    {"code": "SDW", "role": "sdwan_router",      "display": "SD-WAN Router",     "trunk_signal": "none"},
-    {"code": "ISW", "role": "industrial_switch",  "display": "Industrial Switch", "trunk_signal": "downlink"},
+    {
+        "code": "ASW",
+        "role": "access_switch",
+        "display": "Access Switch",
+        "trunk_signal": "downlink",
+    },
 ]
 
 
@@ -74,23 +76,13 @@ class HostnameInfo:
     def is_access(self) -> bool:
         return self.role == "access_switch"
 
-    @property
-    def is_core(self) -> bool:
-        return self.role == "core_switch"
-
-    @property
-    def is_sdwan(self) -> bool:
-        return self.role == "sdwan_router"
-
-    @property
-    def is_industrial(self) -> bool:
-        return self.role == "industrial_switch"
-
 
 # ---------------------------------------------------------------------------
 # Compiled defaults (used when no config is passed)
 # ---------------------------------------------------------------------------
-_DEFAULT_ROLE_MAP, _DEFAULT_DISPLAY_MAP, _DEFAULT_SIGNAL_MAP = _build_role_maps(DEFAULT_ROLES)
+_DEFAULT_ROLE_MAP, _DEFAULT_DISPLAY_MAP, _DEFAULT_SIGNAL_MAP = _build_role_maps(
+    DEFAULT_ROLES
+)
 _DEFAULT_PATTERN = _build_pattern(list(_DEFAULT_ROLE_MAP.keys()))
 
 
@@ -109,7 +101,7 @@ def parse_hostname(
     role_config : list[dict] | None
         The ``hostname_roles`` list from compliance_config.yaml.
         Each dict must have at least ``code``, ``role``, ``display``.
-        If None, built-in defaults (ASW/CSW/SDW/ISW) are used.
+        If None, built-in defaults (ASW only) are used.
     explicit_role : str | None
         If set, override the role derived from the hostname.
         Accepts a role code (e.g. ``ASW``) or a role name
@@ -161,15 +153,6 @@ def parse_hostname(
                 info.role_display = explicit_role
 
     return info
-
-
-def extract_role_from_hostname(
-    hostname: str,
-    role_config: Optional[list[dict]] = None,
-) -> Optional[str]:
-    """Quick helper: return role code (e.g. ASW/CSW) or None."""
-    info = parse_hostname(hostname, role_config=role_config)
-    return info.role_code if info.parsed else None
 
 
 def get_trunk_signal_map(role_config: Optional[list[dict]] = None) -> dict[str, str]:

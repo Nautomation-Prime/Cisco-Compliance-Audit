@@ -69,10 +69,7 @@ def is_table_delimiter(line: str) -> bool:
     return (
         stripped.startswith("|")
         and set(
-            stripped.replace("|", "")
-            .replace("-", "")
-            .replace(":", "")
-            .replace(" ", "")
+            stripped.replace("|", "").replace("-", "").replace(":", "").replace(" ", "")
         )
         == set()
     )
@@ -105,9 +102,7 @@ def parse_markdown(md_text: str) -> str:
                 code_lines = []
             else:
                 code_html = html.escape("\n".join(code_lines))
-                class_attr = (
-                    f' class="language-{code_lang}"' if code_lang else ""
-                )
+                class_attr = f' class="language-{code_lang}"' if code_lang else ""
                 out.append(f"<pre><code{class_attr}>{code_html}</code></pre>")
                 in_code = False
                 code_lang = ""
@@ -134,9 +129,7 @@ def parse_markdown(md_text: str) -> str:
             level = len(stripped) - len(stripped.lstrip("#"))
             title = stripped[level:].strip()
             anchor = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
-            out.append(
-                f'<h{level} id="{anchor}">{inline_format(title)}</h{level}>'
-            )
+            out.append(f'<h{level} id="{anchor}">{inline_format(title)}</h{level}>')
             i += 1
             continue
 
@@ -167,10 +160,7 @@ def parse_markdown(md_text: str) -> str:
                     if not row_line.startswith("|"):
                         break
                     table_rows.append(
-                        [
-                            cell.strip()
-                            for cell in row_line.strip("|").split("|")
-                        ]
+                        [cell.strip() for cell in row_line.strip("|").split("|")]
                     )
                     i += 1
                 flush_table(table_rows, out)

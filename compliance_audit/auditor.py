@@ -9,6 +9,7 @@ in the compliance YAML config (default: 5, set to 1 for sequential).
 
 import logging
 import math
+import re
 import socket
 import sys
 import time
@@ -20,6 +21,8 @@ from typing import Optional
 
 import yaml
 import paramiko
+from netmiko.exceptions import NetmikoBaseException
+from paramiko.ssh_exception import SSHException
 from rich import box
 from rich.console import Console
 from rich.progress import (
@@ -31,8 +34,8 @@ from rich.progress import (
 )
 from rich.table import Table
 
-from .collector import DataCollector, OfflineCollector
-from .compliance_engine import AuditResult, ComplianceEngine, Finding, Status
+from .collector import DataCollector
+from .compliance_engine import AuditResult, ComplianceEngine, Finding, Status, SEVERITY_ORDER
 from .credentials import CredentialHandler
 from .hostname_parser import parse_hostname
 from .jump_manager import JumpManager
@@ -136,9 +139,7 @@ def _get_roi_settings(audit_settings: dict) -> dict:
         "min_runtime_seconds": min_runtime_seconds,
         "check_scaling_inflection": check_scaling_inflection,
         "max_manual_minutes_per_device": max_manual_minutes_per_device,
-        "hourly_rate": _as_non_negative_float(
-            roi.get("hourly_rate", 0.0), 0.0
-        ),
+        "hourly_rate": _as_non_negative_float(roi.get("hourly_rate", 0.0), 0.0),
         "currency": str(roi.get("currency", "GBP")),
         "profiles": roi_profiles,
     }
@@ -169,8 +170,10 @@ def _estimate_manual_minutes(
         return manual_minutes_per_device
 
     inflection = max(check_scaling_inflection, 1.0)
-    scaled = manual_minutes_per_check * inflection * math.log(
-        1.0 + total_checks / inflection
+    scaled = (
+        manual_minutes_per_check
+        * inflection
+        * math.log(1.0 + total_checks / inflection)
     )
     manual = manual_minutes_per_device + scaled
 
@@ -216,12 +219,8 @@ def _estimate_roi_for_result(
             roi_settings.get("validation_minutes_per_device", 0.0),
         )
     )
-    check_scaling_inflection = float(
-        roi_settings.get("check_scaling_inflection", 20.0)
-    )
-    max_manual_minutes = float(
-        roi_settings.get("max_manual_minutes_per_device", 120.0)
-    )
+    check_scaling_inflection = float(roi_settings.get("check_scaling_inflection", 20.0))
+    max_manual_minutes = float(roi_settings.get("max_manual_minutes_per_device", 120.0))
 
     min_runtime_seconds = float(roi_settings.get("min_runtime_seconds", 0.0))
     actual_runtime = float(result.duration_secs)
@@ -247,9 +246,7 @@ def _estimate_roi_for_result(
 
     # ── Automated estimate ─────────────────────────────────
     automated_minutes = (
-        (effective_runtime_seconds / 60.0)
-        + overhead_minutes
-        + validation_minutes
+        (effective_runtime_seconds / 60.0) + overhead_minutes + validation_minutes
     )
 
     # ── Derived metrics ────────────────────────────────────
@@ -260,9 +257,7 @@ def _estimate_roi_for_result(
 
     # Efficiency ratio: < 1.0 means automation is faster than manual
     efficiency_ratio = (
-        round(automated_minutes / manual_minutes, 3)
-        if manual_minutes > 0
-        else None
+        round(automated_minutes / manual_minutes, 3) if manual_minutes > 0 else None
     )
 
     # ── Sanity warnings ────────────────────────────────────
@@ -342,15 +337,10 @@ def _summarize_roi(results: list[AuditResult], roi_settings: dict) -> dict:
                     all_warnings.append(prefixed)
 
     hourly_rate = float(roi_settings.get("hourly_rate", 0.0))
-    efficiency_ratio = (
-        round(automated / manual, 3) if manual > 0 else None
-    )
+    efficiency_ratio = round(automated / manual, 3) if manual > 0 else None
 
     # Pull assumptions from the active profile for the summary context
-    active_profile = (
-        roi_settings.get("profiles", {})
-        .get("audit", {})
-    )
+    active_profile = roi_settings.get("profiles", {}).get("audit", {})
 
     return {
         "enabled": bool(roi_settings.get("enabled", False)),
@@ -388,9 +378,7 @@ def _summarize_roi(results: list[AuditResult], roi_settings: dict) -> dict:
             "automation_overhead_minutes_per_device": float(
                 active_profile.get(
                     "automation_overhead_minutes_per_device",
-                    roi_settings.get(
-                        "automation_overhead_minutes_per_device", 0.0
-                    ),
+                    roi_settings.get("automation_overhead_minutes_per_device", 0.0),
                 )
             ),
             "validation_minutes_per_device": float(
@@ -399,27 +387,37 @@ def _summarize_roi(results: list[AuditResult], roi_settings: dict) -> dict:
                     roi_settings.get("validation_minutes_per_device", 0.0),
                 )
             ),
-            "min_runtime_seconds": float(
-                roi_settings.get("min_runtime_seconds", 0.0)
-            ),
+            "min_runtime_seconds": float(roi_settings.get("min_runtime_seconds", 0.0)),
         },
     }
 
 
 def load_compliance_config(path: str) -> dict:
-    """Load and validate the compliance YAML configuration file."""
+    """Load and validate the compliance config directory.
+
+    *path* must point to a **directory** containing ``*.yaml`` files.  Every
+    file is loaded in sorted order and deep-merged into a single config dict
+    (one file per section, e.g. ``management_plane.yaml``, ``data_plane.yaml``).
+    """
     p = Path(path)
     if not p.exists():
         # Try relative to this module's directory
         p = Path(__file__).parent / path
     if not p.exists():
-        console.print(f"[bold red]Config not found:[/] {path}")
+        console.print(f"[bold red]Config directory not found:[/] {path}")
         sys.exit(1)
+
+    if not p.is_dir():
+        console.print(
+            f"[bold red]Config path must be a directory, not a single file:[/] {path}\n"
+            "Please use the [cyan]compliance_config/[/] directory format."
+        )
+        sys.exit(1)
+
     try:
-        with open(p, "r", encoding="utf-8") as fh:
-            cfg = yaml.safe_load(fh) or {}
-    except yaml.YAMLError as exc:
-        console.print(f"[bold red]Malformed YAML in config:[/] {exc}")
+        cfg = _load_config_dir(p)
+    except (OSError, yaml.YAMLError) as exc:
+        console.print(f"[bold red]Error loading config directory {p}:[/] {exc}")
         sys.exit(1)
 
     # Validate required top-level keys exist and have correct types
@@ -444,14 +442,39 @@ def load_compliance_config(path: str) -> dict:
     return cfg
 
 
+def _deep_merge(base: dict, overlay: dict) -> dict:
+    """Recursively merge *overlay* into *base*.  Lists are replaced, not merged."""
+    result = dict(base)
+    for key, val in overlay.items():
+        if key in result and isinstance(result[key], dict) and isinstance(val, dict):
+            result[key] = _deep_merge(result[key], val)
+        else:
+            result[key] = val
+    return result
+
+
+def _load_config_dir(dirpath: Path) -> dict:
+    """Load every ``*.yaml`` file in *dirpath* (sorted) and deep-merge them."""
+    merged: dict = {}
+    yaml_files = sorted(dirpath.glob("*.yaml"))
+    if not yaml_files:
+        log.warning("Config directory %s contains no .yaml files", dirpath)
+    for yaml_file in yaml_files:
+        with open(yaml_file, "r", encoding="utf-8") as fh:
+            data = yaml.safe_load(fh) or {}
+        merged = _deep_merge(merged, data)
+        log.debug("Loaded config fragment: %s", yaml_file.name)
+    return merged
+
+
 def _resolve_config_path(path: str) -> Path:
-    """Return the resolved path to the config file (used for sibling lookups)."""
+    """Return the resolved config directory path (used for sibling lookups)."""
     p = Path(path)
-    if p.exists():
-        return p.parent
+    if p.is_dir():
+        return p
     alt = Path(__file__).parent / path
-    if alt.exists():
-        return alt.parent
+    if alt.is_dir():
+        return alt
     return Path(__file__).parent
 
 
@@ -460,7 +483,7 @@ def _normalise_device_entry(entry, *, location: str = "devices") -> dict:
 
     Accepted forms:
       - ``"192.0.2.61"``          → ip-only  (hostname discovered at connect)
-      - ``"GB-SITE1-001ASW001"``  → hostname used as connection target (DNS)
+        Example hostname: ``"ZZ-LAB1-001ASW001"`` → hostname used as connection target (DNS)
       - ``{hostname: …, ip: …}``  → explicit (current format)
       - ``{hostname: …}``         → hostname used as connection target
       - ``{ip: …}``              → ip-only
@@ -498,11 +521,9 @@ def _normalise_device_entry(entry, *, location: str = "devices") -> dict:
 
 
 def _flatten_inventory(data: dict) -> list[dict]:
-    """Merge flat ``devices:`` list and Ansible-style ``groups:`` into one list.
+    """Merge flat ``devices:`` list and ``groups:`` into one list.
 
-    Group-level keys (currently only ``role``) are inherited by every device
-    in that group unless the device specifies its own value.
-
+    Groups are organisational only — they have no role inheritance.
     Validates every entry and deduplicates by connection target (``ip``).
     """
     flat: list[dict] = []
@@ -520,10 +541,9 @@ def _flatten_inventory(data: dict) -> list[dict]:
         if not isinstance(group_body, dict):
             errors.append(
                 f"Group '{group_name}' is not a mapping — expected "
-                "keys like 'role' and 'devices'."
+                "a 'devices' key."
             )
             continue
-        group_role = group_body.get("role")
         for idx, raw in enumerate(group_body.get("devices") or []):
             try:
                 entry = _normalise_device_entry(
@@ -532,18 +552,14 @@ def _flatten_inventory(data: dict) -> list[dict]:
             except ValueError as exc:
                 errors.append(str(exc))
                 continue
-            if group_role and "role" not in entry:
-                entry["role"] = group_role
             entry.setdefault("_group", group_name)
             flat.append(entry)
 
     if errors:
-        raise ValueError(
-            "Inventory validation failed:\n  • " + "\n  • ".join(errors)
-        )
+        raise ValueError("Inventory validation failed:\n  • " + "\n  • ".join(errors))
 
     # ── Deduplicate by connection target ───────────────────────
-    seen: dict[str, str] = {}      # ip → first location label
+    seen: dict[str, str] = {}  # ip → first location label
     unique: list[dict] = []
     for entry in flat:
         ip = entry["ip"]
@@ -551,7 +567,8 @@ def _flatten_inventory(data: dict) -> list[dict]:
         if ip in seen:
             log.warning(
                 "Duplicate device '%s' (already loaded from %s) — skipping.",
-                ip, seen[ip],
+                ip,
+                seen[ip],
             )
             continue
         seen[ip] = source
@@ -561,34 +578,46 @@ def _flatten_inventory(data: dict) -> list[dict]:
 
 
 def load_device_inventory(
-    inventory_path: str | None, config_path: str
+    inventory_path: str | None,
+    config_path: str,
+    site_filter: Optional[list[str]] = None,
 ) -> list[dict]:
     """Load the device inventory from a dedicated YAML file.
 
     Resolution order for *inventory_path*:
     1. Explicit CLI value (--inventory).
     2. ``inventory_file`` key inside the main config YAML.
-    3. ``devices.yaml`` next to the config file.
+    3. ``devices/devices.yaml`` next to the config file.
 
-    Supports both a flat ``devices:`` list and Ansible-style ``groups:``.
+    If *site_filter* is given, only devices whose ``_group`` matches one of
+    the supplied site names are returned.  Devices from the flat list (no
+    group) are excluded unless explicitly named via ``--device``.
+
+    Supports both a flat ``devices:`` list and ``groups:``.
     """
     cfg_dir = _resolve_config_path(config_path)
 
     if inventory_path is None:
         cfg = load_compliance_config(config_path)
-        inventory_path = cfg.get("inventory_file", "devices.yaml")
+        inventory_path = cfg.get("inventory_file", "devices/devices.yaml")
 
-    p = Path(inventory_path or "devices.yaml")
+    p = Path(inventory_path or "devices/devices.yaml")
     if not p.is_absolute():
         p = cfg_dir / p
     if not p.exists():
-        p = Path(__file__).parent / (inventory_path or "devices.yaml")
+        p = Path(__file__).parent / (inventory_path or "devices/devices.yaml")
     if not p.exists():
         return []
 
     with open(p, "r", encoding="utf-8") as fh:
         data = yaml.safe_load(fh) or {}
-    return _flatten_inventory(data)
+    devices = _flatten_inventory(data)
+
+    if site_filter:
+        normalised = [s.lower() for s in site_filter]
+        devices = [d for d in devices if (d.get("_group") or "").lower() in normalised]
+
+    return devices
 
 
 @dataclass
@@ -607,7 +636,8 @@ class _DeviceJob:
     role_config: Optional[list]
     endpoint_config: Optional[dict]
     audit_settings: dict
-    explicit_role: Optional[str] = None  # NEW: explicit role from devices.yaml
+    explicit_role: Optional[str] = None  # explicit role from devices.yaml
+    group: str = ""                       # site group from inventory (_group key)
 
 
 def _audit_single_device(job: _DeviceJob) -> Optional[AuditResult]:
@@ -615,7 +645,6 @@ def _audit_single_device(job: _DeviceJob) -> Optional[AuditResult]:
     Audit one device end-to-end (connect → collect → classify → check).
 
     Designed to run inside a thread. Returns None on connection failure.
-    In dry-run mode, loads data from files instead of SSH.
     """
     hostname, ip = job.hostname, job.ip
     log.info("Starting audit of %s (%s)", hostname, ip)
@@ -626,74 +655,84 @@ def _audit_single_device(job: _DeviceJob) -> Optional[AuditResult]:
         hostname, role_config=job.role_config, explicit_role=job.explicit_role
     )
 
-    dry_run_dir = job.audit_settings.get("_dry_run_dir")
-
-    if dry_run_dir:
-        # ── Dry-run / offline mode ─────────────────────────
-        offline = OfflineCollector(dry_run_dir)
-        data = offline.collect(hostname, ip=ip)
-        if data is None:
-            log.error("Dry-run: no data found for %s", hostname)
-            return None
-        conn = None
-    else:
-        # ── Live SSH connection ────────────────────────────
-        connector_kwargs = {
-            "ip": ip,
-            "username": job.username,
-            "password": job.password,
-            "device_type": job.device_type,
-            "jump": job.jump,
-            "retries": job.audit_settings.get(
-                "retries",
-                job.audit_settings.get("_connection", {}).get("retries", 3),
-            ),
-        }
-        if job.enable_secret:
-            connector_kwargs["secret"] = job.enable_secret
-        connector = DeviceConnector(**connector_kwargs)
-        try:
-            conn = connector.connect()
-        except Exception as exc:
-            # Detect DNS resolution failures and give a clear message
-            if isinstance(exc.__cause__, socket.gaierror) or (
-                isinstance(exc, OSError)
-                and "getaddrinfo" in str(exc).lower()
-            ):
-                log.error(
-                    "DNS resolution failed for %s (%s) — check that the "
-                    "hostname resolves or provide an explicit IP.",
-                    hostname, ip,
-                )
-            else:
-                log.error("Connection to %s (%s) failed: %s", hostname, ip, exc)
-            return None
-
-        try:
-            collector = DataCollector(timeout=job.timeout)
-            data = collector.collect(conn, ip=ip)
-            # Only overwrite the discovered hostname when the user
-            # explicitly provided one (not just an IP echo).
-            if job.hostname and job.hostname != job.ip:
-                data.hostname = job.hostname
-            else:
-                # Hostname was discovered from the device prompt.
-                # Update local variable and re-parse for role detection.
-                hostname = data.hostname
-                host_info = parse_hostname(
-                    hostname,
-                    role_config=job.role_config,
-                    explicit_role=job.explicit_role,
-                )
-        except Exception as exc:
+    # ── Live SSH connection ────────────────────────────
+    connector_kwargs = {
+        "ip": ip,
+        "username": job.username,
+        "password": job.password,
+        "device_type": job.device_type,
+        "jump": job.jump,
+        "retries": job.audit_settings.get(
+            "retries",
+            job.audit_settings.get("_connection", {}).get("retries", 3),
+        ),
+    }
+    if job.enable_secret:
+        connector_kwargs["secret"] = job.enable_secret
+    connector = DeviceConnector(**connector_kwargs)
+    try:
+        conn = connector.connect()
+    except (
+        NetmikoBaseException,
+        OSError,
+        RuntimeError,
+        SSHException,
+        TimeoutError,
+        TypeError,
+        ValueError,
+    ) as exc:
+        # Detect DNS resolution failures and give a clear message
+        if isinstance(exc.__cause__, socket.gaierror) or (
+            isinstance(exc, OSError) and "getaddrinfo" in str(exc).lower()
+        ):
             log.error(
-                "Data collection from %s (%s) failed: %s", hostname, ip, exc
+                "DNS resolution failed for %s (%s) — check that the "
+                "hostname resolves or provide an explicit IP.",
+                hostname,
+                ip,
             )
-            try:
-                conn.disconnect()
-            except Exception:
-                pass
-            return None
+        else:
+            log.error("Connection to %s (%s) failed: %s", hostname, ip, exc)
+        return None
+
+    try:
+        collector = DataCollector(timeout=job.timeout)
+        data = collector.collect(conn, ip=ip)
+        # Only overwrite the discovered hostname when the user
+        # explicitly provided one (not just an IP echo).
+        if job.hostname and job.hostname != job.ip:
+            data.hostname = job.hostname
+        else:
+            # Hostname was discovered from the device prompt.
+            # Update local variable and re-parse for role detection.
+            hostname = data.hostname
+            host_info = parse_hostname(
+                hostname,
+                role_config=job.role_config,
+                explicit_role=job.explicit_role,
+            )
+    except (
+        AttributeError,
+        NetmikoBaseException,
+        OSError,
+        RuntimeError,
+        SSHException,
+        TimeoutError,
+        TypeError,
+        ValueError,
+    ) as exc:
+        log.error("Data collection from %s (%s) failed: %s", hostname, ip, exc)
+        try:
+            conn.disconnect()
+        except (
+            AttributeError,
+            NetmikoBaseException,
+            OSError,
+            RuntimeError,
+            SSHException,
+        ):
+            pass
+        return None
 
     try:
         # Classify ports
@@ -705,8 +744,17 @@ def _audit_single_device(job: _DeviceJob) -> Optional[AuditResult]:
 
         # Audit
         engine = ComplianceEngine(job.compliance_policy)
-        result = engine.audit(data, host_info, ports)
-    except Exception as exc:
+        result = engine.audit(data, host_info, ports, group=job.group)
+    except (
+        AttributeError,
+        LookupError,
+        OSError,
+        RuntimeError,
+        TimeoutError,
+        TypeError,
+        ValueError,
+        re.error,
+    ) as exc:
         log.exception("Compliance engine failed for %s (%s)", hostname, ip)
         result = AuditResult(
             hostname=hostname,
@@ -727,9 +775,7 @@ def _audit_single_device(job: _DeviceJob) -> Optional[AuditResult]:
     try:
         # Populate metadata
         result.duration_secs = round(time.monotonic() - t_start, 1)
-        result.audit_ts = datetime.now(timezone.utc).strftime(
-            "%Y-%m-%d %H:%M UTC"
-        )
+        result.audit_ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
         from . import __version__
 
         result.tool_version = __version__
@@ -737,9 +783,7 @@ def _audit_single_device(job: _DeviceJob) -> Optional[AuditResult]:
         # Extract IOS-XE version from Genie data
         if data.version:
             ver = data.version.get("version", {})
-            result.ios_version = ver.get("version", "") or ver.get(
-                "xe_version", ""
-            )
+            result.ios_version = ver.get("version", "") or ver.get("xe_version", "")
 
         # Save per-device reports
         out_dir = job.audit_settings.get("output_dir", "./reports")
@@ -753,7 +797,12 @@ def _audit_single_device(job: _DeviceJob) -> Optional[AuditResult]:
         if job.audit_settings.get("json_report", True):
             save_json(result, out_dir)
         if job.audit_settings.get("html_report", True):
-            save_html(result, out_dir)
+            save_html(
+                result,
+                out_dir,
+                report_title=job.audit_settings.get("report_title", ""),
+                report_subtitle=job.audit_settings.get("report_subtitle", ""),
+            )
         if rem.get("enabled") and rem.get("generate_script"):
             script_path = save_remediation_script(result, out_dir)
             if script_path and rem.get("generate_review_pack"):
@@ -791,19 +840,64 @@ def _audit_single_device(job: _DeviceJob) -> Optional[AuditResult]:
         if conn:
             try:
                 conn.disconnect()
-            except Exception:
+            except (
+                AttributeError,
+                NetmikoBaseException,
+                OSError,
+                RuntimeError,
+                SSHException,
+            ):
                 pass
 
 
+def _apply_result_filters(
+    results: list[AuditResult],
+    tags_filter: Optional[list[str]],
+    min_severity: Optional[str],
+) -> None:
+    """Convert findings that don't match tag/severity filters to SKIP in-place.
+
+    Filtering happens *after* the audit so all checks still run; the full
+    dataset is preserved in reports while the console summary reflects the
+    active filters.
+    """
+    min_level = SEVERITY_ORDER.get(min_severity or "", 0)
+    for result in results:
+        for f in result.findings:
+            if f.status == Status.SKIP:
+                continue
+            # Severity threshold
+            if min_level > 0:
+                finding_level = SEVERITY_ORDER.get(getattr(f, "severity", "medium"), 3)
+                if finding_level < min_level:
+                    f.status = Status.SKIP
+                    f.detail = (
+                        f"[filtered: severity '{getattr(f, 'severity', 'medium')}' "
+                        f"below threshold '{min_severity}']"
+                    )
+                    continue
+            # Tag filter
+            if tags_filter:
+                finding_tags = getattr(f, "tags", [])
+                if not any(t in finding_tags for t in tags_filter):
+                    f.status = Status.SKIP
+                    f.detail = (
+                        f"[filtered: tags {finding_tags!r} do not match "
+                        f"requested {tags_filter!r}]"
+                    )
+
+
 def run_audit(
-    config_path: str = "compliance_config.yaml",
+    config_path: str = "compliance_config",
     device_overrides: Optional[list[str]] = None,
     skip_jump: bool = False,
     categories: Optional[list[str]] = None,
     output_dir: Optional[str] = None,
-    dry_run_dir: Optional[str] = None,
     csv_report: Optional[bool] = None,
     inventory_path: Optional[str] = None,
+    tags_filter: Optional[list[str]] = None,
+    min_severity: Optional[str] = None,
+    site_filter: Optional[list[str]] = None,
 ) -> list[AuditResult]:
     """
     Run the full compliance audit pipeline.
@@ -811,7 +905,7 @@ def run_audit(
     Parameters
     ----------
     config_path : str
-        Path to the compliance YAML config.
+        Path to the compliance config directory (e.g. ``compliance_config/``).
     device_overrides : list[str] | None
         If given, audit only these IPs/hostnames instead of the inventory.
     skip_jump : bool
@@ -820,10 +914,16 @@ def run_audit(
         If given, only run checks in these categories.
     output_dir : str | None
         Override the report output directory from the YAML config.
-    dry_run_dir : str | None
-        If set, load command outputs from this directory instead of SSH.
     csv_report : bool | None
         If True, override YAML to force CSV generation.
+    tags_filter : list[str] | None
+        If given, only surface findings whose ``tags`` list contains at least
+        one of these values.  Unmatched findings become SKIP.
+    min_severity : str | None
+        If given (critical/high/medium/low/info), findings below this severity
+        level become SKIP.
+    site_filter : list[str] | None
+        If given, only audit devices belonging to these site/group names.
 
     Returns
     -------
@@ -845,8 +945,16 @@ def run_audit(
         audit_settings["output_dir"] = output_dir
     if csv_report is not None:
         audit_settings["csv_report"] = csv_report
-    if dry_run_dir:
-        audit_settings["_dry_run_dir"] = dry_run_dir
+
+    # Fall back to config-level defaults when not specified via CLI
+    if min_severity is None:
+        _cfg_sev = audit_settings.get("default_min_severity")
+        if _cfg_sev and isinstance(_cfg_sev, str):
+            min_severity = _cfg_sev
+    if tags_filter is None:
+        _cfg_tags = audit_settings.get("default_tags")
+        if _cfg_tags and isinstance(_cfg_tags, list):
+            tags_filter = list(_cfg_tags)
 
     # Inject connection retries into audit_settings so workers can access it
     audit_settings["_connection"] = conn_cfg
@@ -879,7 +987,7 @@ def run_audit(
             else:
                 devices.append({"hostname": entry, "ip": entry})
     else:
-        devices = load_device_inventory(inventory_path, config_path)
+        devices = load_device_inventory(inventory_path, config_path, site_filter)
 
     # ── Inventory summary ──────────────────────────────────
     if devices:
@@ -897,60 +1005,46 @@ def run_audit(
         for grp, cnt in group_counts.items():
             parts.append(f"{cnt} from group '{grp}'")
         console.print(
-            f"[cyan]Inventory loaded:[/] {len(devices)} device(s) "
-            f"({', '.join(parts)})"
+            f"[cyan]Inventory loaded:[/] {len(devices)} device(s) ({', '.join(parts)})"
         )
 
     # ── Credentials ────────────────────────────────────────
     username, password, enable_secret = "", "", None
     jump: Optional[JumpManager] = None
 
-    if not dry_run_dir:
-        cred_store = conn_cfg.get("credential_store", "none")
-        keyring_svc = conn_cfg.get("keyring_service", "cisco-compliance-audit")
-        cred_handler = CredentialHandler(
-            credential_store=cred_store,
-            keyring_service=keyring_svc,
-        )
-        username, password = cred_handler.get_secret_with_fallback()
-        enable_secret = cred_handler.get_enable_secret()
+    cred_store = conn_cfg.get("credential_store", "none")
+    keyring_svc = conn_cfg.get("keyring_service", "cisco-compliance-audit")
+    cred_handler = CredentialHandler(
+        credential_store=cred_store,
+        keyring_service=keyring_svc,
+    )
+    username, password = cred_handler.get_secret_with_fallback()
+    enable_secret = cred_handler.get_enable_secret()
 
-        # ── Jump host (optional) ───────────────────────────
-        jump_host = conn_cfg.get("jump_host")
-        use_jump = conn_cfg.get("use_jump_host", True)
-        if jump_host and use_jump and not skip_jump:
-            console.print(f"[cyan]Connecting to jump host {jump_host} ...[/]")
-            host_key_checking = conn_cfg.get("host_key_checking", False)
-            hk_policy = (
-                paramiko.RejectPolicy() if host_key_checking
-                else paramiko.AutoAddPolicy()
-            )
-            jump = JumpManager(jump_host, username, password, host_key_policy=hk_policy)
-            jump.connect()
-    else:
-        console.print(
-            "[bold yellow]DRY-RUN MODE[/] — loading saved outputs "
-            f"from [cyan]{dry_run_dir}[/]"
+    # ── Jump host (optional) ───────────────────────────
+    jump_host = conn_cfg.get("jump_host")
+    use_jump = conn_cfg.get("use_jump_host", True)
+    if jump_host and use_jump and not skip_jump:
+        console.print(f"[cyan]Connecting to jump host {jump_host} ...[/]")
+        host_key_checking = conn_cfg.get("host_key_checking", False)
+        hk_policy = (
+            paramiko.RejectPolicy() if host_key_checking
+            else paramiko.AutoAddPolicy()
         )
-        # In dry-run mode, also auto-discover device folders if no devices given
-        if not devices:
-            dr_path = Path(dry_run_dir)
-            if dr_path.is_dir():
-                for child in sorted(dr_path.iterdir()):
-                    if child.is_dir():
-                        devices.append(
-                            {"hostname": child.name, "ip": child.name}
-                        )
-                if devices:
-                    console.print(
-                        f"  Discovered {len(devices)} device(s) from dry-run directory"
-                    )
+        jump = JumpManager(jump_host, username, password, host_key_policy=hk_policy)
+        jump.connect()
 
     if not devices:
-        console.print(
-            "[bold yellow]No devices to audit.[/] "
-            "Add devices to devices.yaml or use --device."
-        )
+        if site_filter:
+            console.print(
+                f"[bold yellow]No devices found for site(s): {', '.join(site_filter)}.[/] "
+                "Check that the group names in devices/devices.yaml match."
+            )
+        else:
+            console.print(
+                "[bold yellow]No devices to audit.[/] "
+                "Add devices to devices/devices.yaml or use --device."
+            )
         return []
 
     # ── Concurrency settings ───────────────────────────────
@@ -959,7 +1053,7 @@ def run_audit(
     timeout = audit_settings.get("collect_timeout", 30)
     roi_settings = _get_roi_settings(audit_settings)
 
-    mode_label = "offline" if dry_run_dir else "live"
+    mode_label = "live"
     console.print(
         f"[cyan]Auditing {len(devices)} device(s) ({mode_label}) with up to "
         f"{max_workers} concurrent worker(s) ...[/]"
@@ -988,7 +1082,8 @@ def run_audit(
                 role_config=role_config,
                 endpoint_config=endpoint_config,
                 audit_settings=audit_settings,
-                explicit_role=explicit_role,  # NEW: pass explicit role to job
+                explicit_role=explicit_role,  # explicit role from devices.yaml
+                group=dev_entry.get("_group", ""),
             )
         )
 
@@ -1009,8 +1104,7 @@ def run_audit(
                 max_workers=max_workers
             ) as executor:
                 future_to_job = {
-                    executor.submit(_audit_single_device, job): job
-                    for job in jobs
+                    executor.submit(_audit_single_device, job): job for job in jobs
                 }
                 for future in concurrent.futures.as_completed(future_to_job):
                     job = future_to_job[future]
@@ -1027,7 +1121,19 @@ def run_audit(
                                 f"  [red]FAIL[/] {job.hostname} ({job.ip}) - "
                                 f"Connection failed"
                             )
-                    except Exception as exc:
+                    except (
+                        AttributeError,
+                        LookupError,
+                        NetmikoBaseException,
+                        OSError,
+                        RuntimeError,
+                        SSHException,
+                        TimeoutError,
+                        TypeError,
+                        ValueError,
+                        re.error,
+                        yaml.YAMLError,
+                    ) as exc:
                         log.exception("Audit of %s failed", job.hostname)
                         progress.console.print(
                             f"  [red]FAIL[/] {job.hostname} ({job.ip}) - Error: {exc}"
@@ -1108,6 +1214,19 @@ def run_audit(
                 for w in roi_warnings:
                     console.print(f"  [bold yellow]ROI Warning:[/] {w}")
 
+    # ── Apply tag / severity filters ──────────────────────
+    if results and (tags_filter or min_severity):
+        _apply_result_filters(results, tags_filter, min_severity)
+        active = []
+        if min_severity:
+            active.append(f"min-severity={min_severity}")
+        if tags_filter:
+            active.append(f"tags={tags_filter}")
+        console.print(
+            f"[cyan]Filters applied:[/] {', '.join(active)}  "
+            f"(non-matching findings shown as SKIP)"
+        )
+
     # ── CSV export ─────────────────────────────────────────
     if results and audit_settings.get("csv_report", True):
         csv_path = save_csv(results, out_dir)
@@ -1115,7 +1234,12 @@ def run_audit(
 
     # ── Consolidated HTML report ───────────────────────────
     if results and audit_settings.get("html_report", True):
-        p = save_consolidated_html(results, out_dir)
+        p = save_consolidated_html(
+            results,
+            out_dir,
+            report_title=audit_settings.get("report_title", ""),
+            report_subtitle=audit_settings.get("report_subtitle", ""),
+        )
         console.print(f"  [bold cyan]HTML report:[/] {p}")
         console.print()
 

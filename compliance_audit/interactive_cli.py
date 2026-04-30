@@ -1,4 +1,4 @@
-"""Guided interactive CLI experience built on top of existing argparse logic."""
+"""Guided interactive CLI experience."""
 
 from __future__ import annotations
 
@@ -40,11 +40,13 @@ class AuditWizardConfig:
     devices: list[str]
     skip_jump: bool
     categories: Optional[list[str]]
+    tags_filter: Optional[list[str]]
+    min_severity: Optional[str]
     output_dir: Optional[str]
-    dry_run_dir: Optional[str]
     csv_report: Optional[bool]
     verbose: int
     fail_threshold: Optional[float]
+    site_filter: Optional[list[str]] = None
 
 
 def _load_questionary():
@@ -64,10 +66,13 @@ def _quote(value: str) -> str:
 
 def _build_audit_preview(cfg: AuditWizardConfig) -> str:
     cmd = ["python", "-m", "compliance_audit"]
-    if cfg.config_path != "compliance_config.yaml":
+    if cfg.config_path != "compliance_config":
         cmd.extend(["--config", _quote(cfg.config_path)])
     if cfg.inventory_path:
         cmd.extend(["--inventory", _quote(cfg.inventory_path)])
+    if cfg.site_filter:
+        cmd.append("--site")
+        cmd.extend(cfg.site_filter)
     for dev in cfg.devices:
         cmd.extend(["--device", _quote(dev)])
     if cfg.skip_jump:
@@ -75,10 +80,13 @@ def _build_audit_preview(cfg: AuditWizardConfig) -> str:
     if cfg.categories:
         cmd.append("--categories")
         cmd.extend(cfg.categories)
+    if cfg.tags_filter:
+        cmd.append("--tags")
+        cmd.extend(cfg.tags_filter)
+    if cfg.min_severity:
+        cmd.extend(["--min-severity", cfg.min_severity])
     if cfg.output_dir:
         cmd.extend(["--output-dir", _quote(cfg.output_dir)])
-    if cfg.dry_run_dir:
-        cmd.extend(["--dry-run", _quote(cfg.dry_run_dir)])
     if cfg.csv_report is True:
         cmd.append("--csv")
     if cfg.csv_report is False:
@@ -115,13 +123,23 @@ def _collect_devices(questionary) -> list[str]:
 
 def _run_audit_wizard(questionary) -> None:
     config_path = (
-        questionary.text("Compliance config path:", default="compliance_config.yaml").ask()
-        or "compliance_config.yaml"
+        questionary.text(
+            "Compliance config path:", default="compliance_config"
+        ).ask()
+        or "compliance_config"
     ).strip()
     inventory_path_raw = questionary.text(
         "Inventory path (blank keeps default behavior):", default=""
     ).ask()
     inventory_path = (inventory_path_raw or "").strip() or None
+
+    site_raw = questionary.text(
+        "Limit to specific site(s) (space-separated group names, blank = all sites):",
+        default="",
+    ).ask()
+    site_filter: Optional[list[str]] = (
+        [s.strip() for s in site_raw.split() if s.strip()] if site_raw and site_raw.strip() else None
+    )
 
     categories = questionary.checkbox(
         "Optional category filter:",
@@ -130,6 +148,23 @@ def _run_audit_wizard(questionary) -> None:
     if categories == []:
         categories = None
 
+    tags_raw = questionary.text(
+        "Filter by tags (space-separated, e.g. 'cis pci hardening'). Blank = no filter:",
+        default="",
+    ).ask()
+    tags_filter: Optional[list[str]] = (
+        [t.strip() for t in tags_raw.split() if t.strip()] if tags_raw and tags_raw.strip() else None
+    )
+
+    min_severity_label = questionary.select(
+        "Minimum severity to surface:",
+        choices=["All (no filter)", "info", "low", "medium", "high", "critical"],
+        default="All (no filter)",
+    ).ask()
+    min_severity: Optional[str] = (
+        None if min_severity_label == "All (no filter)" else min_severity_label
+    )
+
     devices = _collect_devices(questionary)
     skip_jump = bool(questionary.confirm("Skip jump host?", default=False).ask())
 
@@ -137,11 +172,6 @@ def _run_audit_wizard(questionary) -> None:
         "Output directory override (blank = config default):", default=""
     ).ask()
     output_dir = (output_dir_raw or "").strip() or None
-
-    dry_run_raw = questionary.text(
-        "Dry-run input directory (blank = live SSH):", default=""
-    ).ask()
-    dry_run_dir = (dry_run_raw or "").strip() or None
 
     csv_mode = questionary.select(
         "CSV report mode:",
@@ -177,11 +207,13 @@ def _run_audit_wizard(questionary) -> None:
         devices=devices,
         skip_jump=skip_jump,
         categories=categories,
+        tags_filter=tags_filter,
+        min_severity=min_severity,
         output_dir=output_dir,
-        dry_run_dir=dry_run_dir,
         csv_report=csv_report,
         verbose=verbose,
         fail_threshold=fail_threshold,
+        site_filter=site_filter,
     )
 
     console.print(
@@ -202,10 +234,12 @@ def _run_audit_wizard(questionary) -> None:
         device_overrides=wizard_cfg.devices or None,
         skip_jump=wizard_cfg.skip_jump,
         categories=wizard_cfg.categories,
+        tags_filter=wizard_cfg.tags_filter,
+        min_severity=wizard_cfg.min_severity,
         output_dir=wizard_cfg.output_dir,
-        dry_run_dir=wizard_cfg.dry_run_dir,
         csv_report=wizard_cfg.csv_report,
         inventory_path=wizard_cfg.inventory_path,
+        site_filter=wizard_cfg.site_filter,
     )
 
     if wizard_cfg.fail_threshold is not None and any(
@@ -220,7 +254,9 @@ def _run_audit_wizard(questionary) -> None:
         console.print("Completed successfully with no compliance failures.")
 
 
-def _resolve_remediation_context(config_path: str, output_dir_override: Optional[str]) -> tuple[dict, str]:
+def _resolve_remediation_context(
+    config_path: str, output_dir_override: Optional[str]
+) -> tuple[dict, str]:
     cfg = load_compliance_config(config_path)
     audit_settings = cfg.get("audit_settings", {})
     output_dir = output_dir_override or audit_settings.get("output_dir", "./reports")
@@ -229,15 +265,19 @@ def _resolve_remediation_context(config_path: str, output_dir_override: Optional
 
 def _run_remediation_wizard(questionary) -> None:
     config_path = (
-        questionary.text("Compliance config path:", default="compliance_config.yaml").ask()
-        or "compliance_config.yaml"
+        questionary.text(
+            "Compliance config path:", default="compliance_config"
+        ).ask()
+        or "compliance_config"
     ).strip()
     output_dir_raw = questionary.text(
         "Output directory override (blank = config default):", default=""
     ).ask()
     output_dir_override = (output_dir_raw or "").strip() or None
 
-    audit_settings, output_dir = _resolve_remediation_context(config_path, output_dir_override)
+    audit_settings, output_dir = _resolve_remediation_context(
+        config_path, output_dir_override
+    )
     rem = get_remediation_settings(audit_settings)
     if not rem.get("enabled", True):
         raise RuntimeError(
@@ -263,7 +303,15 @@ def _run_remediation_wizard(questionary) -> None:
     if action == "List review packs":
         status_choice = questionary.select(
             "Status filter:",
-            choices=["all", "pending", "approved", "rejected", "applied", "failed", "expired"],
+            choices=[
+                "all",
+                "pending",
+                "approved",
+                "rejected",
+                "applied",
+                "failed",
+                "expired",
+            ],
         ).ask()
         output_choice = questionary.select(
             "Output format:", choices=["table", "json", "csv"]
@@ -271,10 +319,16 @@ def _run_remediation_wizard(questionary) -> None:
         sort_choice = questionary.select(
             "Sort by:", choices=["created", "risk", "status", "hostname", "findings"]
         ).ask()
-        limit_raw = questionary.text("Limit results (blank = no limit):", default="").ask()
-        limit: Optional[int] = int(limit_raw) if (limit_raw and limit_raw.strip()) else None
+        limit_raw = questionary.text(
+            "Limit results (blank = no limit):", default=""
+        ).ask()
+        limit: Optional[int] = (
+            int(limit_raw) if (limit_raw and limit_raw.strip()) else None
+        )
 
-        rows = list_review_packs(output_dir, status=None if status_choice == "all" else status_choice)
+        rows = list_review_packs(
+            output_dir, status=None if status_choice == "all" else status_choice
+        )
         if not rows:
             console.print("No remediation review packs found.")
             return
@@ -311,9 +365,13 @@ def _run_remediation_wizard(questionary) -> None:
             return
         approver = (questionary.text("Approver name:").ask() or "").strip()
         ticket_id = (questionary.text("Ticket ID:").ask() or "").strip()
-        expires_raw = questionary.text("Approval expiry hours (blank uses config):", default="").ask()
-        expires_hours = int(expires_raw) if (expires_raw and expires_raw.strip()) else int(
-            rem.get("approval_default_expires_hours", 24)
+        expires_raw = questionary.text(
+            "Approval expiry hours (blank uses config):", default=""
+        ).ask()
+        expires_hours = (
+            int(expires_raw)
+            if (expires_raw and expires_raw.strip())
+            else int(rem.get("approval_default_expires_hours", 24))
         )
         path = approve_review_pack(
             output_dir=output_dir,
@@ -352,7 +410,6 @@ def _run_remediation_wizard(questionary) -> None:
             console.print("Cancelled — no pack ID provided.")
             return
         skip_jump = bool(questionary.confirm("Skip jump host?", default=False).ask())
-        dry_run = bool(questionary.confirm("Apply dry-run mode?", default=False).ask())
         allow_high_risk = bool(
             questionary.confirm("Allow high-risk remediation?", default=False).ask()
         )
@@ -361,7 +418,6 @@ def _run_remediation_wizard(questionary) -> None:
             output_dir=output_dir,
             pack_id=pack_id,
             skip_jump=skip_jump,
-            dry_run=dry_run,
             allow_high_risk=(
                 allow_high_risk or not rem.get("execution_block_high_risk", True)
             ),
@@ -373,9 +429,13 @@ def _run_remediation_wizard(questionary) -> None:
     if action == "Approve all pending packs":
         approver = (questionary.text("Approver name:").ask() or "").strip()
         ticket_id = (questionary.text("Ticket ID:").ask() or "").strip()
-        expires_raw = questionary.text("Approval expiry hours (blank uses config):", default="").ask()
-        expires_hours = int(expires_raw) if (expires_raw and expires_raw.strip()) else int(
-            rem.get("approval_default_expires_hours", 24)
+        expires_raw = questionary.text(
+            "Approval expiry hours (blank uses config):", default=""
+        ).ask()
+        expires_hours = (
+            int(expires_raw)
+            if (expires_raw and expires_raw.strip())
+            else int(rem.get("approval_default_expires_hours", 24))
         )
 
         rows = list_review_packs(output_dir, status="pending")
@@ -389,7 +449,9 @@ def _run_remediation_wizard(questionary) -> None:
             show_created=False,
             console=console,
         )
-        if not questionary.confirm(f"Approve all {len(rows)} pack(s)?", default=False).ask():
+        if not questionary.confirm(
+            f"Approve all {len(rows)} pack(s)?", default=False
+        ).ask():
             console.print("Cancelled.")
             return
 
@@ -408,7 +470,9 @@ def _run_remediation_wizard(questionary) -> None:
                 console.print(f"\u2713 Approved: {row.pack_id} ({row.hostname})")
                 approved_count += 1
             except RuntimeError as exc:
-                console.print(f"Failed to approve {row.pack_id} ({row.hostname}): {exc}")
+                console.print(
+                    f"Failed to approve {row.pack_id} ({row.hostname}): {exc}"
+                )
                 failed_count += 1
 
         console.print(
@@ -422,7 +486,6 @@ def _run_remediation_wizard(questionary) -> None:
                 "Remediation execution is disabled in config (audit_settings.remediation.execution.enabled=false)."
             )
         skip_jump = bool(questionary.confirm("Skip jump host?", default=False).ask())
-        dry_run = bool(questionary.confirm("Apply dry-run mode?", default=False).ask())
         allow_high_risk = bool(
             questionary.confirm("Allow high-risk remediation?", default=False).ask()
         )
@@ -430,7 +493,6 @@ def _run_remediation_wizard(questionary) -> None:
             config_path=config_path,
             output_dir=output_dir,
             skip_jump=skip_jump,
-            dry_run=dry_run,
             allow_high_risk=(
                 allow_high_risk or not rem.get("execution_block_high_risk", True)
             ),
