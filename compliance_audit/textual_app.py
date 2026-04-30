@@ -9,6 +9,7 @@ from typing import List, Optional
 
 from rich.markup import escape as markup_escape
 from textual import on, work
+from textual.message import Message
 
 from .version import get_version
 from .logging_setup import configure_logging
@@ -40,11 +41,28 @@ _NOISY_LOGGERS = (
 
 
 # ---------------------------------------------------------------------------
+# Log message (routes log records through Textual's thread-safe message bus)
+# ---------------------------------------------------------------------------
+
+class AppendLog(Message):
+    """Internal message that carries a single formatted log line."""
+
+    def __init__(self, markup: str) -> None:
+        super().__init__()
+        self.markup = markup
+
+
+# ---------------------------------------------------------------------------
 # Log handler
 # ---------------------------------------------------------------------------
 
 class TUILogHandler(logging.Handler):
-    """Pipes log records into the RichLog widget on the audit screen."""
+    """Pipes log records into the RichLog widget on the audit screen.
+
+    Uses Textual's thread-safe ``post_message`` so that log records emitted
+    from background worker threads are delivered to the UI without blocking
+    the caller and without going through ``App.call_from_thread``.
+    """
 
     _LEVEL_MARKUP = {
         logging.DEBUG:    "dim",
@@ -53,9 +71,9 @@ class TUILogHandler(logging.Handler):
         logging.CRITICAL: "bold white on red",
     }
 
-    def __init__(self, app: App) -> None:
+    def __init__(self, screen: "AuditScreen") -> None:
         super().__init__()
-        self._app = app
+        self._screen = screen
         self.setFormatter(
             logging.Formatter(
                 "%(asctime)s  %(levelname)-8s  %(message)s",
@@ -71,14 +89,7 @@ class TUILogHandler(logging.Handler):
             # are rendered literally rather than as markup tags.
             escaped = markup_escape(text)
             markup = f"[{style}]{escaped}[/]" if style else escaped
-
-            def _append() -> None:
-                try:
-                    self._app.query_one("#audit-log", RichLog).write(markup)
-                except Exception:
-                    pass  # Widget may not be mounted yet
-
-            self._app.call_from_thread(_append)
+            self._screen.post_message(AppendLog(markup))
         except Exception:
             pass
 
@@ -320,11 +331,18 @@ class AuditScreen(Screen):
             if isinstance(h, logging.FileHandler)
             or not isinstance(h, logging.StreamHandler)
         ]
-        tui_handler = TUILogHandler(self.app)
+        tui_handler = TUILogHandler(self)  # pass the screen, not the app
         tui_handler.setLevel(logging.DEBUG)
         root.addHandler(tui_handler)
         for name in _NOISY_LOGGERS:
             logging.getLogger(name).setLevel(logging.WARNING)
+
+    def on_append_log(self, event: AppendLog) -> None:
+        """Receive a log line from the TUILogHandler and write it to the RichLog widget."""
+        try:
+            self.query_one("#audit-log", RichLog).write(event.markup)
+        except Exception:
+            pass
 
     def _set_status(self, msg: str) -> None:
         """Thread-safe status bar update."""
