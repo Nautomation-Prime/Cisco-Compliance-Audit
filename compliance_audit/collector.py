@@ -44,8 +44,8 @@ try:
     GENIE_AVAILABLE = True
 except ImportError:
     GENIE_AVAILABLE = False
-    log.warning(
-        "Genie not installed — structured parsing unavailable. "
+    log.info(
+        "Genie/PyATS not installed — falling back to Netmiko/TextFSM parsing. "
         "Install with:  pip install pyats[library]"
     )
 

@@ -18,7 +18,7 @@
 audit_settings:
   max_workers: 5                  # Max concurrent device audits (1 = sequential)
   collect_timeout: 30             # Per-command collection timeout (seconds)
-  output_dir: "./reports"         # Where to write reports
+  output_dir: "./output"          # Where to write reports
   html_report: true               # Generate an HTML report alongside console output
   json_report: false              # Also dump raw JSON findings
   csv_report: false               # Generate a CSV summary of all findings
@@ -101,6 +101,13 @@ connection:
   #
   credential_store: "none"         # "none" or "keyring"
   keyring_service: "cisco-compliance-audit"   # keyring service name (namespace)
+
+  # ── SSH host key verification ─────────────────────────────
+  # false (default) — accept any host key (AutoAddPolicy).
+  #                   Safe for controlled internal networks.
+  # true            — reject unknown host keys (RejectPolicy).
+  #                   Requires known_hosts to be pre-populated.
+  host_key_checking: false
 
 
 # ═══════════════════════════════════════════════════════════════════

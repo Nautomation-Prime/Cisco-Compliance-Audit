@@ -6,6 +6,21 @@ __pycache__/
 # C extensions
 *.so
 
+# ── Project-specific ──────────────────────────────────────────────────────────
+# Windows embeddable Python runtime (bootstrapped by setup.bat — not committed)
+python_runtime/
+
+# Linux / macOS virtual environment (bootstrapped by setup.sh — not committed)
+.venv/
+
+# Runtime-generated directories — track the folder but not its contents
+logs/*
+!logs/.gitkeep
+output/*
+!output/.gitkeep
+reports/*
+!reports/.gitkeep
+
 # Distribution / packaging
 .Python
 build/
@@ -137,7 +152,6 @@ celerybeat.pid
 # Environments
 .env
 .envrc
-.venv
 env/
 venv/
 ENV/

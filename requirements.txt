@@ -14,6 +14,8 @@ PyYAML>=6.0
 
 # Credential management
 keyring>=25.0.0
+pywin32>=306; sys_platform == "win32"          # Required by keyring on Windows
+keyrings.alt>=4.2.0; sys_platform != "win32"   # File-based keyring fallback for Linux / macOS
 
 # Note: SQLite support for remediation workflow is provided by Python stdlib
 # (sqlite3), so no additional database package is required.

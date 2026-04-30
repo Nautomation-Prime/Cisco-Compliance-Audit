@@ -8,6 +8,12 @@ policy checks → reporting.
 
 __version__ = "4.0"
 
+try:
+    from .version import get_version as _get_version
+    __version__ = _get_version()
+except Exception:
+    pass  # Falls back to the literal above if VERSION.txt is missing
+
 from .auditor import run_audit
 from .collector import DataCollector, DeviceData, OfflineCollector
 from .compliance_engine import AuditResult, ComplianceEngine, Finding, Status

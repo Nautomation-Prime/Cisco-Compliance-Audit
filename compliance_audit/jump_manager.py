@@ -29,10 +29,12 @@ class JumpManager:
         self.allow_agent = allow_agent
         self.host_key_policy = host_key_policy or paramiko.AutoAddPolicy()
         if isinstance(self.host_key_policy, paramiko.AutoAddPolicy):
-            log.warning(
+            log.debug(
                 "JumpManager using AutoAddPolicy — SSH host keys are not "
-                "verified.  Set host_key_policy for production use."
+                "verified (host_key_checking: false in config)."
             )
+        elif isinstance(self.host_key_policy, paramiko.RejectPolicy):
+            log.info("JumpManager using RejectPolicy — unknown host keys will be rejected.")
         self.client: Optional[paramiko.SSHClient] = None
         self._lock = threading.Lock()
 

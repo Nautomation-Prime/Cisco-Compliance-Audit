@@ -43,7 +43,9 @@ from .remediation_workflow import (
     list_review_packs,
     reject_review_pack,
 )
+from .logging_setup import configure_logging
 from .textual_app import launch_textual
+from .version import get_version_info
 
 console = Console()
 
@@ -52,6 +54,11 @@ def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="python -m compliance_audit",
         description="Cisco IOS-XE Compliance Auditor",
+    )
+    p.add_argument(
+        "--version",
+        action="version",
+        version=get_version_info(),
     )
     p.add_argument(
         "-c",
@@ -466,22 +473,24 @@ def main() -> None:
         return
 
     if args.tui:
+        configure_logging()
         launch_textual(parser)
         return
 
     if args.interactive:
+        configure_logging()
         launch_interactive(parser)
         return
 
-    # Logging setup
-    level = {0: logging.WARNING, 1: logging.INFO}.get(
-        args.verbose, logging.DEBUG
-    )
-    logging.basicConfig(
-        level=level,
-        format="%(asctime)s  %(name)-30s  %(levelname)-8s  %(message)s",
-        datefmt="%H:%M:%S",
-    )
+    # Logging setup — configure_logging writes INFO+ to console and DEBUG to logs/debug.log
+    configure_logging()
+    # Honour --verbose by raising the console handler level
+    if args.verbose:
+        import logging as _logging
+        level = _logging.INFO if args.verbose == 1 else _logging.DEBUG
+        for h in _logging.getLogger().handlers:
+            if isinstance(h, _logging.StreamHandler) and not isinstance(h, _logging.FileHandler):
+                h.setLevel(level)
 
     # Remediation lifecycle mode (list/approve/reject/apply)
     try:

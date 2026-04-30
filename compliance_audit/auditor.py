@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Optional
 
 import yaml
+import paramiko
 from rich import box
 from rich.console import Console
 from rich.progress import (
@@ -919,7 +920,12 @@ def run_audit(
         use_jump = conn_cfg.get("use_jump_host", True)
         if jump_host and use_jump and not skip_jump:
             console.print(f"[cyan]Connecting to jump host {jump_host} ...[/]")
-            jump = JumpManager(jump_host, username, password)
+            host_key_checking = conn_cfg.get("host_key_checking", False)
+            hk_policy = (
+                paramiko.RejectPolicy() if host_key_checking
+                else paramiko.AutoAddPolicy()
+            )
+            jump = JumpManager(jump_host, username, password, host_key_policy=hk_policy)
             jump.connect()
     else:
         console.print(
