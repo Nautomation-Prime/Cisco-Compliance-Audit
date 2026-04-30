@@ -33,7 +33,6 @@ Built on **PyATS/Genie** for structured parsing, **Netmiko** for transport, and 
   - [Management Plane](#management-plane)
   - [Control Plane](#control-plane)
   - [Data Plane](#data-plane)
-  - [Role-Specific Checks](#role-specific-checks)
 - [Reports & Output](#reports--output)
 - [Credentials](#credentials)
 - [Project Structure](#project-structure)
@@ -54,7 +53,7 @@ Built on **PyATS/Genie** for structured parsing, **Netmiko** for transport, and 
 | **Concurrent auditing** | Audit multiple devices in parallel — configurable worker count via `max_workers` |
 | **Split config directory** | Policy split across `audit_settings.yaml`, `connection.yaml`, `management_plane.yaml` etc. — per-site directories via `-c configs/site_alpha/` |
 | **Separate device inventory** | Devices listed in their own `devices/devices.yaml` — swap inventories without touching compliance policy |
-| **Role-aware** | Automatically detects device role (Access Switch) from the hostname naming convention |
+| **Role-aware** | Detects device role (Access Switch) from hostname convention; drives trunk direction classification (uplink vs downlink) via CDP/LLDP neighbour matching |
 | **Port classification** | Every interface is classified as ACCESS, TRUNK_UPLINK, TRUNK_DOWNLINK, UNUSED, ROUTED, SVI, etc. |
 | **Port-channel awareness** | Detects EtherChannel membership via `show etherchannel summary`; runs checks against the Port-channel interface, not individual members |
 | **Uplink/downlink detection** | Uses STP root-port election + CDP/LLDP neighbor hostname to reliably determine trunk direction |
@@ -70,7 +69,7 @@ Built on **PyATS/Genie** for structured parsing, **Netmiko** for transport, and 
 | **Remediation scripts** | Auto-generated per-device IOS-XE config snippets to fix FAILs — port-channel aware |
 | **Bulk approved-pack apply** | Apply all approved remediation packs in one run with `--remediation-apply-all` |
 | **Remediation lifecycle workflow** | Enterprise-grade workflow with approval tracking, change tickets, expiry times, and risk controls |
-| **Credential flexibility** | OS keyring (optional) → environment variables → interactive prompt |
+| **Credential flexibility** | `.env` file → OS keyring (optional) → environment variables → interactive prompt |
 | **Category filtering** | Audit only management plane, or only data plane, etc. |
 | **Severity filtering** | `--min-severity critical/high/medium/low/info` — surface only findings at or above the chosen level |
 | **Tag filtering** | `--tags cis pci hardening` — filter findings by compliance framework or custom label |
@@ -116,17 +115,35 @@ Built on **PyATS/Genie** for structured parsing, **Netmiko** for transport, and 
 
 ## Prerequisites
 
-- **Linux, macOS, or WSL** — PyATS/Genie is not supported on native Windows. If you are on Windows, use [WSL (Windows Subsystem for Linux)](https://learn.microsoft.com/en-us/windows/wsl/install) to run the auditor.
-- **Python 3.10+** (uses `match` syntax, `X | Y` union types, dataclasses)
+- **Python 3.10+** — Windows 10/11, Linux, and macOS are all supported. The portable launchers (`setup.bat` / `run.bat` on Windows, `setup.sh` / `run.sh` on Linux) handle the full setup without a system-wide Python install.
 - **Network access** to the target IOS-XE devices (directly or via jump host)
 - **SSH enabled** on all devices (`ip ssh version 2`)
 - **Privileged EXEC** (enable) access — the tool runs `show running-config`
 
-> **Windows users:** Install WSL with `wsl --install` from an elevated PowerShell, then work inside the Linux environment. All `pip install` and `python -m compliance_audit` commands should be run inside WSL, not native Windows.
+> **Windows users:** Run `setup.bat` once (or double-click it) — it downloads a portable Python 3.12 runtime and installs all dependencies automatically. Then use `run.bat` as your daily launcher. No system-wide Python or WSL required.
+> PyATS/Genie are **not** installed on Windows (they do not support it); the auditor automatically falls back to TextFSM (`ntc-templates`) for structured parsing, which is fully supported.
 
 ---
 
 ## Installation
+
+### Portable Launcher (Recommended)
+
+**Windows** — run once, then use daily:
+
+```bat
+setup.bat   ← Downloads portable Python 3.12 and installs all dependencies
+run.bat     ← Daily launcher — runs setup.bat automatically on first use
+```
+
+**Linux / WSL** — run once, then use daily:
+
+```bash
+./setup.sh   # Creates .venv and installs all dependencies
+./run.sh     # Daily launcher — activates venv and starts the TUI
+```
+
+### Manual Setup
 
 ```bash
 # Clone the repository
@@ -135,13 +152,12 @@ cd Cisco-Compliance-Audit
 
 # Create a virtual environment (recommended)
 python3 -m venv .venv
-source .venv/bin/activate     # Linux / macOS / WSL
+source .venv/bin/activate      # Linux / macOS / WSL
+# .venv\Scripts\activate       # Windows PowerShell
 
 # Install dependencies
 pip install -r requirements.txt
 ```
-
-> **Note:** PyATS does not install on native Windows. If `pip install pyats[library]` fails, you are likely not running inside WSL or a Linux/macOS environment.
 
 ### Dependencies
 
@@ -153,6 +169,9 @@ pip install -r requirements.txt
 | `genie` | Parse `show` output into Python dicts |
 | `rich` | Colour console tables, HTML export |
 | `PyYAML` | Configuration file loading |
+| `textual` | Full-screen TUI framework |
+| `questionary` | Interactive CLI prompts |
+| `keyring` | OS credential store (optional) |
 
 ---
 
@@ -196,7 +215,6 @@ If you just need day-to-day execution steps, use the operator runbook:
 
 - [docs/RUNBOOK.md](docs/RUNBOOK.md)
 - [docs/RUNBOOK.html](docs/RUNBOOK.html)
-- [docs/RUNBOOK.txt](docs/RUNBOOK.txt)
 
 The runbook is command-first and covers audit, approval, apply, apply-all, and troubleshooting flows.
 
@@ -228,9 +246,9 @@ python -m compliance_audit --site site_lab site_brn
 # Use a different device inventory file
 python -m compliance_audit -i inventories/site_alpha_devices.yaml
 
-# Use a different config file (e.g. per-site configs)
-python -m compliance_audit -c configs/site_alpha.yaml
-python -m compliance_audit -c configs/site_beta.yaml
+# Use a different config directory (e.g. per-site configs)
+python -m compliance_audit -c configs/site_alpha
+python -m compliance_audit -c configs/site_beta
 
 # Skip the jump host (connect directly)
 python -m compliance_audit --device 192.0.2.61 --no-jump
@@ -285,7 +303,7 @@ python -m compliance_audit --remediation-apply-all
 ### CLI Reference
 
 ```text
-python -m compliance_audit [-h] [-c CONFIG] [-d DEVICES] [-i INVENTORY]
+python -m compliance_audit [-h] [--version] [-c CONFIG] [-d DEVICES] [-i INVENTORY]
                            [--site SITE [SITE ...]] [--no-jump]
                            [--categories CAT [CAT ...]]
                            [--tags TAG [TAG ...]] [--min-severity LEVEL]
@@ -304,6 +322,7 @@ python -m compliance_audit [-h] [-c CONFIG] [-d DEVICES] [-i INVENTORY]
 
 Options:
   -h, --help                    Show help and exit
+  --version                     Print version information and exit
   -c, --config CONFIG           Path to compliance config directory (default: compliance_config/)
   -d, --device DEVICES          Device to audit — IP or hostname:IP (repeatable)
   -i, --inventory FILE          Path to device inventory YAML (default: devices/devices.yaml)
@@ -350,13 +369,12 @@ All configuration lives in a **directory of YAML files** (default: `compliance_a
 | File | What it controls | How often you edit it |
 | ------ | ------------------ | ---------------------- |
 | `audit_settings.yaml` | Concurrency, reports, timeouts, ROI, reference VLANs | Every run |
-| `connection.yaml` | SSH, jump host, credentials | Per environment |
+| `connection.yaml` | SSH, jump host, credentials, SSH host key policy | Per environment |
 | `classification.yaml` | Inventory path, hostname role codes, endpoint detection | Set once per org |
 | `devices/devices.yaml` | List of devices to audit | Per run |
 | `management_plane.yaml` | SSH, AAA, NTP, logging, SNMP, VTY, banner checks | When policy changes |
 | `control_plane.yaml` | STP, VTP, DHCP snooping, DAI checks | When policy changes |
 | `data_plane.yaml` | Per-interface checks (BPDU guard, storm control, port security…) | When policy changes |
-| `role_specific.yaml` | Checks that apply only to specific device roles | When policy changes |
 
 ### Multiple Config Directories
 
@@ -430,6 +448,7 @@ connection:
   use_jump_host: false        # Set false to connect directly
   credential_store: "none"    # "none" or "keyring" (see Credentials section)
   keyring_service: "cisco-compliance-audit"  # keyring namespace
+  host_key_checking: false    # true = reject unknown SSH host keys (requires known_hosts)
 ```
 
 ### Device Inventory (§3)
@@ -585,7 +604,7 @@ The digit after the site code is the site instance (e.g. `LAB1` = first instance
 | `ZZ-LAB1-001ASW001` | ZZ | LAB | 1 | 001 | Access Switch | 001 |
 | `ZZ-BRN1-001ASW001` | ZZ | BRN | 1 | 001 | Access Switch | 001 |
 
-> **What if the hostname doesn't match?** The audit still runs — it just skips role-specific checks and logs a warning. To enable role-specific checks for non-standard hostnames, you can explicitly specify the device role in `devices/devices.yaml` using the optional `role` field (see [Device Inventory](#device-inventory-3)).
+> **What if the hostname doesn't match?** The audit still runs. However trunk ports may be classified as `TRUNK_UNKNOWN` (direction undetermined) since CDP/LLDP neighbour hostname matching requires a recognisable role code. To restore trunk direction classification for non-standard hostnames, add `role: access_switch` in `devices/devices.yaml` (see [Device Inventory](#device-inventory-3)).
 
 ---
 
@@ -842,16 +861,6 @@ These checks are applied **per interface** based on the port's classified role.
 | Unused port hardening | `unused_ports` | Unused | Shutdown, parking VLAN, no CDP/LLDP, BPDU guard, description |
 | No CDP on access | `no_cdp_on_access_ports` | Access | CDP disabled on user-facing ports |
 | Trunk native VLAN | `trunk_native_vlan` | Trunk | Native VLAN is non-default |
-
-### Role-Specific Checks
-
-| Check | Key | Role | What It Verifies |
-| ------- | ----- | ------ | ----------------- |
-| STP root bridge | `stp_root_check` | Core (CSW) | Core switch IS the STP root |
-| STP not root | `stp_not_root` | Access (ASW) | Access switch is NOT the STP root |
-| Uplink redundancy | `uplink_redundancy` | Access (ASW) | Uplink uses a port-channel |
-| HSRP/VRRP | `hsrp_vrrp` | Core (CSW) | First-hop redundancy on SVIs |
-| Routing auth | `routing_protocol_auth` | Core (CSW) | EIGRP/OSPF/BGP authentication |
 
 ---
 
@@ -1141,7 +1150,7 @@ The tool provides real-time progress indicators and detailed output including:
 
 ##### Configuration
 
-Control remediation workflow behavior in `compliance_config.yaml`:
+Control remediation workflow behavior in `compliance_config/audit_settings.yaml`:
 
 ```yaml
 audit_settings:
@@ -1197,8 +1206,18 @@ audit_settings:
 The tool attempts to find credentials in this order:
 
 1. **OS keyring** — if `credential_store: "keyring"` is set in the config (see below)
-2. **Environment variables** — `SWITCH_USER` / `SWITCH_PASS` (or `CREDENTIAL_USER` / `CREDENTIAL_PASS`)
-3. **Interactive prompt** — asks for username/password
+2. **`.env` file** — copy `.env.example` to `.env` at the project root and fill in your values (loaded automatically before env var lookup; never committed to version control)
+3. **Environment variables** — `SWITCH_USER` / `SWITCH_PASS` (or `CREDENTIAL_USER` / `CREDENTIAL_PASS`)
+4. **Interactive prompt** — asks for username/password
+
+The `.env` file is the simplest option for day-to-day use. The TUI setup screen pre-fills the username and password fields from it automatically. Copy `.env.example` to get started:
+
+```dotenv
+SWITCH_USER=your_username
+SWITCH_PASS=your_password
+USE_ENABLE=false
+# ENABLE_SECRET=your_enable_secret
+```
 
 When the keyring backend is enabled, credentials obtained from env-vars or the interactive prompt are **automatically saved** to the OS keyring so subsequent runs are hands-free.
 
@@ -1237,36 +1256,59 @@ For the enable secret (if needed):
 
 ```text
 Cisco-Compliance-Audit/
+├── .env.example                    # Credential variables template — copy to .env
+├── VERSION.txt                     # Canonical version number
 ├── compliance_audit/
-│   ├── __init__.py             # Package exports and version
-│   ├── __main__.py             # CLI entry point (python -m compliance_audit)
-│   ├── compliance_config/          # ★ Compliance policy (directory of split files)
+│   ├── __about__.py                # Package metadata (name, author, licence)
+│   ├── __init__.py                 # Package exports and dynamic version
+│   ├── __main__.py                 # CLI entry point (python -m compliance_audit)
+│   ├── compliance_config/          # ★ Compliance policy (split YAML files)
 │   │   ├── audit_settings.yaml     # Concurrency, timeouts, ROI, output paths
-│   │   ├── connection.yaml         # SSH, jump host, credential store
+│   │   ├── connection.yaml         # SSH, jump host, credentials, host key policy
 │   │   ├── classification.yaml     # Inventory path, hostname roles, endpoint detection
 │   │   ├── management_plane.yaml   # SSH, AAA, NTP, logging, SNMP, VTY checks
 │   │   ├── control_plane.yaml      # STP, VTP, DHCP snooping, DAI checks
-│   │   ├── data_plane.yaml         # Per-interface checks (BPDU guard, storm control…)
-│   │   └── role_specific.yaml      # Checks that apply only to specific device roles
-│   ├── devices.yaml            # ★ Device inventory — hostnames and IPs
-│   ├── config_loader.py        # YAML config loader (supports separate inventory)
-│   ├── credentials.py          # Credential handler (keyring / env / prompt)
-│   ├── jump_manager.py         # SSH jump host via Paramiko
-│   ├── netmiko_utils.py        # Netmiko connection wrapper
-│   ├── hostname_parser.py      # Hostname naming convention parser
-│   ├── collector.py            # Data collection + Genie parsing (thread-safe)
-│   ├── port_classifier.py      # Interface role classification + EtherChannel detection
-│   ├── compliance_engine.py    # All compliance checks (~700 lines)
-│   ├── report.py               # Rich console + interactive HTML + JSON + CSV reports
-│   └── auditor.py              # Orchestrator (concurrent via ThreadPoolExecutor)
-├── configs/                    # (optional) Per-site config files
-│   ├── site_alpha.yaml
-│   └── site_beta.yaml
-├── inventories/                # (optional) Per-site device inventories
-│   ├── site_alpha_devices.yaml
-│   └── site_beta_devices.yaml
-├── requirements.txt            # Python dependencies
-├── README.md                   # This file
+│   │   └── data_plane.yaml         # Per-interface checks (BPDU guard, storm control…)
+│   ├── devices/
+│   │   └── devices.yaml            # ★ Device inventory — hostnames and IPs
+│   ├── auditor.py                  # Orchestrator (concurrent via ThreadPoolExecutor)
+│   ├── cli_discovery.py            # CLI option table helper
+│   ├── collector.py                # Data collection + Genie/TextFSM parsing
+│   ├── compliance_engine.py        # All compliance checks
+│   ├── credentials.py              # Credential handler (.env / keyring / env / prompt)
+│   ├── hostname_parser.py          # Hostname naming convention parser
+│   ├── interactive_cli.py          # Guided wizard CLI (questionary)
+│   ├── jump_manager.py             # SSH jump host via Paramiko
+│   ├── logging_setup.py            # Logging bootstrap (file + console handlers)
+│   ├── netmiko_utils.py            # Netmiko connection wrapper
+│   ├── port_classifier.py          # Interface role classification + EtherChannel detection
+│   ├── remediation.py              # Remediation script generation
+│   ├── remediation_cli.py          # Remediation CLI helpers
+│   ├── remediation_workflow.py     # Approval lifecycle workflow
+│   ├── report.py                   # Rich console + interactive HTML + JSON + CSV reports
+│   ├── textual_app.py              # Full-screen 3-screen Textual TUI
+│   └── version.py                  # Version reader (reads VERSION.txt)
+├── assets/
+│   └── config_files/
+│       └── logging.conf            # INI logging configuration
+├── docs/
+│   ├── RUNBOOK.html                # Operator runbook (rendered HTML)
+│   └── RUNBOOK.md                  # Operator runbook (Markdown source)
+├── logs/                           # Runtime log files (gitignored; .gitkeep tracked)
+├── reports/                        # Default report output directory (gitignored; .gitkeep tracked)
+├── scripts/
+│   └── render_runbook.py           # Renders RUNBOOK.md → RUNBOOK.html
+├── tests/
+│   ├── test_annotate_findings.py
+│   ├── test_hostname_parser.py
+│   ├── test_inventory.py
+│   └── test_remediation_workflow.py
+├── run.bat                         # Windows daily launcher
+├── run.sh                          # Linux/WSL daily launcher
+├── setup.bat                       # Windows first-time setup (portable Python 3.12)
+├── setup.sh                        # Linux/WSL first-time setup (creates .venv)
+├── requirements.txt                # Python dependencies (platform markers for pywin32)
+├── README.md                       # This file
 └── LICENSE
 ```
 
@@ -1318,8 +1360,7 @@ Role codes are configured in the YAML — no code changes needed:
         trunk_signal: uplink
     ```
 
-2. **Add role-specific checks** under `compliance.role_specific` in the YAML
-3. **(Optional)** Add engine logic in `compliance_engine.py` under `_check_role_specific()` if the new role needs custom checks beyond what config toggles provide
+The `trunk_signal` value (`"uplink"`, `"downlink"`, or `"none"`) controls how a CDP/LLDP neighbour with this role code is used to classify trunk port direction on the audited switch.
 
 ---
 
@@ -1327,7 +1368,7 @@ Role codes are configured in the YAML — no code changes needed:
 
 | Problem | Solution |
 | --------- | --------- |
-| `Genie not installed — structured parsing unavailable` | Run `pip install pyats[library]`. Without Genie, the tool still works but falls back to regex parsing. |
+| `Genie not installed — falling back to Netmiko/TextFSM parsing` | Install with `pip install pyats[library]` for Genie-based structured parsing. TextFSM (`ntc-templates`) is used automatically when Genie is absent. |
 | `Connection failed` | Check SSH reachability, credentials, and that `ip ssh version 2` is configured on the device. |
 | `No devices to audit` | Add devices to `devices.yaml` or use `--device` on the CLI. Check that `inventory_file` in the config points to the correct file. |
 | `Hostname did not match naming convention` | Role-specific checks are skipped. Use the `hostname:ip` format on the CLI to provide a parseable hostname. |

@@ -6,7 +6,6 @@ For deep technical detail, see [README.md](../README.md).
 
 Other formats:
 - [RUNBOOK.html](RUNBOOK.html) for browser viewing
-- [RUNBOOK.txt](RUNBOOK.txt) for basic text editors
 
 To regenerate the HTML copy after editing this file:
 
@@ -29,13 +28,16 @@ from a shell (for example Linux, WSL, or Windows PowerShell).
 
 ## Pre-Checks (Start Here)
 
-1. Confirm config and inventory files are correct.
-2. Confirm credentials are available (keyring, env vars, or prompt).
-3. Confirm remediation execution policy in config if you plan to apply changes.
-4. If you track automation value, enable ROI settings in audit_settings.roi.
+**Starting the tool:**
 
-Example config path:
-- compliance_audit/compliance_config/
+- **Windows:** Run `run.bat` (or double-click it) — handles the Python runtime and launches the TUI automatically.
+- **Linux / WSL:** Run `./run.sh` — activates the virtual environment and launches the TUI.
+- **Manual:** `python -m compliance_audit --tui` or `python -m compliance_audit` from an activated environment.
+
+1. Confirm config and inventory files are correct. Config directory: `compliance_audit/compliance_config/`
+2. Confirm credentials are available — options in order of precedence: `.env` file → OS keyring → environment variables (`SWITCH_USER` / `SWITCH_PASS`) → interactive prompt. Copy `.env.example` to `.env` for a convenient credential file.
+3. Confirm remediation execution policy in `audit_settings.yaml` if you plan to apply changes.
+4. If you track automation value, enable ROI settings in `audit_settings.roi`.
 
 ## Optional ROI Setup
 
@@ -136,7 +138,7 @@ Guided wizard mode (recommended for discoverability):
 python -m compliance_audit --interactive
 ```
 
-Full-screen premium terminal UI:
+Full-screen 3-screen terminal UI:
 
 ```bash
 python -m compliance_audit --tui
@@ -157,13 +159,15 @@ Notes:
 
 When running `python -m compliance_audit --tui`:
 
-- `1` launch guided wizard mode
-- `2` run quick audit using default settings
-- `3` focus the CLI options table
-- `q` quit the full-screen TUI
+The TUI is a 3-screen application:
 
-Tip:
-- From the options table, use your terminal arrow keys to scroll rows.
+1. **Setup screen** — fill in config directory, inventory path, device overrides, categories, output directory, and credentials, then click **Start Audit**
+2. **Audit screen** — live statistics panel (devices, completed, compliant, failures, warnings, errors) with a scrollable real-time log stream
+3. **Complete screen** — summary of totals across all devices with **Back to Log** and **Quit** buttons
+
+Key bindings (all screens):
+
+- `Ctrl+Q` — quit the application at any point
 
 ### 1) Run Audit
 

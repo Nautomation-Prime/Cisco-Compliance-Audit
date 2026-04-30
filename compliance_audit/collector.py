@@ -226,8 +226,144 @@ STRUCTURED_COMMAND_FIELDS: dict[str, str] = {
 }
 
 
+# ---------------------------------------------------------------------------
+# TextFSM → Genie-compatible dict normalisers
+# ---------------------------------------------------------------------------
+# ntc-templates (TextFSM) returns a *list* of row dicts.  Every consumer in
+# port_classifier, auditor, and compliance_engine expects the Genie *dict*
+# shape.  These small functions convert the TextFSM list to the minimal
+# Genie-compatible structure that all consumers understand.
+
+def _norm_interfaces(rows: list) -> dict | None:
+    """show interfaces → {intf_name: {bandwidth, oper_status, enabled}}"""
+    result: dict = {}
+    for row in rows:
+        name = row.get("INTERFACE", "")
+        if not name:
+            continue
+        link = (row.get("LINK_STATUS") or "").lower()
+        try:
+            bw = int(row.get("BANDWIDTH") or 0)
+        except (TypeError, ValueError):
+            bw = 0
+        result[name] = {
+            "bandwidth": bw,
+            "oper_status": "up" if link == "up" else "down",
+            "enabled": "administratively" not in link,
+        }
+    return result or None
+
+
+def _norm_switchports(rows: list) -> dict | None:
+    """show interfaces switchport → {intf_name: {native_vlan, ...}}"""
+    result: dict = {}
+    for row in rows:
+        name = row.get("INTERFACE", "")
+        if not name:
+            continue
+        try:
+            native = int(row.get("NATIVE_VLAN") or 0) or None
+        except (TypeError, ValueError):
+            native = None
+        result[name] = {"native_vlan": native}
+    return result or None
+
+
+def _norm_cdp(rows: list) -> dict | None:
+    """show cdp neighbors detail → {index: {n: {device_id, local_interface, ...}}}"""
+    index: dict = {}
+    for i, row in enumerate(rows, start=1):
+        index[str(i)] = {
+            "device_id": row.get("DESTINATION_HOST", ""),
+            "local_interface": row.get("LOCAL_PORT", ""),
+            "platform": row.get("PLATFORM", ""),
+            "capabilities": row.get("CAPABILITIES", ""),
+        }
+    return {"index": index} if index else None
+
+
+def _norm_lldp(rows: list) -> dict | None:
+    """show lldp neighbors detail → {interfaces: {local_if: {port_id: {...}}}}"""
+    interfaces: dict = {}
+    for row in rows:
+        local_if = row.get("LOCAL_INTERFACE", "")
+        if not local_if:
+            continue
+        port_id = row.get("PORT_ID", "")
+        if local_if not in interfaces:
+            interfaces[local_if] = {"port_id": {}}
+        interfaces[local_if]["port_id"][port_id] = {
+            "system_name": row.get("SYSTEM_NAME", ""),
+            "system_description": row.get("SYSTEM_DESCRIPTION", ""),
+        }
+    return {"interfaces": interfaces} if interfaces else None
+
+
+def _norm_stp(rows: list) -> dict | None:
+    """show spanning-tree → {pvst: {vlans: {vlan_id: {bridge, interfaces}}}}"""
+    vlans: dict = {}
+    for row in rows:
+        # NAME field is like "VLAN0001"; extract the numeric ID.
+        name = row.get("NAME", "")
+        m = re.search(r"\d+", name)
+        vlan_id = str(int(m.group(0))) if m else name  # normalise "0001" → "1"
+
+        intf = row.get("INTERFACE", "")
+        role = (row.get("ROLE") or "").lower()
+
+        if vlan_id not in vlans:
+            try:
+                bp = int(row.get("BRIDGE_PRIORITY") or 0) + int(
+                    row.get("BRIDGE_SYSID") or 0
+                )
+            except (TypeError, ValueError):
+                bp = None
+            vlans[vlan_id] = {"bridge": {"priority": bp}, "interfaces": {}}
+
+        if intf:
+            vlans[vlan_id]["interfaces"][intf] = {"role": role}
+
+    return {"pvst": {"vlans": vlans}} if vlans else None
+
+
+def _norm_version(rows: list) -> dict | None:
+    """show version → {version: {version: "..."}}"""
+    if not rows:
+        return None
+    ver = rows[0].get("VERSION", "")
+    return {"version": {"version": ver}} if ver else None
+
+
+def _norm_vtp(rows: list) -> dict | None:
+    """show vtp status → {vtp: {operating_mode: "..."}}"""
+    if not rows:
+        return None
+    mode = rows[0].get("OPERATING_MODE", "")
+    return {"vtp": {"operating_mode": mode.lower()}} if mode else None
+
+
+# Map each command to its normaliser.  Commands not listed here return None
+# (consumers fall back to running-config checks).
+_TEXTFSM_NORMALIZERS: dict[str, Any] = {
+    "show interfaces":           _norm_interfaces,
+    "show interfaces switchport": _norm_switchports,
+    "show cdp neighbors detail":  _norm_cdp,
+    "show lldp neighbors detail": _norm_lldp,
+    "show spanning-tree":         _norm_stp,
+    "show version":               _norm_version,
+    "show vtp status":            _norm_vtp,
+    # show etherchannel summary — running-config 'channel-group' fallback handles it
+    # show ip ssh              — raw-output regex fallback handles it
+}
+
+
 def _populate_structured_data(data: DeviceData, platform: str) -> None:
-    """Populate structured fields: try Genie first, then TextFSM fallback."""
+    """Populate structured fields: try Genie first, then TextFSM fallback.
+
+    Genie returns nested dicts; TextFSM returns lists.  The per-command
+    normalisers in ``_TEXTFSM_NORMALIZERS`` convert TextFSM lists to the
+    minimal Genie-compatible dict shape expected by all consumers.
+    """
     for command, attr_name in STRUCTURED_COMMAND_FIELDS.items():
         output = data.raw_commands.get(command, "")
         if not output.strip():
@@ -250,8 +386,16 @@ def _populate_structured_data(data: DeviceData, platform: str) -> None:
             try:
                 parsed = get_structured_data(output, platform=platform, command=command)
                 if isinstance(parsed, list) and parsed:
-                    setattr(data, attr_name, parsed)
-                    data.structured_parse_engine[command] = "textfsm"
+                    normalizer = _TEXTFSM_NORMALIZERS.get(command)
+                    if normalizer:
+                        normalised = normalizer(parsed)
+                        if normalised:
+                            setattr(data, attr_name, normalised)
+                            data.structured_parse_engine[command] = "textfsm"
+                            continue
+                    # No normaliser or normalisation returned None.
+                    # Leave the attribute as None; consumers use running-config.
+                    data.structured_parse_engine[command] = "raw-only"
                     continue
             except (LookupError, TypeError, ValueError, AttributeError, OSError):
                 log.debug("TextFSM parse failed for '%s'", command)

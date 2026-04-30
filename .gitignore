@@ -16,8 +16,6 @@ python_runtime/
 # Runtime-generated directories — track the folder but not its contents
 logs/*
 !logs/.gitkeep
-output/*
-!output/.gitkeep
 reports/*
 !reports/.gitkeep
 

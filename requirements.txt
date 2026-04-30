@@ -2,9 +2,9 @@
 netmiko>=4.2.0
 paramiko>=3.4.0
 
-# Structured parsing
-pyats[library]>=24.0
-genie>=24.0
+# Structured parsing (Linux / macOS / WSL only — PyATS does not install on native Windows)
+pyats[library]>=24.0; sys_platform != "win32"
+genie>=24.0; sys_platform != "win32"
 
 # Reporting and configuration
 rich>=13.7.0

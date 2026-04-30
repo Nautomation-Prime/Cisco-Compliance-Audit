@@ -92,7 +92,6 @@ a {
 <p>Other formats:</p>
 <ul>
 <li><a href="RUNBOOK.html">RUNBOOK.html</a> for browser viewing</li>
-<li><a href="RUNBOOK.txt">RUNBOOK.txt</a> for basic text editors</li>
 </ul>
 <p>To regenerate the HTML copy after editing this file:</p>
 <pre><code class="language-bash">python scripts/render_runbook.py</code></pre>
@@ -108,16 +107,18 @@ a {
 </ul>
 <p>This guide assumes you have network reachability to devices and can run commands from a shell (for example Linux, WSL, or Windows PowerShell).</p>
 <h2 id="pre-checks-start-here">Pre-Checks (Start Here)</h2>
-<ol>
-<li>Confirm config and inventory files are correct.</li>
-<li>Confirm credentials are available (keyring, env vars, or prompt).</li>
-<li>Confirm remediation execution policy in config if you plan to apply changes.</li>
-<li>If you track automation value, enable ROI settings in audit_settings.roi.</li>
-</ol>
-<p>Example config path:</p>
+<p>**Starting the tool:**</p>
 <ul>
-<li>compliance_audit/compliance_config/</li>
+<li>**Windows:** Run <code>run.bat</code> (or double-click it) — handles the Python runtime and launches the TUI automatically.</li>
+<li>**Linux / WSL:** Run <code>./run.sh</code> — activates the virtual environment and launches the TUI.</li>
+<li>**Manual:** <code>python -m compliance_audit --tui</code> or <code>python -m compliance_audit</code> from an activated environment.</li>
 </ul>
+<ol>
+<li>Confirm config and inventory files are correct. Config directory: <code>compliance_audit/compliance_config/</code></li>
+<li>Confirm credentials are available — options in order of precedence: <code>.env</code> file → OS keyring → environment variables (<code>SWITCH_USER</code> / <code>SWITCH_PASS</code>) → interactive prompt. Copy <code>.env.example</code> to <code>.env</code> for a convenient credential file.</li>
+<li>Confirm remediation execution policy in <code>audit_settings.yaml</code> if you plan to apply changes.</li>
+<li>If you track automation value, enable ROI settings in <code>audit_settings.roi</code>.</li>
+</ol>
 <h2 id="optional-roi-setup">Optional ROI Setup</h2>
 <p>If you want reports to show estimated time saved/value saved, enable ROI in config:</p>
 <pre><code class="language-yaml">audit_settings:
@@ -149,6 +150,15 @@ python -m compliance_audit -c configs/site_alpha
 
 # Run audit for a single device
 python -m compliance_audit --device ZZ-LAB1-001ASW001:192.0.2.61
+
+# Audit only devices in a specific site group (from the grouped inventory)
+python -m compliance_audit --site site_lab
+
+# Audit devices across multiple site groups
+python -m compliance_audit --site site_lab site_brn
+
+# Use a separate per-site inventory file instead
+python -m compliance_audit -i devices/site_brn.yaml
 
 # Surface only high-severity findings
 python -m compliance_audit --min-severity high
@@ -195,7 +205,7 @@ python -m compliance_audit --remediation-apply-all</code></pre>
 <h3 id="0-choose-operator-experience">0) Choose Operator Experience</h3>
 <p>Guided wizard mode (recommended for discoverability):</p>
 <pre><code class="language-bash">python -m compliance_audit --interactive</code></pre>
-<p>Full-screen premium terminal UI:</p>
+<p>Full-screen 3-screen terminal UI:</p>
 <pre><code class="language-bash">python -m compliance_audit --tui</code></pre>
 <p>Command discovery table (all argparse options):</p>
 <pre><code class="language-bash">python -m compliance_audit --list-options</code></pre>
@@ -207,15 +217,15 @@ python -m compliance_audit --remediation-apply-all</code></pre>
 </ul>
 <h4 id="textual-keyboard-cheat-sheet">Textual Keyboard Cheat Sheet</h4>
 <p>When running <code>python -m compliance_audit --tui</code>:</p>
+<p>The TUI is a 3-screen application:</p>
+<ol>
+<li>**Setup screen** — fill in config directory, inventory path, device overrides, categories, output directory, and credentials, then click **Start Audit**</li>
+<li>**Audit screen** — live statistics panel (devices, completed, compliant, failures, warnings, errors) with a scrollable real-time log stream</li>
+<li>**Complete screen** — summary of totals across all devices with **Back to Log** and **Quit** buttons</li>
+</ol>
+<p>Key bindings (all screens):</p>
 <ul>
-<li><code>1</code> launch guided wizard mode</li>
-<li><code>2</code> run quick audit using default settings</li>
-<li><code>3</code> focus the CLI options table</li>
-<li><code>q</code> quit the full-screen TUI</li>
-</ul>
-<p>Tip:</p>
-<ul>
-<li>From the options table, use your terminal arrow keys to scroll rows.</li>
+<li><code>Ctrl+Q</code> — quit the application at any point</li>
 </ul>
 <h3 id="1-run-audit">1) Run Audit</h3>
 <pre><code class="language-bash"># Full audit using default config directory

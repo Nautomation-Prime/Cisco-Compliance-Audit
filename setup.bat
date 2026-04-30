@@ -10,8 +10,8 @@ REM Downloads a self-contained Python embeddable runtime and installs all
 REM required packages into it. Runs automatically from run.bat when
 REM python_runtime\ is missing. Requires an internet connection (one-time only).
 REM
-REM NOTE: PyATS/Genie are large packages (~400 MB). The install step may take
-REM       several minutes depending on your connection speed.
+REM NOTE: PyATS/Genie are Linux/macOS only and are skipped on Windows (platform
+REM       marker in requirements.txt). TextFSM (ntc-templates) is used instead.
 REM
 REM To upgrade Python: update PY_VER and PY_SHORT below, delete python_runtime\,
 REM then run this script again.
@@ -33,8 +33,8 @@ echo.
 echo  Python %PY_VER% (embeddable) and all required packages will be downloaded.
 echo  An internet connection is required. This only runs once.
 echo.
-echo  NOTE: PyATS/Genie are large packages. The install step may take
-echo        several minutes. Please be patient.
+echo  NOTE: PyATS/Genie are Linux/macOS only and will NOT be installed on Windows.
+echo        TextFSM (ntc-templates) will be used for structured parsing instead.
 echo.
 echo  Press any key to begin, or Ctrl+C to cancel.
 echo.

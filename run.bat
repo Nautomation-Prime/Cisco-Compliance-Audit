@@ -52,8 +52,8 @@ if not exist "%PACKAGE_DIR%\__init__.py" (
 )
 
 REM Check compliance config exists
-if not exist "%PACKAGE_DIR%\compliance_config.yaml" (
-    echo  [ERROR] Missing: %PACKAGE_DIR%\compliance_config.yaml
+if not exist "%PACKAGE_DIR%\compliance_config\" (
+    echo  [ERROR] Missing: %PACKAGE_DIR%\compliance_config\
     goto :error
 )
 

@@ -12,7 +12,7 @@ from textual import on, work
 
 from .version import get_version
 from .logging_setup import configure_logging
-from .credentials import load_dotenv
+from .credentials import CredentialHandler, load_dotenv
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal, ScrollableContainer, Vertical
@@ -144,7 +144,7 @@ class SetupScreen(Screen):
                 yield Label("─── Credentials", classes="section-label")
                 yield Label("Username", classes="field-label")
 
-                # Pre-fill from .env / environment if available
+                # Pre-fill order: .env / env vars → OS keyring
                 load_dotenv()
                 _env_user = (
                     os.environ.get("SWITCH_USER")
@@ -156,6 +156,17 @@ class SetupScreen(Screen):
                     or os.environ.get("CREDENTIAL_PASS")
                     or ""
                 )
+                if not _env_user or not _env_pass:
+                    try:
+                        _kr_creds = CredentialHandler(
+                            credential_store="keyring",
+                            keyring_service="cisco-compliance-audit",
+                        ).try_keyring()
+                        if _kr_creds:
+                            _env_user = _env_user or _kr_creds[0]
+                            _env_pass = _env_pass or _kr_creds[1]
+                    except Exception:
+                        pass
 
                 yield Input(
                     value=_env_user,
@@ -168,6 +179,11 @@ class SetupScreen(Screen):
                     placeholder="SSH password",
                     password=True,
                     id="password",
+                )
+                yield Checkbox(
+                    "Save credentials to OS keyring",
+                    id="save-to-keyring",
+                    value=False,
                 )
 
                 # ── Buttons ───────────────────────────────────────────────
@@ -191,6 +207,7 @@ class SetupScreen(Screen):
         skip_jump = self.query_one("#skip-jump", Checkbox).value
         username = self.query_one("#username", Input).value.strip()
         password = self.query_one("#password", Input).value
+        save_to_keyring = self.query_one("#save-to-keyring", Checkbox).value
 
         if not username:
             self.notify("Username is required.", severity="error")
@@ -198,6 +215,16 @@ class SetupScreen(Screen):
         if not password:
             self.notify("Password is required.", severity="error")
             return
+
+        if save_to_keyring:
+            try:
+                CredentialHandler(
+                    credential_store="keyring",
+                    keyring_service="cisco-compliance-audit",
+                ).store_to_keyring(username, password)
+                self.notify("Credentials saved to OS keyring.", severity="information")
+            except Exception as exc:
+                self.notify(f"Keyring save failed: {exc}", severity="warning")
 
         device_overrides = (
             [d.strip() for d in devices_raw.replace(",", " ").split() if d.strip()]

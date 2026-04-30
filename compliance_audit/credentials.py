@@ -178,6 +178,31 @@ class CredentialHandler:
 
     # ── private helpers ───────────────────────────────────────
 
+    def try_keyring(self) -> tuple[str, str] | None:
+        """Try to load credentials from the OS keyring without requiring keyring mode.
+
+        Returns ``(username, password)`` if both are stored, otherwise ``None``.
+        Silently returns ``None`` if the keyring package is not installed.
+        """
+        try:
+            return self._from_keyring()
+        except (RuntimeError, Exception):
+            return None
+
+    def store_to_keyring(self, username: str, password: str) -> None:
+        """Unconditionally save credentials to the OS keyring.
+
+        Used by the TUI when the operator ticks "Save credentials to OS keyring".
+        Silently does nothing if the keyring package is not installed.
+        """
+        try:
+            kr = _get_keyring()
+            kr.set_password(self._service, self._USER_SUFFIX, username)
+            kr.set_password(self._service, self._PASS_SUFFIX, password)
+            log.info("Credentials saved to OS keyring (%s)", self._service)
+        except (RuntimeError, Exception) as exc:
+            log.warning("Could not save credentials to OS keyring: %s", exc)
+
     def _from_keyring(self) -> tuple[str, str] | None:
         """Try to load username + password from the OS keyring."""
         kr = _get_keyring()

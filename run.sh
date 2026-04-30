@@ -36,8 +36,8 @@ if [ ! -f "$SCRIPT_DIR/compliance_audit/__init__.py" ]; then
 fi
 
 # Check compliance config exists
-if [ ! -f "$SCRIPT_DIR/compliance_audit/compliance_config.yaml" ]; then
-    echo " [ERROR] Missing: compliance_audit/compliance_config.yaml"
+if [ ! -d "$SCRIPT_DIR/compliance_audit/compliance_config" ]; then
+    echo " [ERROR] Missing: compliance_audit/compliance_config/"
     exit 1
 fi
 
