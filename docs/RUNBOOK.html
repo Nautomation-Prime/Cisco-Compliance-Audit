@@ -1,0 +1,720 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cisco Compliance Audit Runbook</title>
+  <style>
+body {
+  font-family: Segoe UI, Arial, sans-serif;
+  background: #f6f8fb;
+  color: #16202a;
+  margin: 0;
+  padding: 0;
+}
+main {
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 32px 24px 48px;
+}
+h1, h2, h3 {
+  color: #0f3b57;
+}
+h1 {
+  border-bottom: 3px solid #0f3b57;
+  padding-bottom: 10px;
+}
+h2 {
+  margin-top: 32px;
+  border-bottom: 1px solid #cfd8e3;
+  padding-bottom: 8px;
+}
+p, li {
+  line-height: 1.6;
+}
+code {
+  background: #e8eef5;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-family: Consolas, monospace;
+}
+pre {
+  background: #12202b;
+  color: #eaf2f7;
+  padding: 14px 16px;
+  border-radius: 8px;
+  overflow-x: auto;
+}
+pre code {
+  background: transparent;
+  color: inherit;
+  padding: 0;
+}
+.runbook-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 16px 0 24px;
+  background: white;
+}
+.runbook-table th,
+.runbook-table td {
+  border: 1px solid #d7e0ea;
+  padding: 10px 12px;
+  text-align: left;
+  vertical-align: top;
+}
+.runbook-table th {
+  background: #edf3f8;
+}
+a {
+  color: #0b5fa5;
+}
+.banner {
+  background: #0f3b57;
+  color: white;
+  padding: 18px 24px;
+}
+.banner p {
+  margin: 6px 0 0;
+  color: #d5e3ee;
+}
+</style>
+</head>
+<body>
+  <div class="banner">
+    <h1 style="margin:0;border:0;padding:0;color:white;">Cisco Compliance Audit Runbook</h1>
+    <p>  Rendered HTML copy of docs/RUNBOOK.md for operators who do not use   Markdown-capable viewers.</p>
+  </div>
+  <main>
+<h1 id="cisco-compliance-audit-runbook">Cisco Compliance Audit Runbook</h1>
+<p>Operator guide for running compliance audits and applying remediation safely on Cisco IOS-XE access switches.</p>
+<p>For architecture, the full check catalogue and configuration reference, see <a href="../README.md">README.md</a>. This runbook covers <em>how to run it</em>; the README covers <em>how it works</em>.</p>
+<p>Other formats:</p>
+<ul>
+<li><a href="RUNBOOK.html">RUNBOOK.html</a> for browser viewing</li>
+</ul>
+<p>To regenerate the HTML copy after editing this file:</p>
+<pre><code class="language-bash">python scripts/render_runbook.py</code></pre>
+<h2 id="contents">Contents</h2>
+<ul>
+<li>Scope and assumptions</li>
+<li>Quick reference card</li>
+<li>Before your first run</li>
+<li>Pre-flight checks</li>
+<li>Credentials</li>
+<li>Running an audit</li>
+<li>Where the output goes</li>
+<li>Reading the results</li>
+<li>Port trust placement (DHCP snooping / DAI)</li>
+<li>Drift and delta reporting</li>
+<li>Policy exceptions</li>
+<li>Remediation lifecycle</li>
+<li>Scheduled audits and email approval</li>
+<li>ROI reporting</li>
+<li>Web backend integration</li>
+<li>Configuration quick reference</li>
+<li>Safety rules</li>
+<li>Troubleshooting</li>
+<li>Escalation and rollback</li>
+<li>Checklists</li>
+<li>Appendix A: exit codes</li>
+<li>Appendix B: output file naming</li>
+<li>Appendix C: glossary</li>
+</ul>
+<h2 id="scope-and-assumptions">Scope and Assumptions</h2>
+<p>Use this guide to:</p>
+<ul>
+<li>Run compliance audits against IOS-XE access switches</li>
+<li>Interpret findings, scores and reports</li>
+<li>Review, approve and reject remediation packs</li>
+<li>Apply approved packs, singly or in bulk</li>
+<li>Verify the result and produce closure evidence</li>
+</ul>
+<p>This guide assumes you have network reachability to the devices (directly or via the configured jump host) and can run commands from a shell.</p>
+<p><strong>This release targets Cisco IOS-XE access switches.</strong> Checks, port classification and remediation commands are written for that platform and role.</p>
+<p><strong>Remediation <em>execution</em> is Linux-only by default.</strong> Auditing, reviewing and approving work on any platform, but <code>--remediation-apply</code> refuses to run anywhere other than Linux unless <code>execution.linux_only</code> is set to <code>false</code>. On Windows, expect to audit and approve locally and apply from Linux or WSL.</p>
+<h2 id="quick-reference-card">Quick Reference Card</h2>
+<pre><code class="language-bash"># Health and config checks — do these first, they touch no devices
+python -m compliance_audit --health
+python -m compliance_audit --validate-config            # also lists expired/expiring exceptions
+python -m compliance_audit --dry-run
+
+# Audit
+python -m compliance_audit                              # whole inventory
+python -m compliance_audit --device SW1:192.0.2.61      # one device
+python -m compliance_audit --site site_lab              # one site group
+python -m compliance_audit --ip-filter 192.0.2.0/24      # one IP range
+python -m compliance_audit --min-severity high          # high and above only
+python -m compliance_audit --tags cis pci               # CIS or PCI findings
+python -m compliance_audit --framework cis              # only CIS-mapped checks
+python -m compliance_audit --categories management_plane
+
+# Guided and full-screen modes
+python -m compliance_audit --interactive                # prompted wizard
+python -m compliance_audit --tui                        # full-screen dashboard
+python -m compliance_audit --list-options               # every flag, in a table
+
+# Remediation lifecycle
+python -m compliance_audit --remediation-list pending
+python -m compliance_audit --remediation-approve &lt;PACK_ID&gt; --approver &quot;you&quot; --ticket-id &quot;CHG0012345&quot;
+python -m compliance_audit --remediation-reject  &lt;PACK_ID&gt; --approver &quot;you&quot; --reason &quot;Out of window&quot;
+python -m compliance_audit --remediation-apply   &lt;PACK_ID&gt;
+python -m compliance_audit --remediation-apply-all
+
+# Scheduled audits: approve or reject a whole run (commands are in the email)
+python -m compliance_audit --run-list
+python -m compliance_audit --run-show &lt;RUN_ID&gt;
+python -m compliance_audit --run-approve &lt;RUN_ID&gt; --approver &quot;you&quot; --ticket-id &quot;CHG0012345&quot; --apply-now
+python -m compliance_audit --run-approve &lt;RUN_ID&gt; --approver &quot;you&quot; --ticket-id &quot;CHG0012345&quot; --apply-at &quot;2026-11-07 02:00&quot;
+python -m compliance_audit --run-reject  &lt;RUN_ID&gt; --approver &quot;you&quot; --reason &quot;Out of window&quot;
+python -m compliance_audit --notify-test                # check email delivery
+
+# Non-interactive, machine-readable lifecycle (for a backend or CI)
+python -m compliance_audit --remediation-list all --remediation-output json
+python -m compliance_audit --remediation-apply-all --remediation-output json --remediation-no-confirm</code></pre>
+<h2 id="before-your-first-run">Before Your First Run</h2>
+<p><strong>Starting the tool:</strong></p>
+<ul>
+<li><strong>Windows:</strong> run <code>run.bat</code> (or double-click it). It bootstraps the portable Python runtime on first use and launches the TUI.</li>
+<li><strong>Linux / WSL:</strong> run <code>./run.sh</code>. It creates the virtual environment on first use and launches the TUI.</li>
+<li><strong>Manual:</strong> <code>python -m compliance_audit --tui</code>, or plain <code>python -m compliance_audit</code>, from an activated environment.</li>
+</ul>
+<p>Confirm each of the following before auditing anything:</p>
+<ol>
+<li><strong>Config directory</strong> — <code>assets/compliance_config/</code>. Eight YAML files, deep-merged at load time (including <code>exceptions.yaml</code>, the policy-exception register, and <code>notifications.yaml</code>, email for scheduled runs). You can point elsewhere with <code>-c</code>.</li>
+<li><strong>Device inventory</strong> — <code>assets/devices/devices.yaml</code>. Flat list or site groups. Override with <code>-i</code>.</li>
+<li><strong>Credentials</strong> — see the next section.</li>
+<li><strong>Which checks are enabled.</strong> The shipped config ships most checks <code>enabled: false</code> so a first run is quiet. Nothing is wrong if your first audit reports few findings — turn on what your policy requires.</li>
+<li><strong>Remediation policy</strong> — <code>audit_settings.remediation</code> in <code>audit_settings.yaml</code>, if you intend to apply changes.</li>
+</ol>
+<h2 id="pre-flight-checks">Pre-Flight Checks</h2>
+<p>Three commands validate the setup without touching a single device. Run them in this order after any config change.</p>
+<h3 id="health"><code>--health</code></h3>
+<p>Checks that dependencies are importable and the config directory loads.</p>
+<pre><code class="language-bash">python -m compliance_audit --health</code></pre>
+<p>Reports each dependency as OK / MISSING / not installed, then the config status and the number of checks defined. <code>genie</code> and <code>pyats</code> show as <em>not installed</em> on Windows by design — they are Linux/WSL only, and the tool falls back to regex parsing without them.</p>
+<h3 id="validate-config"><code>--validate-config</code></h3>
+<p>Validates every YAML file against the schema, lists every problem, and exits.</p>
+<pre><code class="language-bash">python -m compliance_audit --validate-config</code></pre>
+<p>The same validation runs on <strong>every</strong> config load. An audit, the TUI, the wizard and the remediation commands all refuse to start on an invalid config, so this flag is how you see the errors without running anything else.</p>
+<p>This catches the mistakes YAML lint cannot see:</p>
+<ul>
+<li><strong>Unknown keys.</strong> The engine ignores keys it does not read, so <code>max_worker:</code>, <code>expected_server:</code>, or a check placed under the wrong plane silently does nothing. These are errors, with a &quot;did you mean&quot; where one is close.</li>
+<li><strong>A mistyped <code>enabled</code> key.</strong> A check runs only with <code>enabled: true</code>, so <code>enabld: true</code> would quietly leave it off. <code>enabled</code>, <code>severity</code> and <code>tags</code> are required on every check node.</li>
+<li><strong>Bad values.</strong> IP addresses (<code>expected_servers</code>, <code>expected_hosts</code>, <code>jump_host</code>) must be valid IPv4/IPv6 or a hostname; VLAN lists, syslog levels, storm-control thresholds and the Netmiko <code>device_type</code> are checked.</li>
+<li><strong>Regexes that do not compile</strong>, in the hostname/interface filters and the <code>endpoint_neighbors</code> patterns. The engine swallows <code>re.error</code>, so the filter would silently stop applying.</li>
+<li><strong>Policy exceptions that are incomplete or could never match</strong> — a missing <code>id</code>, <code>reason</code>, <code>expires</code> or device selector, a duplicate ID, a misspelt check name (with a &quot;did you mean&quot;), an unknown role or a bad IP network.</li>
+</ul>
+<p>When the config is valid, the command also prints the state of the exception register and names every <strong>expired</strong> and <strong>expiring</strong> exception. That is a review prompt, not an error — the exit code stays 0.</p>
+<p>The device inventory is validated when it loads: <code>ip</code> must be a real IPv4/IPv6 address and only <code>devices:</code> / <code>groups:</code> are allowed at the top level, so a <code>device:</code> typo is reported instead of auditing nothing.</p>
+<p>Exit code 2 means validation failed.</p>
+<h3 id="dry-run"><code>--dry-run</code></h3>
+<p>Validates config, resolves credentials and tests TCP reachability — without auditing.</p>
+<pre><code class="language-bash">python -m compliance_audit --dry-run
+python -m compliance_audit --dry-run --site site_lab</code></pre>
+<p>Use this before a change window to confirm the inventory is reachable and the credentials resolve, so the audit itself does not fail halfway through.</p>
+<h2 id="credentials">Credentials</h2>
+<p>Resolved in this order, first match wins:</p>
+<ol>
+<li><code>.env</code> file in the project root — copy <code>.env.example</code> to <code>.env</code> to start</li>
+<li>OS keyring, when <code>connection.credential_store: keyring</code></li>
+<li>Environment variables <code>SWITCH_USER</code> / <code>SWITCH_PASS</code> (and <code>ENABLE_SECRET</code>)</li>
+<li>Interactive prompt</li>
+</ol>
+<p>Notes:</p>
+<ul>
+<li>The <code>.env</code> file is gitignored. Keep it out of shared drives and backups.</li>
+<li>With the keyring store, credentials are saved on first successful prompt and reused afterwards.</li>
+<li>Jump-host credentials follow the same chain; configure the host in <code>connection.yaml</code>.</li>
+</ul>
+<h2 id="running-an-audit">Running an Audit</h2>
+<h3 id="choose-your-interface">Choose your interface</h3>
+<table class="runbook-table">
+<thead><tr><th>Mode</th><th>Command</th><th>When to use</th></tr></thead>
+<tbody>
+<tr><td>Standard CLI</td><td><code>python -m compliance_audit</code></td><td>Automation, CI, scripted runs</td></tr>
+<tr><td>Guided wizard</td><td><code>--interactive</code></td><td>You want prompts and a command preview before it runs</td></tr>
+<tr><td>Full-screen TUI</td><td><code>--tui</code></td><td>You want a live dashboard and keyboard navigation</td></tr>
+<tr><td>Option discovery</td><td><code>--list-options</code></td><td>You cannot remember a flag</td></tr>
+</tbody></table>
+<h3 id="tui-notes">TUI notes</h3>
+<p>The TUI is a three-screen application:</p>
+<ol>
+<li><strong>Setup</strong> — config directory, inventory path, device overrides, categories, output directory and credentials, then <strong>Start Audit</strong></li>
+<li><strong>Audit</strong> — live statistics (devices, completed, compliant, failures, warnings, errors) with a scrolling real-time log</li>
+<li><strong>Complete</strong> — totals across all devices, with <strong>Back to Log</strong> and <strong>Quit</strong></li>
+</ol>
+<p><code>Ctrl+Q</code> quits from any screen.</p>
+<h3 id="scoping-a-run">Scoping a run</h3>
+<pre><code class="language-bash"># One device (hostname:ip lets the tool parse the role from the hostname)
+python -m compliance_audit --device ZZ-LAB1-001ASW001:192.0.2.61
+
+# Several devices
+python -m compliance_audit -d SW1:192.0.2.61 -d SW2:192.0.2.62
+
+# One or more site groups from the inventory
+python -m compliance_audit --site site_lab
+python -m compliance_audit --site site_lab site_brn
+
+# Restrict discovery to an IP range — CIDR or a hyphenated range
+python -m compliance_audit --ip-filter 192.0.2.0/24
+python -m compliance_audit --ip-filter 192.0.2.10-192.0.2.60
+
+# A different inventory file entirely
+python -m compliance_audit -i devices/site_brn.yaml
+
+# A different config directory (per-site policy)
+python -m compliance_audit -c configs/site_alpha
+
+# Only some check categories
+python -m compliance_audit --categories management_plane control_plane
+
+# Connect directly, bypassing the jump host
+python -m compliance_audit --no-jump</code></pre>
+<h3 id="filtering-findings">Filtering findings</h3>
+<p><code>--min-severity</code>, <code>--tags</code> and <code>--framework</code> do not skip checks — every check still runs, and non-matching findings are reported as SKIP.</p>
+<pre><code class="language-bash">python -m compliance_audit --min-severity high
+python -m compliance_audit --tags cis pci
+python -m compliance_audit --framework cis
+python -m compliance_audit --min-severity high --tags cis</code></pre>
+<p><strong>Filters apply to the console summary, the consolidated report and the exit code only.</strong> Per-device reports and remediation scripts are written by the worker threads before the filters are known, and deliberately keep the full, unfiltered result set. A filtered run therefore still produces a full-scope remediation script. The run prints a reminder when filters are active.</p>
+<h3 id="failing-a-build-on-the-score">Failing a build on the score</h3>
+<pre><code class="language-bash"># Exit 1 if any device scores below 80%
+python -m compliance_audit --fail-threshold 80</code></pre>
+<p>Without <code>--fail-threshold</code>, the run exits 1 if any device has at least one FAIL.</p>
+<h2 id="where-the-output-goes">Where the Output Goes</h2>
+<p><code>output_dir</code> (default <code>./reports</code>) is resolved to an absolute path at the start of every run and printed in the summary, together with the remediation review database. If you are ever unsure where results landed, read those two lines — they are authoritative for that run.</p>
+<pre><code>  CSV report: /path/to/reports/compliance_audit_20260905_143025.csv
+  HTML report: /path/to/reports/consolidated_report_20260905_143025.html
+  Output directory: /path/to/reports
+  Review database: /path/to/reports/db/remediation_reviews.db</code></pre>
+<p>The review database is created on <strong>every</strong> run where <code>remediation.generate_review_pack</code> is true, even a run with nothing to remediate. An empty database is normal and expected; it is not a sign of failure.</p>
+<p>Override the location per run:</p>
+<pre><code class="language-bash">python -m compliance_audit --output-dir /var/audit/2026-09</code></pre>
+<p>If you override it for the audit, use the same <code>--output-dir</code> for the remediation commands — otherwise they will look in a different database.</p>
+<h2 id="reading-the-results">Reading the Results</h2>
+<h3 id="statuses">Statuses</h3>
+<table class="runbook-table">
+<thead><tr><th>Status</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td>PASS</td><td>The device satisfies the check</td></tr>
+<tr><td>FAIL</td><td>The device does not satisfy the check; remediation may be available</td></tr>
+<tr><td>WARN</td><td>Something needs a human decision — the tool will not guess</td></tr>
+<tr><td>SKIP</td><td>The check did not apply, or was filtered out by tags/severity/framework/role/hostname/group rules</td></tr>
+<tr><td>ERROR</td><td>The check could not run (parse failure, engine error)</td></tr>
+<tr><td>EXCEPTION</td><td>A FAIL or WARN covered by an approved policy exception. Never remediated. Shown with a state: <em>active</em>, <em>expiring</em>, <em>expired</em> (needs review) or <em>permanent</em></td></tr>
+</tbody></table>
+<h3 id="score">Score</h3>
+<p>Score is <code>PASS / (all findings except SKIP and EXCEPTION) x 100</code>, rounded to one decimal place. A device with no applicable findings scores 100%. Because SKIP is excluded, filtering a run changes the reported score — compare like with like. With <code>exception_settings.expired_counts_against_score: true</code>, findings under an <em>expired</em> exception count as not passing.</p>
+<h3 id="severity">Severity</h3>
+<p><code>critical</code> &gt; <code>high</code> &gt; <code>medium</code> &gt; <code>low</code> &gt; <code>info</code>, set per check in YAML. <code>--min-severity high</code> surfaces critical and high only.</p>
+<h3 id="tags-and-frameworks">Tags and frameworks</h3>
+<p>Checks carry free-form <code>tags</code> (for example <code>cis</code>, <code>pci</code>, <code>layer2-security</code>) and an optional <code>framework_controls</code> map naming the specific control they satisfy. <code>--tags</code> matches the former; <code>--framework</code> matches the latter. Use <code>--framework cis</code> when you need evidence mapped to numbered CIS controls rather than everything loosely tagged for it.</p>
+<h2 id="port-trust-placement-dhcp-snooping-dai">Port Trust Placement (DHCP Snooping / DAI)</h2>
+<p>Worth calling out because it is the check most often misread.</p>
+<p>Cisco&#x27;s guidance is to trust only the interfaces that lead to the DHCP server — uplinks and inter-switch links — and to leave every host-facing port untrusted. A trusted access port is exempt from DHCP snooping and DAI validation, which is exactly where a rogue DHCP server or ARP spoofer would sit.</p>
+<p><code>dhcp_snooping_trust</code> and <code>arp_inspection_trust</code> enforce <strong>both</strong> halves:</p>
+<ul>
+<li><code>on_&lt;kind&gt;: true</code> — the trust command must be <strong>present</strong> on that kind of port</li>
+<li><code>untrusted: {&lt;kind&gt;: true}</code> — the trust command must be <strong>absent</strong> there</li>
+</ul>
+<p>Port kinds are <code>access_ports</code>, <code>uplinks</code>, <code>downlinks</code>, <code>unknown_trunks</code>, <code>endpoint_trunks</code> and <code>unused_ports</code>. A kind listed under both is treated as required. A kind in neither produces no finding at all.</p>
+<p><code>unknown_trunks</code> defaults to silent in both directions. When a trunk has no CDP/LLDP neighbour data the classifier cannot tell an uplink from a downlink, and the tool will not guess. If your environment has a firm answer, set it explicitly.</p>
+<p>A trusted access port reports as:</p>
+<pre><code>[FAIL] dhcp_snooping_trust  Gi1/0/1: DHCP snooping trust must NOT be set on
+                            this port (access port) - it bypasses validation here
+                            -&gt; no ip dhcp snooping trust</code></pre>
+<p>Both checks ship <code>enabled: false</code>. Turn them on in <code>data_plane.yaml</code>.</p>
+<h2 id="drift-and-delta-reporting">Drift and Delta Reporting</h2>
+<p>When <code>delta_report</code> is enabled, each run is compared against the previous JSON report for the same device and a delta file is written showing what changed:</p>
+<ul>
+<li><strong>Resolved</strong> — was FAIL/WARN, now PASS</li>
+<li><strong>New failures</strong> — was PASS or absent, now FAIL/WARN</li>
+<li><strong>Unchanged failures</strong> — still failing</li>
+</ul>
+<p>A short delta summary prints in the console after the audit table.</p>
+<p>Delta needs <code>json_report: true</code>, because the per-device JSON report <em>is</em> the baseline. If <code>delta_report</code> is on and <code>json_report</code> is off, the run warns that no drift can ever be detected rather than failing silently.</p>
+<ul>
+<li><strong>Moved to exception</strong> — was FAIL/WARN, now covered by a policy exception (not counted as resolved)</li>
+</ul>
+<p>Delta is your closure evidence: run the audit, remediate, run it again, and the delta shows exactly what the change achieved.</p>
+<h2 id="policy-exceptions">Policy Exceptions</h2>
+<p>An exception records an <strong>approved, time-boxed deviation</strong> from policy for a specific device, group, role or IP range — and optionally specific checks, interfaces or finding text. Exceptions live in <code>assets/compliance_config/exceptions.yaml</code> (or any <code>exceptions*.yaml</code> in the config directory, or the file(s) named by <code>exceptions_file:</code>). The README has the full field and matching reference; this section is the operating procedure.</p>
+<p><strong>What an exception does — and does not do:</strong></p>
+<ul>
+<li>The covered finding reports as <code>EXCEPTION</code>, with its ID, reason, owner, ticket and expiry, in the console, HTML, JSON and CSV output.</li>
+<li>It is <strong>never remediated</strong> — active <em>or</em> expired. It is not in the script, not in the review pack, and is dropped again at apply time even from a pack approved before the exception was added.</li>
+<li>It does not hide errors: only FAIL and WARN can be covered, never ERROR.</li>
+<li>It does not change <em>what</em> is audited. The check still runs every time, so the moment the device becomes compliant the exception shows as <em>matched nothing</em> and can be retired.</li>
+</ul>
+<h3 id="adding-an-exception">Adding an exception</h3>
+<ol>
+<li>Get the deviation approved through your normal risk/change process.</li>
+<li>Find the check name in the report (e.g. <code>bpdu_guard</code>, <code>ntp_server</code>) and, for per-port findings, the interface.</li>
+<li>Add an entry. Keep the scope as narrow as the approval:</li>
+</ol>
+<pre><code class="language-yaml">exceptions:
+  - id: EXC-0001
+    hostname: ZZ-LAB1-001ASW001
+    check: bpdu_guard
+    interface: Gi1/0/48
+    reason: Uplink to customer-managed switch; BPDU guard would err-disable it
+    owner: Network Engineering
+    approved_by: J. Smith (Security)
+    ticket: CHG0012345
+    expires: 2027-03-31</code></pre>
+<ol start="4">
+<li><code>python -m compliance_audit --validate-config</code> — catches typos in check names, roles and dates.</li>
+<li>Re-audit the device. Confirm the finding now shows <code>EXCEPTION</code> and is gone from the remediation script.</li>
+<li>If a review pack containing that finding is already pending or approved, reject it and approve the regenerated one. (Applying the old pack is safe — the excepted item is skipped at apply time — but the queue should reflect reality.)</li>
+</ol>
+<h3 id="when-an-exception-expires">When an exception expires</h3>
+<p>Expired exceptions appear in red, first in every exceptions table, under a &quot;review required&quot; banner, and in the <code>--validate-config</code> output. They are <strong>still not remediated</strong>. Someone has to decide:</p>
+<ul>
+<li><strong>Renew</strong> — get the deviation re-approved and move <code>expires</code> to a later date (or add a new entry with a later date; the latest expiry wins).</li>
+<li><strong>Retire</strong> — remove the entry. The next audit reports the finding as FAIL and generates a review pack, which goes through approval like any other change.</li>
+</ul>
+<p><code>expiring_soon_days</code> (default 30) gives advance warning. To make expiry impossible to ignore in automation, set <code>fail_on_expired: true</code> (the run exits 1 while any finding sits under an expired exception) and/or <code>expired_counts_against_score: true</code> (the score drops).</p>
+<h3 id="retiring-unused-exceptions">Retiring unused exceptions</h3>
+<p>The console summary and the HTML exception register list exceptions that <em>matched nothing</em> on the devices in scope. Usually the device has been fixed and the exception can be deleted. If you expected it to match, check the device selectors and check name against the report — a register entry for a device that was not in this run shows as <em>no device in scope</em>.</p>
+<h2 id="remediation-lifecycle">Remediation Lifecycle</h2>
+<h3 id="the-model">The model</h3>
+<p>Every device with remediable FAIL findings produces two artefacts: a plain-text IOS-XE <strong>remediation script</strong>, and a JSON <strong>review pack</strong> recording the device, the findings, the commands, a risk rating and a SHA-256 of the script. Packs are tracked in a SQLite database and move through this lifecycle:</p>
+<pre><code>pending -&gt; approved -&gt; applied
+   |          |   \
+   |          |    +-&gt; (scheduled: waits for --remediation-apply-due)
+   |          +-&gt; expired   (approval TTL passed)
+   +-&gt; rejected            failed  (apply errored)
+   +-&gt; superseded          (the device was audited again before approval)</code></pre>
+<p>Every pack also records the <strong>run</strong> that produced it, so a whole run can be approved, scheduled or rejected at once — see <em>Scheduled Audits and Email Approval</em> below.</p>
+<p>Risk is derived from the commands themselves: AAA, TACACS/RADIUS, SNMP community/host, routing, ACL and control-plane commands rate <strong>high</strong>; spanning tree, trunking, DHCP snooping, DAI, VLAN, VTP and storm-control rate <strong>medium</strong>; everything else <strong>low</strong>. A pack&#x27;s rating is its highest single command.</p>
+<h3 id="1-review-the-queue">1. Review the queue</h3>
+<pre><code class="language-bash">python -m compliance_audit --remediation-list            # everything
+python -m compliance_audit --remediation-list pending    # awaiting approval
+python -m compliance_audit --remediation-list approved
+python -m compliance_audit --remediation-list applied
+python -m compliance_audit --remediation-list failed
+python -m compliance_audit --remediation-list rejected
+python -m compliance_audit --remediation-list expired</code></pre>
+<p>Sort, limit and reformat for automation or evidence:</p>
+<pre><code class="language-bash">python -m compliance_audit --remediation-list all --remediation-sort risk
+python -m compliance_audit --remediation-list all --remediation-output json
+python -m compliance_audit --remediation-list all --remediation-output csv \
+  --remediation-sort risk --remediation-limit 50</code></pre>
+<p>If the list comes back empty it names the database it consulted. Check that path matches the one the audit printed.</p>
+<p><strong>Read the script before approving.</strong> The pack names its script path; open it. The pack is a summary, the script is what will actually run.</p>
+<h3 id="2-approve">2. Approve</h3>
+<pre><code class="language-bash">python -m compliance_audit --remediation-approve &lt;PACK_ID&gt; \
+  --approver &quot;john.doe&quot; \
+  --ticket-id &quot;CHG0012345&quot;</code></pre>
+<p>Approve everything pending, with a confirmation prompt and a summary table first:</p>
+<pre><code class="language-bash">python -m compliance_audit --remediation-approve-all \
+  --approver &quot;john.doe&quot; \
+  --ticket-id &quot;CHG0012345&quot;</code></pre>
+<p>Return a JSON payload instead of console output — for a backend, or to record the decision in a change ticket:</p>
+<pre><code class="language-bash">python -m compliance_audit --remediation-approve &lt;PACK_ID&gt; \
+  --approver &quot;john.doe&quot; --ticket-id &quot;CHG0012345&quot; --remediation-output json</code></pre>
+<p>Notes:</p>
+<ul>
+<li><code>--approver</code> is always required.</li>
+<li><code>--ticket-id</code> is required when <code>remediation.approval.require_ticket_id</code> is true.</li>
+<li><code>--expires-hours</code> overrides the default TTL (<code>approval.default_expires_hours</code>, 24 hours as shipped). Approval expires; an expired pack must be re-approved.</li>
+</ul>
+<h3 id="3-reject">3. Reject</h3>
+<pre><code class="language-bash">python -m compliance_audit --remediation-reject &lt;PACK_ID&gt; \
+  --approver &quot;john.doe&quot; \
+  --reason &quot;Outside change window&quot;</code></pre>
+<p><code>--reason</code> is mandatory and is recorded in the pack for audit purposes. <code>--remediation-output json</code> works here too.</p>
+<h3 id="4-apply">4. Apply</h3>
+<pre><code class="language-bash">python -m compliance_audit --remediation-apply &lt;PACK_ID&gt;
+python -m compliance_audit --remediation-apply-all</code></pre>
+<p>Every apply passes through these gates, in order. Any one of them aborts the apply:</p>
+<table class="runbook-table">
+<thead><tr><th>Gate</th><th>Setting</th><th>What it prevents</th></tr></thead>
+<tbody>
+<tr><td>Status is <code>approved</code></td><td>—</td><td>Applying an unreviewed or rejected pack</td></tr>
+<tr><td>Approval not expired</td><td><code>approval.default_expires_hours</code></td><td>Applying a stale decision</td></tr>
+<tr><td>Script file still exists</td><td>—</td><td>Applying a pack whose script was deleted</td></tr>
+<tr><td>Workflow enabled</td><td><code>remediation.enabled</code></td><td>Accidental use where policy forbids it</td></tr>
+<tr><td>Execution enabled</td><td><code>execution.enabled</code></td><td>Audit-only deployments applying changes</td></tr>
+<tr><td>Linux only</td><td><code>execution.linux_only</code></td><td>Applying from an unsupported platform</td></tr>
+<tr><td>Script checksum matches</td><td><code>execution.enforce_checksum</code></td><td>Applying a script edited after approval</td></tr>
+<tr><td>High risk blocked</td><td><code>execution.block_high_risk_by_default</code></td><td>Applying AAA/SNMP/routing changes without an explicit override</td></tr>
+<tr><td>Device identity matches</td><td><code>execution.require_hostname_match</code></td><td>Applying to the wrong switch — the live prompt must contain the approved hostname</td></tr>
+<tr><td>Preflight drift check</td><td><code>execution.preflight_drift_check</code></td><td>Applying changes that are no longer needed</td></tr>
+<tr><td>Scheduled time</td><td><code>--apply-at</code> on approval</td><td>Applying before the agreed time — the pack is refused until then, and <code>--remediation-apply-all</code> skips it</td></tr>
+<tr><td>Policy exceptions</td><td><code>exceptions.yaml</code> (always on)</td><td>Pushing a change that an exception — active or expired — covers now, including from packs approved before the exception was added. Covered items are dropped before connecting; if all items are covered the apply aborts</td></tr>
+</tbody></table>
+<p>The <strong>preflight drift check</strong> re-audits the device immediately before applying and intersects the result with the approved findings. Anything already fixed is dropped from the command list. If <em>none</em> of the approved findings are still failing, the apply aborts entirely — the device has changed since approval and the pack should be regenerated.</p>
+<p>After the commands run, the tool saves the configuration (<code>execution.save_config</code>), re-audits, and reports how many findings were resolved. Anything still failing is listed explicitly. A post-remediation report is written when <code>execution.generate_post_report</code> is enabled.</p>
+<p><code>--remediation-apply-all</code> prompts for confirmation. In a pipeline, where there is nobody to answer it, suppress the prompt and take JSON back:</p>
+<pre><code class="language-bash">python -m compliance_audit --remediation-apply-all \
+  --remediation-output json --remediation-no-confirm</code></pre>
+<p>Use <code>--remediation-no-confirm</code> only where the queue has already been reviewed by a human — it removes the last stop before changes reach devices.</p>
+<p>Overriding the high-risk block requires explicit change authority:</p>
+<pre><code class="language-bash">python -m compliance_audit --remediation-apply &lt;PACK_ID&gt; --allow-high-risk
+python -m compliance_audit --remediation-apply-all --allow-high-risk</code></pre>
+<h3 id="5-verify-and-close">5. Verify and close</h3>
+<pre><code class="language-bash">python -m compliance_audit --remediation-list applied
+python -m compliance_audit --remediation-list failed
+python -m compliance_audit                              # re-audit for closure evidence</code></pre>
+<p>Every apply attempt, successful or not, appends a JSON line to <code>&lt;output_dir&gt;/remediation_execution.log</code>. That file is your execution audit trail — keep it with the change record.</p>
+<h2 id="scheduled-audits-and-email-approval">Scheduled Audits and Email Approval</h2>
+<p>The audit can run unattended every night on a Linux host and email its result to the approvers. The email holds everything needed to decide — the proposed changes per switch with their exact commands and risk, what is new since the previous run, unreachable devices and expired exceptions — plus the commands to approve or reject. Setting up the host and timers is covered step by step in <code>deploy/README.md</code>.</p>
+<h3 id="setting-up-once">Setting up (once)</h3>
+<ol>
+<li>Fill in <code>assets/compliance_config/notifications.yaml</code>: <code>enabled: true</code>, <code>smtp_host</code>, <code>smtp_port</code>, <code>security</code>, <code>from_address</code>, <code>to</code>. Set <code>command</code> to how approvers run the tool (e.g. through <code>sudo -u netaudit ...</code>), so the commands in the email work as pasted.</li>
+<li>Put switch credentials in <code>.env</code> (mode 600) for the service account.</li>
+<li>Check it:</li>
+</ol>
+<pre><code class="language-bash">python -m compliance_audit --validate-config
+python -m compliance_audit --notify-test
+python -m compliance_audit --dry-run --non-interactive</code></pre>
+<ol start="4">
+<li>Install and enable the timers from <code>deploy/systemd/</code>: the nightly audit (<code>--non-interactive --notify</code>) and the 5-minute scheduled-apply check (<code>--remediation-apply-due --non-interactive</code>).</li>
+</ol>
+<h3 id="each-morning-deciding-on-a-run">Each morning: deciding on a run</h3>
+<ol>
+<li>Read the email. Its subject says whether action is needed: <code>ACTION REQUIRED: N remediation pack(s) to approve</code>.</li>
+<li>Review the proposed changes in the body (and the attached scripts if needed). Check the <strong>Devices not audited</strong> and <strong>Policy exceptions needing review</strong> sections too — they need attention whatever you decide.</li>
+<li>To leave one switch out, reject its pack first: <code>--remediation-reject PACK_ID --approver &quot;you&quot; --reason &quot;...&quot;</code>.</li>
+<li>Decide, on the audit host:</li>
+</ol>
+<pre><code class="language-bash"># apply now
+python -m compliance_audit --run-approve RUN_ID --approver &quot;you&quot; --ticket-id CHG... --apply-now
+# apply in tonight&#x27;s window (host local time)
+python -m compliance_audit --run-approve RUN_ID --approver &quot;you&quot; --ticket-id CHG... --apply-at &quot;2026-11-07 02:00&quot;
+# reject
+python -m compliance_audit --run-reject RUN_ID --approver &quot;you&quot; --reason &quot;...&quot;</code></pre>
+<p>If the email says some packs are <strong>high risk</strong>, they are skipped unless you add <code>--allow-high-risk</code> to the approval. That allowance is recorded, so the scheduled apply honours it.</p>
+<ol start="5">
+<li>Confirm with <code>--run-show RUN_ID</code>: packs show as <code>scheduled &lt;time&gt;</code>, <code>approved</code> or <code>applied</code>.</li>
+</ol>
+<h3 id="what-happens-at-the-scheduled-time">What happens at the scheduled time</h3>
+<p>The apply timer runs <code>--remediation-apply-due</code> every 5 minutes. At the first check after the scheduled time it applies the run&#x27;s packs through every normal gate — checksum, device identity, preflight drift check, policy exceptions — then emails the result: devices changed, findings resolved, anything that failed. Re-audit (or wait for the next nightly run) for closure evidence.</p>
+<h3 id="things-to-know">Things to know</h3>
+<ul>
+<li><strong>Approve the latest run.</strong> When a device is audited again, its packs still <code>pending</code> from earlier runs become <code>superseded</code> and can no longer be approved. Approved or scheduled packs are left alone; the next email notes that a change for that switch is already scheduled.</li>
+<li><strong>The approval window</strong> starts at the scheduled time, so a change scheduled for next week does not expire before then.</li>
+<li><strong>To reschedule</strong>, run <code>--run-approve</code> again with a new <code>--apply-at</code> (or <code>--apply-now</code>). <strong>To cancel</strong>, <code>--run-reject</code> the run.</li>
+<li><strong>Failure emails.</strong> If a scheduled audit cannot run (invalid config, no devices, missing credentials), recipients get a failure email instead of silence.</li>
+<li><strong>Overlaps.</strong> A run still going when the next one starts makes the new one stop at once (exit 2); nothing interleaves.</li>
+<li><strong>Re-send an email</strong> with <code>--run-notify RUN_ID</code>.</li>
+</ul>
+<h2 id="roi-reporting">ROI Reporting</h2>
+<p>If you track automation value, enable ROI in <code>audit_settings.yaml</code>:</p>
+<pre><code class="language-yaml">audit_settings:
+  roi:
+    enabled: true
+    manual_minutes_per_device: 20.0
+    manual_minutes_per_check: 0.25
+    automation_overhead_minutes_per_device: 2.0
+    hourly_rate: 85.0
+    currency: &quot;GBP&quot;</code></pre>
+<p>Interpretation:</p>
+<ul>
+<li>Minutes saved = estimated manual effort minus automated effort</li>
+<li>Value saved = hours saved multiplied by <code>hourly_rate</code> (leave at 0 to hide the money figure)</li>
+</ul>
+<p>ROI appears in the console summary, the per-device JSON under <code>roi</code>, the per-device HTML stat cards, and the consolidated HTML.</p>
+<p>Separate profiles exist for <code>audit</code> and <code>post_remediation</code> runs, so post-remediation verification is not credited at full manual-audit rates.</p>
+<h2 id="web-backend-integration">Web Backend Integration</h2>
+<p>The lifecycle commands can drive a web front end or a pipeline rather than a terminal.</p>
+<ul>
+<li><code>--remediation-output json</code> returns a machine-readable payload from list, approve, reject, apply and apply-all.</li>
+<li><code>--remediation-output csv</code> is <strong>list-only</strong>; asking for it on any other operation is an error.</li>
+<li><code>--remediation-no-confirm</code> suppresses the interactive prompt on bulk operations.</li>
+<li><code>&lt;output_dir&gt;/report_artifacts_index.json</code> indexes every generated report with its metadata, HTML path and run ID.</li>
+</ul>
+<p>To embed generated HTML in a web view, resolve the path through the helper rather than opening it directly:</p>
+<pre><code class="language-python">from compliance_audit import read_report_content
+
+content = read_report_content(allowed_root=&quot;reports&quot;, requested_path=user_supplied)</code></pre>
+<p>It resolves the request against an allowed root and rejects traversal attempts, so a path arriving from a browser cannot escape the reports directory.</p>
+<p>The same operations are available in-process, without shelling out: <code>list_review_packs_api</code>, <code>approve_review_pack_api</code>, <code>reject_review_pack_api</code>, <code>apply_approved_pack_api</code> and <code>apply_all_approved_packs_api</code>.</p>
+<h2 id="configuration-quick-reference">Configuration Quick Reference</h2>
+<p>All files live in <code>assets/compliance_config/</code> and are deep-merged at load time, so each can be edited independently.</p>
+<table class="runbook-table">
+<thead><tr><th>File</th><th>Contains</th></tr></thead>
+<tbody>
+<tr><td><code>audit_settings.yaml</code></td><td>Concurrency, timeouts, output, report formats, ROI, the whole remediation policy</td></tr>
+<tr><td><code>connection.yaml</code></td><td>Device type, timeouts, retries, jump host, credential store</td></tr>
+<tr><td><code>classification.yaml</code></td><td>Hostname role codes, trunk direction signals, endpoint neighbour patterns</td></tr>
+<tr><td><code>management_plane.yaml</code></td><td>Services, SSH, AAA, NTP, logging, SNMP, banners, users, VTY, console</td></tr>
+<tr><td><code>control_plane.yaml</code></td><td>STP, VTP, DHCP snooping, DAI, errdisable, UDLD, CoPP</td></tr>
+<tr><td><code>data_plane.yaml</code></td><td>Per-interface checks by port role</td></tr>
+<tr><td><code>exceptions.yaml</code></td><td>Policy exceptions and <code>exception_settings</code> (expiry warning window, scoring, exit code)</td></tr>
+<tr><td><code>notifications.yaml</code></td><td>SMTP email for scheduled audits: relay, recipients, <code>send_when</code>, attachments, the command shown to approvers</td></tr>
+</tbody></table>
+<p>Settings you will reach for most:</p>
+<pre><code class="language-yaml">audit_settings:
+  max_workers: 5              # concurrent device audits; 1 = sequential
+  collect_timeout: 30         # per-command timeout, seconds
+  output_dir: &quot;./reports&quot;
+  html_report: true
+  json_report: true           # also the delta baseline
+  csv_report: false
+  delta_report: true          # needs json_report
+  parking_vlan: 99            # expected VLAN for unused ports
+  native_vlan: 99             # expected native VLAN on trunks</code></pre>
+<p>Every check node supports the same common fields:</p>
+<pre><code class="language-yaml">my_check:
+  enabled: true
+  severity: high              # critical | high | medium | low | info
+  tags: [cis, pci]
+  framework_controls:
+    cis_ios_xe_v4: &quot;5.3.1&quot;
+  applies_to_roles: [access]  # skip on other roles
+  include_hostnames: []       # regex; only these devices run the check
+  exclude_hostnames: []       # regex; these devices skip it
+  include_groups: []          # site groups from the inventory
+  exclude_groups: []
+  exclude_interfaces: []      # regex; exempt ports without disabling the check</code></pre>
+<p><strong>A check runs only when its node says <code>enabled: true</code>.</strong> Set <code>enabled: false</code> to turn one off rather than deleting the node, so the policy stays self-documenting. <code>--validate-config</code> requires the key on every node.</p>
+<p>Every check setting has a documented default in <code>compliance_audit/config_schema.py</code>, and the engine uses exactly that default when a key is omitted. Level and threshold settings are bounds, not exact values:</p>
+<ul>
+<li><code>logging_console.level</code>, <code>logging_monitor.level</code> — the most verbose level allowed (<code>no logging console</code> also passes).</li>
+<li><code>logging_trap.level</code>, <code>logging_buffered.level</code> — the least verbose level allowed; <code>logging_buffered.min_size</code> is a minimum.</li>
+<li><code>stp_priority</code> — access switches must not go <em>below</em> <code>access_priority</code>; roles in <code>core_roles</code> must be at or below <code>core_priority</code>. Priorities are base values (multiples of 4096).</li>
+<li><code>login_block_for</code> — <code>seconds</code> and <code>within</code> are minimums, <code>attempts</code> a maximum; <code>login_delay.seconds</code> is a minimum.</li>
+<li><code>port_security</code> — IOS defaults are used when a line is absent (maximum 1, violation shutdown, no aging).</li>
+</ul>
+<h2 id="safety-rules">Safety Rules</h2>
+<ol>
+<li>Never apply remediation outside an authorised change window.</li>
+<li>Read the remediation script, not just the pack summary, before approving.</li>
+<li>Treat <code>--allow-high-risk</code> as an exception requiring named approval. High risk means AAA, TACACS/RADIUS, SNMP, routing, ACL or control-plane changes — the commands that can lock you out of the device.</li>
+<li>Use <code>--remediation-apply-all</code> only after reviewing the whole queue.</li>
+<li>Never disable <code>require_hostname_match</code> or <code>enforce_checksum</code> to get past an error. Both exist to stop you changing the wrong device, or running a script that is not the one that was approved.</li>
+<li>Re-audit after applying. An apply that reports success is not the same as a device that is compliant.</li>
+<li>Keep <code>remediation_execution.log</code> with the change record.</li>
+<li>Never use a policy exception to defer a fix you intend to make. An exception blocks remediation of that finding until someone removes it — expiry flags it but does not lift the block.</li>
+<li>Keep exception scope as narrow as the approval: one device and interface rather than a regex over the estate, and a real expiry date rather than <code>never</code>.</li>
+<li>Approve a run from what the email shows, not from its subject line. <code>--run-approve</code> approves every pending pack in the run; reject individual packs first to leave a switch out.</li>
+<li>Add <code>--allow-high-risk</code> to a run approval only with the named approval it needs: on a scheduled run it takes effect later, with nobody watching.</li>
+</ol>
+<h2 id="troubleshooting">Troubleshooting</h2>
+<table class="runbook-table">
+<thead><tr><th>Symptom</th><th>Likely cause</th><th>Action</th></tr></thead>
+<tbody>
+<tr><td>No remediation packs found</td><td>Nothing failed, or remediation is disabled</td><td>Check the database path in the message matches the audit&#x27;s <code>Review database:</code> line; confirm checks are enabled</td></tr>
+<tr><td>Audit reports very few findings</td><td>Most checks ship <code>enabled: false</code></td><td>Enable the checks your policy requires in the plane YAML files</td></tr>
+<tr><td>Remediation workflow disabled</td><td><code>remediation.enabled: false</code></td><td>Enable it in <code>audit_settings.yaml</code></td></tr>
+<tr><td>Execution disabled</td><td><code>execution.enabled: false</code></td><td>Enable it, or apply from a host where policy allows</td></tr>
+<tr><td>Linux-only error</td><td>Applying from Windows or macOS</td><td>Apply from Linux/WSL, or set <code>execution.linux_only: false</code> if your policy allows</td></tr>
+<tr><td>Approval expired</td><td>TTL passed since approval</td><td>Re-run the audit, generate a fresh pack, approve again</td></tr>
+<tr><td>Checksum mismatch</td><td>Script edited or regenerated after approval</td><td>Re-run the audit and approve the new pack — do not disable the check</td></tr>
+<tr><td>High-risk blocked</td><td>Pack contains AAA/SNMP/routing commands</td><td>Obtain explicit approval, then <code>--allow-high-risk</code></td></tr>
+<tr><td>Device identity mismatch</td><td>Live prompt does not contain the approved hostname</td><td>Verify the inventory entry and the target device before doing anything else</td></tr>
+<tr><td>Drift check aborts the apply</td><td>None of the approved findings still fail</td><td>The device already changed; re-audit and regenerate the pack</td></tr>
+<tr><td>Config validation fails on <code>enabled</code></td><td>A check node has a mistyped or missing <code>enabled</code> key</td><td>Fix the key — without <code>enabled: true</code> the check does not run</td></tr>
+<tr><td>Audit stops with <code>Config validation failed</code></td><td>Every config load is validated</td><td>Fix each listed path; re-check with <code>--validate-config</code></td></tr>
+<tr><td><code>Inventory validation failed</code></td><td>Bad IP, invalid hostname, or unknown key in <code>devices.yaml</code></td><td>Fix the entry named in the message, e.g. <code>groups.site_lab.devices[2]</code></td></tr>
+<tr><td>Delta reports never appear</td><td><code>json_report</code> is off</td><td>Enable <code>json_report</code>; the JSON report is the baseline</td></tr>
+<tr><td><code>engine_error</code> finding for a device</td><td>A check crashed</td><td>Check <code>logs/debug.log</code> for the traceback</td></tr>
+<tr><td>Reports are not where you expect</td><td><code>output_dir</code> is relative to the working directory</td><td>Read the <code>Output directory:</code> line in the summary; pass <code>--output-dir</code> to be explicit</td></tr>
+<tr><td>Genie / pyATS not installed</td><td>Windows</td><td>Expected — the tool falls back to regex parsing. Use WSL for structured parsing</td></tr>
+<tr><td>A failing finding is missing from the remediation script</td><td>It is covered by a policy exception</td><td>Check the <code>EXCEPTION</code> row in the report; remove or narrow the exception if the fix is wanted</td></tr>
+<tr><td>Apply prints <code>Skipping N item(s) now covered by a policy exception</code></td><td>An exception was added after the pack was generated</td><td>Expected — those items are not pushed. Reject the pack and approve a regenerated one to keep the queue tidy</td></tr>
+<tr><td>Apply aborts: <code>Every finding in this pack is covered by a policy exception</code></td><td>The whole pack is now excepted</td><td>Nothing to do unless the exception is wrong; reject the pack</td></tr>
+<tr><td>An exception never matches (listed as <em>matched nothing</em>)</td><td>Device selector or check name does not match the report</td><td>Compare <code>hostnames</code>/<code>groups</code>/<code>checks</code>/<code>interfaces</code> with the report; the device may already be compliant</td></tr>
+<tr><td><code>exceptions_file not found</code></td><td>Path in <code>exceptions_file</code> does not resolve</td><td>Paths are tried against the working directory, the config directory, then the project root</td></tr>
+<tr><td>No email after a scheduled audit</td><td>Email disabled, <code>send_when</code> filtered it, or the relay refused it</td><td>Check <code>--run-list</code> (Email column) and the run manifest&#x27;s <code>notification</code> field; run <code>--notify-test</code></td></tr>
+<tr><td><code>--notify-test</code> fails</td><td>Relay host/port/security wrong, or SMTP AUTH without <code>SMTP_PASSWORD</code></td><td>Match <code>security</code> to the relay (<code>starttls</code> on 25/587, <code>ssl</code> on 465); set <code>SMTP_PASSWORD</code> in <code>.env</code> if <code>username</code> is set</td></tr>
+<tr><td><code>No device credentials found and this run is non-interactive</code></td><td>No <code>SWITCH_USER</code>/<code>SWITCH_PASS</code> for the service account</td><td>Put them in <code>.env</code> (mode 600) next to <code>run.sh</code>, or use the keyring</td></tr>
+<tr><td><code>Nothing in run ... could be approved</code></td><td>Packs are high risk, superseded, or already decided</td><td>Add <code>--allow-high-risk</code> if approved to; otherwise approve the newer run (<code>--run-list</code>)</td></tr>
+<tr><td><code>Pack is scheduled to be applied at ...</code></td><td>Applying a scheduled pack early</td><td>Wait for the apply timer, or re-approve the run with <code>--apply-now</code></td></tr>
+<tr><td>A scheduled change did not happen</td><td>Apply timer not running, execution disabled, or the apply failed</td><td><code>systemctl list-timers &#x27;cisco-compliance-audit*&#x27;</code>; check the apply email and <code>remediation_execution.log</code></td></tr>
+<tr><td><code>Another audit is already running for this output directory</code></td><td>The previous run is still going, or a stale process</td><td>Wait; the lock is released when that process exits</td></tr>
+<tr><td>Exception validation: <code>&#x27;never&#x27; needs exception_settings.allow_permanent</code></td><td><code>expires: never</code> without opting in</td><td>Give it a date, or set <code>allow_permanent: true</code> if your policy allows permanent exceptions</td></tr>
+</tbody></table>
+<p>For anything else, run with <code>-vv</code> for DEBUG output and check <code>logs/debug.log</code>.</p>
+<h2 id="escalation-and-rollback">Escalation and Rollback</h2>
+<p>If an apply fails or the device behaves unexpectedly:</p>
+<ol>
+<li>Stop. Do not run further apply commands, and do not retry with <code>--allow-high-risk</code>.</li>
+<li>Capture the pack ID, hostname, IP and the full error output.</li>
+<li>Read the tail of <code>&lt;output_dir&gt;/remediation_execution.log</code> for the recorded attempt.</li>
+<li>Check whether the configuration was saved — if <code>execution.save_config</code> was enabled and the commands applied, the change is in startup-config.</li>
+<li>Escalate to network engineering and the change manager with the above.</li>
+<li>Roll back using your standard network procedure for the affected device or site. This tool does not perform rollback.</li>
+</ol>
+<h2 id="checklists">Checklists</h2>
+<h3 id="per-run-checklist">Per-run checklist</h3>
+<ol>
+<li>Run <code>--dry-run</code> to confirm config, credentials and reachability.</li>
+<li>Run the audit.</li>
+<li>Note the <code>Output directory:</code> and <code>Review database:</code> lines.</li>
+<li>Review the pending queue and read the scripts.</li>
+<li>Approve or reject each pack against its ticket.</li>
+<li>Apply during the change window.</li>
+<li>Confirm applied/failed status.</li>
+<li>Re-audit and keep the delta report as closure evidence.</li>
+</ol>
+<h3 id="after-changing-the-config">After changing the config</h3>
+<ol>
+<li><code>python -m compliance_audit --validate-config</code></li>
+<li><code>python -m compliance_audit --dry-run</code></li>
+<li>Audit one representative device before the whole estate.</li>
+<li>Confirm the findings changed in the direction you intended.</li>
+</ol>
+<h3 id="periodic">Periodic</h3>
+<ol>
+<li>Review packs left in <code>pending</code> — they expire and become noise.</li>
+<li>Archive old reports; <code>output_dir</code> grows without limit.</li>
+<li>Re-check that enabled checks still match current policy.</li>
+<li>Review the exception register: renew or retire every <strong>expired</strong> exception, plan for the <strong>expiring</strong> ones, and delete exceptions that <em>matched nothing</em>.</li>
+<li>Scheduled runs: check <code>--run-list</code> for runs left <em>awaiting approval</em> and for failed emails, and <code>systemctl list-timers</code> that both timers are active.</li>
+</ol>
+<h2 id="appendix-a-exit-codes">Appendix A: Exit Codes</h2>
+<table class="runbook-table">
+<thead><tr><th>Code</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td>0</td><td>Success — no failing devices, or the run was informational</td></tr>
+<tr><td>1</td><td>At least one device has a FAIL finding, or scored below <code>--fail-threshold</code>, or — with <code>exception_settings.fail_on_expired: true</code> — a finding sits under an expired policy exception</td></tr>
+<tr><td>2</td><td>Config could not be loaded or failed validation, or a remediation command was rejected (bad arguments, disabled workflow, failed gate), credentials were missing in a non-interactive run, or another audit/apply already holds the lock</td></tr>
+</tbody></table>
+<p><code>--remediation-apply-due</code> and <code>--run-approve ... --apply-now</code> exit 1 when any pack fails to apply. The shipped systemd audit unit treats the audit&#x27;s exit 1 (findings) as success.</p>
+<p>Exit codes respect active filters: a finding converted to SKIP does not count towards exit code 1. Nor does a finding covered by an active policy exception.</p>
+<h2 id="appendix-b-output-file-naming">Appendix B: Output File Naming</h2>
+<p>All paths are relative to <code>output_dir</code>.</p>
+<table class="runbook-table">
+<thead><tr><th>Pattern</th><th>Contents</th></tr></thead>
+<tbody>
+<tr><td><code>&lt;hostname&gt;_&lt;timestamp&gt;.json</code></td><td>Per-device findings; also the delta baseline</td></tr>
+<tr><td><code>&lt;hostname&gt;_&lt;timestamp&gt;.html</code></td><td>Per-device interactive report</td></tr>
+<tr><td><code>&lt;hostname&gt;_delta_&lt;timestamp&gt;.json</code></td><td>Change since the previous baseline</td></tr>
+<tr><td><code>&lt;hostname&gt;_remediation_&lt;timestamp&gt;.txt</code></td><td>Ready-to-paste IOS-XE config snippet</td></tr>
+<tr><td><code>&lt;hostname&gt;_review_&lt;pack_id&gt;.json</code></td><td>Review pack — findings, commands, risk, checksum</td></tr>
+<tr><td><code>consolidated_report_&lt;timestamp&gt;.html</code></td><td>All devices in one report</td></tr>
+<tr><td><code>compliance_audit_&lt;timestamp&gt;.csv</code></td><td>Every finding, one row each</td></tr>
+<tr><td><code>db/remediation_reviews.db</code></td><td>SQLite review and approval state</td></tr>
+<tr><td><code>remediation_execution.log</code></td><td>Append-only JSON lines, one per apply attempt</td></tr>
+<tr><td><code>report_artifacts_index.json</code></td><td>Index of generated reports — metadata, HTML paths, run IDs</td></tr>
+<tr><td><code>runs/&lt;run_id&gt;.json</code></td><td>Run manifest — devices, scores, unreachable devices, packs, exceptions, email outcome</td></tr>
+<tr><td><code>.locks/audit.lock</code>, <code>.locks/apply.lock</code></td><td>Held while an audit or apply runs</td></tr>
+</tbody></table>
+<p>Timestamps are local time, <code>YYYYMMDD_HHMMSS</code>. Hostnames are sanitised for use in filenames.</p>
+<h2 id="appendix-c-glossary">Appendix C: Glossary</h2>
+<table class="runbook-table">
+<thead><tr><th>Term</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td><strong>Review pack</strong></td><td>JSON record of one device&#x27;s remediable findings, the commands, a risk rating and the script checksum</td></tr>
+<tr><td><strong>Pack ID</strong></td><td>16-character identifier derived from hostname, IP, audit timestamp and script name</td></tr>
+<tr><td><strong>Drift check</strong></td><td>Re-audit run immediately before applying, to confirm the approved findings still fail</td></tr>
+<tr><td><strong>Post-check</strong></td><td>Re-audit run immediately after applying, to confirm the findings are resolved</td></tr>
+<tr><td><strong>Endpoint trunk</strong></td><td>A trunk port terminating on a non-switch device, typically a wireless AP</td></tr>
+<tr><td><strong>Unknown trunk</strong></td><td>A trunk whose direction could not be determined from STP or CDP/LLDP</td></tr>
+<tr><td><strong>Parking VLAN</strong></td><td>VLAN unused ports are expected to sit in</td></tr>
+<tr><td><strong>Baseline</strong></td><td>The previous per-device JSON report, used for delta comparison</td></tr>
+<tr><td><strong>Policy exception</strong></td><td>An approved, time-boxed deviation from policy in <code>exceptions.yaml</code>. Covered findings report as <code>EXCEPTION</code> and are never remediated</td></tr>
+<tr><td><strong>Expired exception</strong></td><td>An exception past its <code>expires</code> date. Flagged for review in every report; still never remediated</td></tr>
+<tr><td><strong>Exception register</strong></td><td>All configured exceptions, shown in the consolidated HTML report with state, scope and usage</td></tr>
+<tr><td><strong>Run</strong></td><td>One execution of the audit, identified by its run ID (<code>audit-YYYYMMDDTHHMMSSffffffZ</code>); the unit a scheduled email reports on and an approver approves or rejects</td></tr>
+<tr><td><strong>Run manifest</strong></td><td><code>runs/&lt;run_id&gt;.json</code> — the summary of a run used by <code>--run-show</code> and the email</td></tr>
+<tr><td><strong>Superseded</strong></td><td>A pending pack replaced because its device was audited again before anyone approved it</td></tr>
+<tr><td><strong>Scheduled apply</strong></td><td>An approved pack with an <code>--apply-at</code> time, applied by <code>--remediation-apply-due</code> once that time arrives</td></tr>
+</tbody></table>
+  </main>
+</body>
+</html>

@@ -1,0 +1,60 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cisco-compliance-audit"
+version = "1.0.0"
+description = "Cisco IOS-XE compliance auditing tool with CLI, TUI, and remediation workflow support"
+readme = "README.md"
+license = { text = "Apache-2.0" }
+authors = [
+    { name = "Christopher Davies" },
+]
+requires-python = ">=3.10"
+keywords = ["cisco", "compliance", "audit", "network", "netmiko", "remediation"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Environment :: Console",
+    "Intended Audience :: System Administrators",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+dependencies = [
+    "netmiko>=4.2.0",
+    "paramiko>=3.4.0",
+    "tomli>=2.0.0; python_version < '3.11'",
+    "pyats[library]>=24.0; sys_platform != 'win32'",
+    "genie>=24.0; sys_platform != 'win32'",
+    "rich>=13.7.0",
+    "questionary>=2.0.1",
+    "textual>=0.79.1",
+    "PyYAML>=6.0",
+    "keyring>=25.0.0",
+    "pydantic>=2.0.0",
+    "pywin32>=306; sys_platform == 'win32'",
+    "keyrings.alt>=4.2.0; sys_platform != 'win32'",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "yamllint>=1.35.0",
+]
+
+[project.scripts]
+cisco-compliance-audit = "compliance_audit.__main__:main"
+
+[project.urls]
+Homepage = "https://github.com/Nautomation-Prime/Cisco-Compliance-Audit"
+Repository = "https://github.com/Nautomation-Prime/Cisco-Compliance-Audit"
+Releases = "https://github.com/Nautomation-Prime/Cisco-Compliance-Audit/releases"
+Issues = "https://github.com/Nautomation-Prime/Cisco-Compliance-Audit/issues"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["compliance_audit*"]

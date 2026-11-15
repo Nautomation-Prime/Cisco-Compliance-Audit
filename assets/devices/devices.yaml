@@ -1,0 +1,55 @@
+---
+# ╔═════════════════════════════════════════════════════════════════════╗
+# ║                          DEVICE  INVENTORY                          ║
+# ║                                                                     ║
+# ║  All devices in this file are treated as access switches.           ║
+# ║                                                                     ║
+# ║  Devices can be specified in several ways:                          ║
+# ║                                                                     ║
+# ║    Bare hostname    - "ZZ-LAB1-001ASW001"  (connects via DNS)       ║
+# ║    Bare IP          - "192.0.2.61"   (hostname discovered from      ║
+# ║                                       device prompt)                ║
+# ║    Hostname only    - hostname: ZZ-LAB1-001ASW001                   ║
+# ║    Hostname + IP    - hostname: ZZ-LAB1-001ASW001                   ║
+# ║                       ip: 192.0.2.61                                ║
+# ║                                                                     ║
+# ║  You can list devices in two ways (or combine both):                ║
+# ║                                                                     ║
+# ║  1) FLAT LIST  — each device listed individually under "devices:"   ║
+# ║  2) GROUPS  — organise devices by site or location under "groups:". ║
+# ║     Useful when managing many devices across multiple sites.        ║
+# ║                                                                     ║
+# ║  Non-standard hostnames that don't follow the ASW naming            ║
+# ║  convention can use an optional "role: access_switch" field so      ║
+# ║  role-specific checks still run correctly.                          ║
+# ║                                                                     ║
+# ║  To skip this file and audit a single device ad-hoc, use:           ║
+# ║    python -m compliance_audit --device ZZ-LAB1-001ASW001:192.0.2.61 ║
+# ║    python -m compliance_audit --device ZZ-LAB1-001ASW001            ║
+# ╚═════════════════════════════════════════════════════════════════════╝
+
+
+# ── FLAT LIST (individual devices) ──────────────────────────────────
+# devices:
+#   - ZZ-LAB1-001ASW001              # bare hostname (DNS)
+#   - 192.0.2.61                     # bare IP
+#   - hostname: ZZ-LAB1-001ASW001    # hostname only (DNS)
+#   - hostname: legacy-sw-01         # non-standard hostname with IP
+#     ip: 192.0.2.62
+#     role: access_switch            # needed if hostname doesn't match ASW pattern
+
+
+# ── GROUPS (organise devices by site or location) ────────────────────
+groups:
+  site_lab:
+    devices:
+      - ZZ-LAB1-001ASW001                  # bare hostname
+      - ZZ-LAB1-001ASW002
+      # Full form also works inside groups:
+      # - hostname: ZZ-LAB1-001ASW003
+      #   ip: 192.0.2.63
+
+  # site_brn:
+  #   devices:
+  #     - ZZ-BRN1-001ASW001
+  #     - ZZ-BRN1-001ASW002

@@ -1,0 +1,20 @@
+# Applies remediation packs approved with --run-approve ... --apply-at TIME
+# once their time arrives.  Does nothing when nothing is due.
+[Unit]
+Description=Cisco compliance audit - apply scheduled remediation
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=netaudit
+Group=netaudit
+WorkingDirectory=/opt/cisco-compliance-audit
+#EnvironmentFile=/etc/cisco-compliance-audit/credentials.env
+ExecStart=/opt/cisco-compliance-audit/.venv/bin/python -m compliance_audit --remediation-apply-due --non-interactive
+# Exit 1 here means a scheduled apply failed: leave it as a unit failure so
+# it shows in `systemctl --failed` (the apply email reports it too).
+TimeoutStartSec=2h
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full

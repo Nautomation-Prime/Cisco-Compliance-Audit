@@ -1,0 +1,57 @@
+---
+# ╔═══════════════════════════════════════════════════════════════════╗
+# ║  NOTIFICATIONS — email for scheduled audits and remediation        ║
+# ╚═══════════════════════════════════════════════════════════════════╝
+#
+# Used by scheduled runs:
+#
+#   python -m compliance_audit --non-interactive --notify      (audit + run email)
+#   python -m compliance_audit --remediation-apply-due         (scheduled applies)
+#
+# The run email contains everything needed to approve or reject the run:
+# the changes proposed for each switch (findings, exact commands, risk),
+# what is new since the previous run, unreachable devices, expired policy
+# exceptions, and copy-paste commands to approve (now or at a set time) or
+# reject.  The full interactive report and the per-device remediation
+# scripts are attached.
+#
+# Test delivery with:   python -m compliance_audit --notify-test
+
+notifications:
+  email:
+    enabled: false                  # true to send email
+
+    smtp_host: ""                   # e.g. smtp-relay.corp.example.com
+    smtp_port: 25                   # 25 or 587 for STARTTLS, 465 for ssl
+    security: starttls              # starttls | ssl | none (only on a trusted network)
+    username: ""                    # SMTP AUTH user, if the relay needs one; the
+                                    # password comes from SMTP_PASSWORD (env or .env)
+
+    from_address: ""                # e.g. compliance-audit@corp.example.com
+    to: []                          # e.g. [netops@corp.example.com]
+    cc: []
+    subject_prefix: "[Compliance Audit]"
+
+    # When a scheduled audit emails its result:
+    #   always           — every run
+    #   issues           — anything not fully compliant, unreachable devices,
+    #                      or expired exceptions
+    #   action_required  — remediation awaiting approval, unreachable devices,
+    #                      ERROR findings or expired exceptions
+    send_when: always
+
+    notify_on_apply: true           # email the outcome of each apply (now or scheduled)
+    notify_on_failure: true         # email when a scheduled audit cannot run
+
+    attach_report: true             # attach the consolidated HTML report
+    attach_scripts: true            # attach each pending pack's remediation script
+    max_attachment_mb: 10           # total attachment size; larger files are listed
+                                    # in the email with their path on the host instead
+    max_findings_per_device: 100    # rows per device in the email body (0 = all)
+
+    # How approvers run the tool on this host, shown in the approve/reject
+    # commands in the email.  Blank = the Python interpreter that ran the audit.
+    # e.g. "/opt/cisco-compliance-audit/.venv/bin/python -m compliance_audit"
+    command: ""
+
+    timeout: 30                     # seconds to wait for the relay

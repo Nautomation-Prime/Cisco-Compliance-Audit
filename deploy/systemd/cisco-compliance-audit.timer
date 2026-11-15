@@ -1,0 +1,12 @@
+# Runs the audit every night at 01:30 (host local time).
+[Unit]
+Description=Nightly Cisco compliance audit
+
+[Timer]
+OnCalendar=*-*-* 01:30:00
+# Run at the next boot if the host was off at 01:30.
+Persistent=true
+Unit=cisco-compliance-audit.service
+
+[Install]
+WantedBy=timers.target

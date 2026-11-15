@@ -1,0 +1,27 @@
+# Core network connectivity
+netmiko>=4.2.0
+paramiko>=3.4.0
+
+# TOML support for Python 3.10 contributors / CI
+tomli>=2.0.0; python_version < "3.11"
+
+# Structured parsing (Linux / macOS / WSL only — PyATS does not install on native Windows)
+pyats[library]>=24.0; sys_platform != "win32"
+genie>=24.0; sys_platform != "win32"
+
+# Reporting and configuration
+rich>=13.7.0
+questionary>=2.0.1
+textual>=0.79.1
+PyYAML>=6.0
+
+# Config schema validation
+pydantic>=2.0.0
+
+# Credential management
+keyring>=25.0.0
+pywin32>=306; sys_platform == "win32"          # Required by keyring on Windows
+keyrings.alt>=4.2.0; sys_platform != "win32"   # File-based keyring fallback for Linux / macOS
+
+# Note: SQLite support for remediation workflow is provided by Python stdlib
+# (sqlite3), so no additional database package is required.

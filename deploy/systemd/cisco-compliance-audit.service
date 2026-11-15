@@ -1,0 +1,24 @@
+# Nightly compliance audit with an email summary for approval.
+# Install: see deploy/README.md.  Adjust User, paths and options to suit.
+[Unit]
+Description=Cisco compliance audit (scheduled run with email summary)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=netaudit
+Group=netaudit
+WorkingDirectory=/opt/cisco-compliance-audit
+# Credentials: SWITCH_USER / SWITCH_PASS (and SMTP_PASSWORD if the relay
+# needs a login) in /opt/cisco-compliance-audit/.env, owned by netaudit,
+# mode 600 — or uncomment to keep them outside the install directory:
+#EnvironmentFile=/etc/cisco-compliance-audit/credentials.env
+ExecStart=/opt/cisco-compliance-audit/.venv/bin/python -m compliance_audit --non-interactive --notify
+# Exit 1 means "devices have findings" — the normal outcome of an audit,
+# not a failed job.  Exit 2 (config, inventory, credentials, lock) is a failure.
+SuccessExitStatus=1
+TimeoutStartSec=3h
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full

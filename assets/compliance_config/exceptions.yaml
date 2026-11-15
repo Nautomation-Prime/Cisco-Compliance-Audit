@@ -1,0 +1,129 @@
+---
+# ╔═══════════════════════════════════════════════════════════════════╗
+# ║  POLICY EXCEPTIONS — approved, time-boxed deviations from policy  ║
+# ╚═══════════════════════════════════════════════════════════════════╝
+#
+# An exception tells the audit that a failing check on a particular device
+# (or interface) is a known, approved deviation:
+#
+#   • the finding is reported as EXCEPTION instead of FAIL/WARN,
+#   • it is NEVER remediated: it is left out of the remediation script and
+#     review pack, and is re-checked and skipped at apply time, even for a
+#     pack generated before the exception was added,
+#   • once the expiry date passes it is flagged as EXPIRED in every report
+#     (console, HTML, JSON, CSV) so someone reviews it. It is STILL never
+#     remediated. Renew the exception (later date) or remove it to let
+#     remediation proceed.
+#
+# This file is merged with the rest of compliance_config/ like any other
+# section file.  Exceptions may be split across several files (for example
+# exceptions_site_lab.yaml, exceptions_site_brn.yaml): unlike other lists,
+# every `exceptions:` list in the directory is concatenated.  To keep the
+# register somewhere else entirely, set `exceptions_file:` (see below).
+#
+# Validate with:   python -m compliance_audit --validate-config
+#   → also prints how many exceptions are active / expiring / expired.
+
+# ── Behaviour ─────────────────────────────────────────────────────────
+exception_settings:
+  expiring_soon_days: 30            # Flag exceptions expiring within N days (0 = off)
+  expired_counts_against_score: false   # true = an expired exception lowers the score
+                                        #        as if the finding were failing
+  fail_on_expired: false            # true = exit code 1 when any finding sits under
+                                    #        an expired exception (useful in CI)
+  allow_permanent: false            # true = allow `expires: never` (not recommended)
+
+# ── Optional: load exceptions from file(s) outside this directory ─────
+# Paths resolve like inventory_file: working directory, then this config
+# directory, then the project root.  Such a file may contain only
+# `exceptions:` and `exception_settings:`.
+# exceptions_file: ../../change-control/network_exceptions.yaml
+# exceptions_file:
+#   - /srv/risk/network_exceptions.yaml
+#   - exceptions/site_brn.yaml
+
+# ── The register ──────────────────────────────────────────────────────
+#
+# Required on every exception:
+#   id       – unique reference, no spaces (e.g. EXC-0001, CHG0012345)
+#   reason   – why the deviation is accepted
+#   expires  – YYYY-MM-DD.  Valid through that whole day; EXPIRED from the
+#              next.  `never` only with exception_settings.allow_permanent.
+#   checks   – at least one check (see "Matching" below)
+#   + at least one DEVICE selector: hostnames, ips, groups or roles
+#
+# Optional record-keeping (shown in every report):
+#   owner, approved_by, approved_on (YYYY-MM-DD), ticket, notes
+#
+# Matching. Every selector you give must match; leave a selector out to
+# match everything.  Each selector takes one value or a list, and singular
+# spellings (hostname, ip, group, role, check, interface) also work.
+#
+#   Device selectors
+#     hostnames  – hostname or regex, whole-name match, case-insensitive.
+#                  Also tried against the short name (before the first dot)
+#                  and the management IP.  [".*"] = every device, on purpose.
+#     ips        – IP addresses or CIDR networks, e.g. 10.20.0.0/16
+#     groups     – site group names from devices.yaml
+#     roles      – device roles, e.g. access_switch
+#
+#   Finding selectors
+#     checks     – the check name shown in the report (e.g. ntp_server),
+#                  the YAML key of the check that emits it (e.g. ntp_servers,
+#                  which also covers its sub-findings), or a regex such as
+#                  "storm_control.*".  Plain names are checked for typos.
+#     interfaces – interface names or regexes.  Abbreviations work both
+#                  ways: Gi1/0/48 matches GigabitEthernet1/0/48, and
+#                  "Gi1/0/(4[0-8])" matches GigabitEthernet1/0/40-48.
+#                  Global (non-interface) findings never match an exception
+#                  that lists interfaces.
+#     detail     – regex searched for in the finding text, to pick one of
+#                  several findings a check emits (e.g. one NTP server).
+#
+# Only FAIL and WARN findings can be covered.  ERROR (a check that could not
+# run) is never hidden.  When several exceptions match a finding, the one
+# with the latest expiry wins, so renewing = adding an entry with a later
+# date (or just editing the date).
+
+exceptions: []
+
+# ── Examples (uncomment and adapt) ────────────────────────────────────
+#
+# exceptions:
+#   # One interface on one switch
+#   - id: EXC-0001
+#     hostname: ZZ-LAB1-001ASW001
+#     check: bpdu_guard
+#     interface: Gi1/0/48
+#     reason: Uplink to customer-managed switch; BPDU guard would err-disable it
+#     owner: Network Engineering
+#     approved_by: J. Smith (Security)
+#     approved_on: 2026-06-01
+#     ticket: CHG0012345
+#     expires: 2027-03-31
+#
+#   # A whole site, several related checks, a range of ports
+#   - id: EXC-0002
+#     groups: [site_lab]
+#     checks: [port_security, "storm_control.*"]
+#     interfaces: ["Gi1/0/(4[0-8])"]
+#     reason: Lab test bench ports. Hosts change daily
+#     owner: Lab team
+#     expires: 2026-12-31
+#
+#   # One NTP server missing on devices in a subnet, chosen by its text
+#   - id: EXC-0003
+#     ips: 10.20.0.0/16
+#     check: ntp_servers
+#     detail: "192\\.0\\.2\\.70"
+#     reason: Secondary NTP server not reachable from this region until the WAN upgrade
+#     ticket: PRJ-4411
+#     expires: 2027-01-15
+#
+#   # Every access switch whose hostname starts ZZ-BRN, by role and hostname
+#   - id: EXC-0004
+#     roles: [access_switch]
+#     hostnames: ["ZZ-BRN.*"]
+#     check: snmp_v3_only
+#     reason: SNMPv2c poller still in use at BRN until NMS migration
+#     expires: 2027-06-30

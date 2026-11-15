@@ -1,0 +1,12 @@
+# Checks for due remediation every 5 minutes.  A change scheduled for 02:00
+# is applied at the first check at or after 02:00.
+[Unit]
+Description=Apply scheduled Cisco compliance remediation
+
+[Timer]
+OnCalendar=*:0/5
+AccuracySec=30s
+Unit=cisco-compliance-audit-apply.service
+
+[Install]
+WantedBy=timers.target

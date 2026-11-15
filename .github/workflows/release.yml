@@ -1,0 +1,56 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    name: Build release bundle
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Verify tag matches project version
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: python
+        run: |
+          import pathlib
+          import tomllib
+
+          root = pathlib.Path('.')
+          version = tomllib.loads((root / 'pyproject.toml').read_text(encoding='utf-8'))['project']['version']
+          tag = '${{ github.ref_name }}'
+          expected = f'v{version}'
+          if tag != expected:
+              raise SystemExit(f'Tag {tag!r} does not match project version {expected!r}')
+
+      - name: Create source bundle
+        shell: bash
+        run: |
+          mkdir -p dist
+          REF_NAME="${{ github.ref_name }}"
+          if [ -z "$REF_NAME" ]; then
+            REF_NAME="manual"
+          fi
+          zip -r "dist/cisco-compliance-audit-${REF_NAME}.zip" \
+            compliance_audit assets deploy docs scripts tests \
+            README.md LICENSE requirements.txt pyproject.toml \
+            run.bat run.sh setup.bat setup.sh .yamllint \
+            -x "*/__pycache__/*" "*.pyc" ".git/*" ".github/*" "logs/*" "reports/*" "python_runtime/*" ".venv/*"
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v3
+        with:
+          files: dist/*.zip
+          generate_release_notes: true
